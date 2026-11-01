@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { X } from "lucide-react";
 import { AmountDisplay } from "@/components/atoms/amount-display";
+import { RecurringHistoryChart } from "@/components/atoms/recurring-history-chart";
 import { CategoryChip } from "@/components/molecules/category-chip";
 import { formatDueDate } from "@/components/molecules/recurring-item-row";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,9 @@ import {
   updateRecurringRules,
   updateRecurringTransaction,
 } from "@/actions/recurring";
+import { monthlySeries, yearlyMetrics } from "@/lib/recurring-history";
+import { todayDateString } from "@/lib/date-utils";
+import { centsToDisplay } from "@/lib/money";
 import type { RecurringRow } from "@/queries/recurring";
 import type { CategoryGroup } from "@/queries/categories";
 import type { TransactionRow } from "@/queries/transactions";
@@ -114,6 +118,10 @@ export function RecurringDetailPanel({ item, transactions, categoryGroups, onClo
     });
   }
 
+  const series = monthlySeries(transactions, todayDateString(), {
+    next: item.nextDate && item.averageAmount ? { date: item.nextDate, amount: item.averageAmount } : null,
+  });
+  const metrics = yearlyMetrics(transactions);
   const lastAccount = transactions[0]?.accountName ?? item.accountName;
   const archived = item.lifecycle === "archived";
   const paused = item.lifecycle === "paused" || (item.lifecycle === "active" && !item.isActive);
@@ -213,6 +221,28 @@ export function RecurringDetailPanel({ item, transactions, categoryGroups, onClo
           Save rules
         </Button>
       </section>
+
+      {transactions.length > 0 && (
+        <section className="space-y-3">
+          <RecurringHistoryChart points={series} />
+          <div>
+            <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 text-xs text-muted-foreground">
+              <h4 className="text-sm font-semibold text-foreground">Key metrics</h4>
+              <span className="text-right">Spent per year</span>
+              <span className="text-right">Avg transaction</span>
+            </div>
+            <dl className="mt-1 space-y-0.5 text-sm">
+              {metrics.map((m) => (
+                <div key={m.year} className="grid grid-cols-[1fr_auto_auto] gap-x-4">
+                  <dt className="text-muted-foreground">{m.year}</dt>
+                  <dd className="text-right tabular-nums">{centsToDisplay(m.spent)}</dd>
+                  <dd className="text-right tabular-nums">{centsToDisplay(m.average)}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        </section>
+      )}
 
       {lastAccount && (
         <section>
