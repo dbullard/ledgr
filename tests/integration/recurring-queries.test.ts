@@ -195,3 +195,20 @@ describe("getRecurringTransactions", () => {
     expect(rows.map((r) => r.date)).toEqual(["2026-10-19", "2026-09-19"]);
   });
 });
+
+describe("getRecurringRules", () => {
+  it("lists items that have a match rule, scoped to the household, archived last", async () => {
+    const { householdId } = await insertHousehold(db);
+    const other = await insertHousehold(db, "Other");
+    await insertRecurringTransaction(db, householdId, { name: "Phone", matchName: "verizon", matchMinAmount: 4000, matchMaxAmount: 5000, matchDayOfMonth: 5, frequency: "monthly" });
+    await insertRecurringTransaction(db, householdId, { name: "Old", matchName: "oldco", status: "archived" });
+    await insertRecurringTransaction(db, householdId, { name: "NoRule", matchName: null });
+    await insertRecurringTransaction(db, other.householdId, { name: "Theirs", matchName: "secret" });
+
+    const { getRecurringRules } = await import("../../src/queries/recurring");
+    const rules = await getRecurringRules(householdId, db);
+
+    expect(rules.map((r) => r.name)).toEqual(["Phone", "Old"]);
+    expect(rules[0]).toMatchObject({ matchName: "verizon", matchMinAmount: 4000, matchMaxAmount: 5000, matchDayOfMonth: 5, frequency: "monthly", lifecycle: "active" });
+  });
+});

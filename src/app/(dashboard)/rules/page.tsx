@@ -1,14 +1,17 @@
 import { getHouseholdId } from "@/lib/auth/session";
 import { getCategoryRules } from "@/queries/category-rules";
 import { getCategories } from "@/queries/categories";
+import { getRecurringRules } from "@/queries/recurring";
+import { RecurringRulesList } from "@/components/molecules/recurring-rules-list";
 import { CategoryRulesManager } from "@/components/organisms/category-rules-manager";
 
 export default async function RulesPage() {
   const householdId = await getHouseholdId();
 
-  const [rules, categoryGroups] = await Promise.all([
+  const [rules, categoryGroups, recurringRules] = await Promise.all([
     getCategoryRules(householdId),
     getCategories(householdId),
+    getRecurringRules(householdId),
   ]);
 
   return (
@@ -21,6 +24,8 @@ export default async function RulesPage() {
       </div>
 
       <CategoryRulesManager rules={rules} categoryGroups={categoryGroups} />
+
+      <RecurringRulesList rules={recurringRules} />
     </div>
   );
 }

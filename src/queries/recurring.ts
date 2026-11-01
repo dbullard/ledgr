@@ -1,4 +1,4 @@
-import { eq, asc, ilike, isNull } from "drizzle-orm";
+import { eq, asc, ilike, isNull, isNotNull } from "drizzle-orm";
 import { fetchTransactionPage, type TransactionRow } from "@/queries/transactions";
 import { notDeleted } from "@/lib/query-helpers";
 import { db as defaultDb, type LedgrDb } from "@/db";
@@ -261,4 +261,41 @@ export async function getRecurringSummary(
   }
 
   return { monthlyIncome, monthlyExpenses };
+}
+
+export interface RecurringRuleRow {
+  id: string;
+  name: string;
+  matchName: string;
+  matchMinAmount: number | null;
+  matchMaxAmount: number | null;
+  matchDayOfMonth: number | null;
+  frequency: string | null;
+  lifecycle: "active" | "paused" | "archived";
+}
+
+/** Every recurring item that has a match rule, for the Rules page. Archived last. */
+export async function getRecurringRules(
+  householdId: string,
+  db: LedgrDb = defaultDb,
+): Promise<RecurringRuleRow[]> {
+  const scoped = scopedQuery(householdId, db);
+  const rows = await db
+    .select({
+      id: recurringTransactions.id,
+      name: recurringTransactions.name,
+      matchName: recurringTransactions.matchName,
+      matchMinAmount: recurringTransactions.matchMinAmount,
+      matchMaxAmount: recurringTransactions.matchMaxAmount,
+      matchDayOfMonth: recurringTransactions.matchDayOfMonth,
+      frequency: recurringTransactions.frequency,
+      lifecycle: recurringTransactions.status,
+    })
+    .from(recurringTransactions)
+    .where(scoped.where(recurringTransactions, isNotNull(recurringTransactions.matchName)))
+    .orderBy(asc(recurringTransactions.name));
+
+  return rows
+    .filter((r): r is typeof r & { matchName: string } => !!r.matchName?.trim())
+    .sort((a, b) => Number(a.lifecycle === "archived") - Number(b.lifecycle === "archived"));
 }
