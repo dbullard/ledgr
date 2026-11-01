@@ -21,6 +21,12 @@ const updateFieldsSchema = z
     date: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD")
+      .refine((d) => {
+        // Date.parse yields NaN for days that don't exist (Feb 31); the round
+        // trip catches anything a lenient parser would roll into the next month.
+        const t = Date.parse(`${d}T00:00:00Z`);
+        return !Number.isNaN(t) && new Date(t).toISOString().startsWith(d);
+      }, "Not a real calendar date")
       .optional(),
     isTransfer: z.boolean().optional(),
     isHidden: z.boolean().optional(),
@@ -73,6 +79,9 @@ export async function updateTransactionFields(
         id: transactions.id,
         externalId: transactions.externalId,
         transferPairId: transactions.transferPairId,
+        date: transactions.date,
+        originalDate: transactions.originalDate,
+        pending: transactions.pending,
       })
       .from(transactions)
       .where(
@@ -82,8 +91,10 @@ export async function updateTransactionFields(
 
     if (!existing) return { error: "Transaction not found" };
 
-    if (fields.date && existing.externalId) {
-      return { error: "Cannot edit date on bank-synced transactions" };
+    // A pending row is replaced by a new posted row when it settles, which
+    // would drop the edit — so wait for it to post.
+    if (fields.date && existing.externalId && existing.pending) {
+      return { error: "Wait until this transaction posts to change its date" };
     }
 
     if (fields.isTransfer === false && existing.transferPairId) {
@@ -107,7 +118,15 @@ export async function updateTransactionFields(
     const updates: Partial<typeof transactions.$inferInsert> = { updatedAt: new Date() };
     if (fields.name !== undefined) updates.name = fields.name;
     if (fields.notes !== undefined) updates.notes = fields.notes;
-    if (fields.date !== undefined) updates.date = fields.date;
+    if (fields.date !== undefined && fields.date !== existing.date) {
+      updates.date = fields.date;
+      if (existing.externalId) {
+        // Remember the bank's date so syncs leave ours alone, and so moving it
+        // back to the bank's date hands ownership back to sync.
+        const bankDate = existing.originalDate ?? existing.date;
+        updates.originalDate = fields.date === bankDate ? null : bankDate;
+      }
+    }
     if (fields.isTransfer !== undefined) {
       updates.isTransfer = fields.isTransfer;
       updates.transferSource = fields.isTransfer ? "manual" : "manual_rejected";

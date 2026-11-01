@@ -411,7 +411,10 @@ async function applyToDb(
           .set({
             accountId: internalAccountId,
             merchantId,
-            date: row.date,
+            // A date the user moved stays moved; only the bank's own date
+            // (original_date) keeps refreshing underneath it.
+            date: sql`CASE WHEN ${transactions.originalDate} IS NULL THEN ${row.date} ELSE ${transactions.date} END`,
+            originalDate: sql`CASE WHEN ${transactions.originalDate} IS NULL THEN NULL ELSE ${row.date} END`,
             originalName: row.originalName,
             name: row.name,
             amount: row.amount,

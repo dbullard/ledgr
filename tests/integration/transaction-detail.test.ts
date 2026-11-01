@@ -191,13 +191,62 @@ describe("updateTransactionFields", () => {
     expect(result).toEqual({ error: "Invalid input" });
   });
 
-  it("blocks date edit on Plaid-synced transactions", async () => {
-    const result = await updateTransactionFields(
-      plaidTxnId,
-      { date: "2026-05-01" },
-      db,
-    );
-    expect(result).toEqual({ error: "Cannot edit date on bank-synced transactions" });
+  it("lets a bank-synced transaction's date move, remembering the bank's date", async () => {
+    const result = await updateTransactionFields(plaidTxnId, { date: "2026-06-01" }, db);
+    expect(result).toEqual({ success: true });
+
+    const [row] = await db.select().from(transactions).where(eq(transactions.id, plaidTxnId));
+    expect(row!.date).toBe("2026-06-01");
+    expect(row!.originalDate).toBe("2026-05-09");
+  });
+
+  it("keeps the first bank date through further edits", async () => {
+    await updateTransactionFields(plaidTxnId, { date: "2026-07-15" }, db);
+
+    const [row] = await db.select().from(transactions).where(eq(transactions.id, plaidTxnId));
+    expect(row!.date).toBe("2026-07-15");
+    expect(row!.originalDate).toBe("2026-05-09");
+  });
+
+  it("hands the date back to sync when set to the bank's date again", async () => {
+    await updateTransactionFields(plaidTxnId, { date: "2026-05-09" }, db);
+
+    const [row] = await db.select().from(transactions).where(eq(transactions.id, plaidTxnId));
+    expect(row!.date).toBe("2026-05-09");
+    expect(row!.originalDate).toBeNull();
+  });
+
+  it("does not track an original date on a manually-entered transaction", async () => {
+    await updateTransactionFields(editTxnId, { date: "2026-05-20" }, db);
+
+    const [row] = await db.select().from(transactions).where(eq(transactions.id, editTxnId));
+    expect(row!.date).toBe("2026-05-20");
+    expect(row!.originalDate).toBeNull();
+  });
+
+  it("rejects a date that is not on the calendar", async () => {
+    const result = await updateTransactionFields(editTxnId, { date: "2026-02-31" }, db);
+    expect(result).toEqual({ error: "Invalid input" });
+  });
+
+  it("blocks a date edit while a synced transaction is still pending", async () => {
+    const pendingId = uuid();
+    await db.insert(transactions).values({
+      id: pendingId,
+      accountId,
+      householdId,
+      date: "2026-05-09",
+      originalName: "PENDING TXN",
+      name: "Pending Txn",
+      amount: 900,
+      normalizedAmount: -900,
+      externalId: "plaid-pending-1",
+      provider: "plaid",
+      pending: true,
+    });
+
+    const result = await updateTransactionFields(pendingId, { date: "2026-06-01" }, db);
+    expect(result).toEqual({ error: "Wait until this transaction posts to change its date" });
   });
 
   it("toggles isHidden on and back off", async () => {

@@ -21,6 +21,7 @@ const transactionFiltersSchema = z.object({
   accountId: z.string().optional(),
   categoryId: z.string().nullable().optional(),
   reviewed: z.boolean().optional(),
+  needsReview: z.boolean().optional(),
   search: z.string().optional(),
   amountMin: z.coerce.number().optional(),
   amountMax: z.coerce.number().optional(),

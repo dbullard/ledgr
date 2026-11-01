@@ -240,3 +240,51 @@ describe("getSuggestedTransfers / getSuggestedTransferCount", () => {
     expect(count).toBe(2);
   });
 });
+
+
+describe("getTransactions needsReview filter", () => {
+  let db: LedgrDb;
+  let close: () => Promise<void>;
+  let householdId: string;
+  let accountId: string;
+  let categoryId: string;
+
+  beforeAll(async () => {
+    ({ db, close } = await createTestDb());
+    ({ householdId } = await insertHousehold(db));
+    ({ accountId } = await insertAccount(db, householdId));
+    const { groupId } = await insertCategoryGroup(db, householdId);
+    ({ categoryId } = await insertCategory(db, householdId, groupId));
+
+    const row = (name: string, overrides: Record<string, unknown>) =>
+      insertTransaction(db, householdId, accountId, { name, ...overrides });
+    await row("Uncategorized", {});
+    await row("AI guess", { categoryId, categorySource: "ai" });
+    await row("Low-confidence AI guess", { categoryId, categorySource: "ai_low_confidence" });
+    await row("From a rule", { categoryId, categorySource: "rule" });
+    await row("From a merchant default", { categoryId, categorySource: "merchant_default" });
+    await row("From the bank", { categoryId, categorySource: "pfc" });
+    await row("By hand, not marked reviewed", { categoryId, categorySource: "manual" });
+    await row("Legacy, no source recorded", { categoryId });
+    await row("AI guess already reviewed", { categoryId, categorySource: "ai", reviewed: true });
+    await row("Uncategorized already reviewed", { reviewed: true });
+  });
+
+  afterAll(async () => {
+    await close();
+  });
+
+  it("queues only unreviewed rows that are uncategorized or AI-guessed", async () => {
+    const page = await getTransactions(householdId, { needsReview: true }, 50, null, db);
+    expect(page.rows.map((r) => r.name).sort()).toEqual([
+      "AI guess",
+      "Low-confidence AI guess",
+      "Uncategorized",
+    ]);
+  });
+
+  it("leaves the raw reviewed filter alone", async () => {
+    const page = await getTransactions(householdId, { reviewed: false }, 50, null, db);
+    expect(page.rows).toHaveLength(8);
+  });
+});

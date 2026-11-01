@@ -63,9 +63,9 @@ export default async function DashboardPage() {
       getUpcomingBills(householdId, { limit: 5 }),
       getInvestmentsSummary(householdId),
       session ? getLayoutForUser(session.user.id) : null,
-      withHousehold(householdId, (tx) => getTransactionSummary(householdId, { reviewed: false }, tx)),
+      withHousehold(householdId, (tx) => getTransactionSummary(householdId, { needsReview: true }, tx)),
       withHousehold(householdId, (tx) => getSuggestedTransferCount(householdId, tx)),
-      withHousehold(householdId, (tx) => getTransactions(householdId, { reviewed: false }, 10, null, tx)),
+      withHousehold(householdId, (tx) => getTransactions(householdId, { needsReview: true }, 10, null, tx)),
     ]);
 
   // Flattened from the institution grouping so the balances widget can show the

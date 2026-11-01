@@ -8,6 +8,7 @@ function makeTxn(overrides: Partial<TransactionRow> = {}): TransactionRow {
   return {
     id: `txn-${Math.random().toString(36).slice(2)}`,
     date: "2026-05-01",
+    originalDate: null,
     name: "Test",
     originalName: "Test",
     amount: -1000,

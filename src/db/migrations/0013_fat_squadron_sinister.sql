@@ -1,0 +1,1 @@
+ALTER TABLE "transactions" ADD COLUMN "original_date" text;

@@ -219,6 +219,38 @@ describe("syncConnection", () => {
     expect(updated.reviewed).toBe(true);
   });
 
+  it("keeps a date the user moved across a re-sync, refreshing only the bank's date", async () => {
+    const { householdId, connectionId } = await setupWithAccount();
+    await syncConnection(connectionId, householdId, db);
+
+    const [txn] = await db.select().from(transactions).where(eq(transactions.externalId, "sf-txn-1"));
+    const bankDate = txn.date;
+    await db.update(transactions)
+      .set({ date: "2099-01-15", originalDate: "1999-01-01" })
+      .where(eq(transactions.id, txn.id));
+
+    await syncConnection(connectionId, householdId, db);
+
+    const [updated] = await db.select().from(transactions).where(eq(transactions.id, txn.id));
+    expect(updated.date).toBe("2099-01-15");
+    expect(updated.originalDate).toBe(bankDate);
+  });
+
+  it("still refreshes the date of a transaction the user has not moved", async () => {
+    const { householdId, connectionId } = await setupWithAccount();
+    await syncConnection(connectionId, householdId, db);
+
+    const [txn] = await db.select().from(transactions).where(eq(transactions.externalId, "sf-txn-1"));
+    const bankDate = txn.date;
+    await db.update(transactions).set({ date: "2099-01-15" }).where(eq(transactions.id, txn.id));
+
+    await syncConnection(connectionId, householdId, db);
+
+    const [updated] = await db.select().from(transactions).where(eq(transactions.id, txn.id));
+    expect(updated.date).toBe(bankDate);
+    expect(updated.originalDate).toBeNull();
+  });
+
   it("auto-categorizes newly synced transactions against household rules", async () => {
     const { householdId, connectionId } = await setupWithAccount();
     const { groupId } = await insertCategoryGroup(db, householdId, { name: "Food" });

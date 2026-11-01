@@ -8,7 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AmountDisplay } from "@/components/atoms/amount-display";
 import { EntityAvatar } from "@/components/molecules/entity-avatar";
-import { EditableText } from "@/components/molecules/editable-text";
+import { EditableDate } from "@/components/molecules/editable-date";
 import { CategoryPill } from "@/components/molecules/category-pill";
 import { DetailGroup, DetailRow } from "@/components/molecules/detail-group";
 import { SplitEditor } from "@/components/molecules/split-editor";
@@ -198,18 +198,29 @@ function TransactionDetail({
 
         <DetailGroup>
           <DetailRow label="Date">
-            {isBankSynced ? (
-              <span className="text-muted-foreground" title="Your bank owns the date on synced transactions">
+            {isBankSynced && txn.pending ? (
+              <span className="text-muted-foreground" title="You can change the date once the transaction posts">
                 {formatDateShort(txn.date)}
               </span>
             ) : (
-              <EditableText
-                value={txn.date}
-                onSave={(v) => handleFieldSave("date", v)}
-                inputClassName="w-32"
-              />
+              <EditableDate value={txn.date} onSave={(v) => handleFieldSave("date", v)} />
             )}
           </DetailRow>
+
+          {txn.originalDate && (
+            <DetailRow label="Bank date" hint="Syncs won't change the date you set">
+              <span className="flex items-center gap-2">
+                <span className="text-muted-foreground">{formatDateShort(txn.originalDate)}</span>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => handleFieldSave("date", txn.originalDate!)}
+                >
+                  Reset
+                </Button>
+              </span>
+            </DetailRow>
+          )}
 
           {txn.merchantName && (
             <DetailRow label="Merchant">

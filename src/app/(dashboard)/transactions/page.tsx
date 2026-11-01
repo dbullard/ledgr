@@ -37,7 +37,7 @@ export default async function TransactionsPage({
     // is the one people land on, and it was the only view of the ledger with no
     // arithmetic on it at all — per-day subtotals, and nothing for the whole.
     withHousehold(householdId, (tx) => getTransactionSummary(householdId, filters, tx)),
-    withHousehold(householdId, (tx) => getTransactionSummary(householdId, { reviewed: false }, tx)),
+    withHousehold(householdId, (tx) => getTransactionSummary(householdId, { needsReview: true }, tx)),
     withHousehold(householdId, (tx) => getSuggestedTransfers(householdId, tx)),
   ]);
   const accountOptions = allAccounts.map((a) => ({ id: a.id, name: a.name }));

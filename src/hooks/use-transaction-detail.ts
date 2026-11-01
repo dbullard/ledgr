@@ -106,10 +106,18 @@ export function useTransactionDetail(
   const handleFieldSave = useCallback(
     async (field: "name" | "notes" | "date", value: string) => {
       const result = await updateTransactionFields(transactionId, { [field]: value });
-      if ("success" in result) applyPatch({ [field]: value });
+      if ("success" in result) {
+        if (field === "date" && txn?.externalId) {
+          // Mirror the server: the bank's date is remembered while ours differs.
+          const bankDate = txn.originalDate ?? txn.date;
+          applyPatch({ date: value, originalDate: value === bankDate ? null : bankDate });
+        } else {
+          applyPatch({ [field]: value });
+        }
+      }
       return result;
     },
-    [transactionId, applyPatch],
+    [transactionId, applyPatch, txn],
   );
 
   // Turning the flag off also unpairs both legs server-side, so the local row

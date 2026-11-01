@@ -47,10 +47,16 @@ describe("parseTransactionFilters", () => {
     expect(filters.transactionType).toBeUndefined();
   });
 
-  it("sets reviewed=false in review mode", () => {
+  it("asks for transactions that need review in review mode", () => {
     const result = parseTransactionFilters({ mode: "review" });
     expect(result.isReviewMode).toBe(true);
-    expect(result.filters.reviewed).toBe(false);
+    expect(result.filters.needsReview).toBe(true);
+    // The raw flag is left alone so it can't contradict the needs-review rule.
+    expect(result.filters.reviewed).toBeUndefined();
+  });
+
+  it("does not ask for needs-review outside review mode", () => {
+    expect(parseTransactionFilters({}).filters.needsReview).toBeUndefined();
   });
 
   it("treats empty/missing params as undefined filters", () => {

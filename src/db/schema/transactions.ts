@@ -44,6 +44,12 @@ export const transactions = pgTable(
     ),
     transferPairId: text("transfer_pair_id"),
     date: text("date").notNull(),
+    // The bank's own date, kept only once the user has moved `date` (e.g. rent
+    // paid on the 29th that belongs to next month's budget). NULL means `date`
+    // is untouched and sync owns it; non-NULL means the user owns `date` and
+    // sync must leave it alone, refreshing only this column with the bank's
+    // latest date. Setting `date` back to this value clears it.
+    originalDate: text("original_date"),
     originalName: text("original_name").notNull(),
     name: text("name").notNull(),
     amount: integer("amount").notNull(),

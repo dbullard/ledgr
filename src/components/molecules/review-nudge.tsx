@@ -76,7 +76,7 @@ export function ReviewNudge({ unreviewedCount, share, monthLabel }: ReviewNudgeP
       <CircleAlert />
       <AlertTitle>
         {unreviewedCount.toLocaleString()}{" "}
-        {unreviewedCount === 1 ? "transaction needs" : "transactions need"} a category
+        {unreviewedCount === 1 ? "transaction needs" : "transactions need"} review
       </AlertTitle>
       {share && (
         <AlertDescription>

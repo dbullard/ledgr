@@ -1,4 +1,4 @@
-import { eq, and, ilike, gte, lte, lt, gt, isNull, desc, sql, inArray, type SQL } from "drizzle-orm";
+import { eq, and, or, ilike, gte, lte, lt, gt, isNull, desc, sql, inArray, type SQL } from "drizzle-orm";
 import { db as defaultDb, type LedgrDb } from "@/db";
 import { transactions, categories, categoryGroups, merchants, accounts, transactionSplits, type CategorySource } from "@/db/schema";
 import { scopedQuery } from "@/lib/scoped-query";
@@ -11,6 +11,14 @@ export interface TransactionFilters {
   accountId?: string;
   categoryId?: string | null;
   reviewed?: boolean;
+  /**
+   * Transactions that still need a human look: not yet reviewed AND either
+   * uncategorized or categorized by a guess (AI). Categories from your own
+   * rules, merchant defaults, the bank's own labels or by hand are trusted,
+   * so those never queue for review. Distinct from `reviewed`, which is the
+   * raw flag.
+   */
+  needsReview?: boolean;
   search?: string;
   amountMin?: number;
   amountMax?: number;
@@ -22,6 +30,8 @@ export interface TransactionFilters {
 export interface TransactionRow {
   id: string;
   date: string;
+  /** The bank's date, set only when `date` has been moved by hand. */
+  originalDate: string | null;
   name: string;
   originalName: string;
   amount: number;
@@ -57,6 +67,7 @@ export interface TransactionPage {
 const transactionSelectFields = {
   id: transactions.id,
   date: transactions.date,
+  originalDate: transactions.originalDate,
   name: transactions.name,
   originalName: transactions.originalName,
   amount: transactions.amount,
@@ -122,6 +133,16 @@ export function baseTransactionQuery(db: LedgrDb, householdId: string) {
   return { scoped, select, from, joins };
 }
 
+/** Category sources that are a guess rather than a decision someone made. */
+const GUESSED_CATEGORY_SOURCES = ["ai", "ai_low_confidence"] as const;
+
+function needsReviewCondition(): SQL {
+  return and(
+    eq(transactions.reviewed, false),
+    or(isNull(transactions.categoryId), inArray(transactions.categorySource, [...GUESSED_CATEGORY_SOURCES])),
+  )!;
+}
+
 function buildTransactionConditions(
   filters: TransactionFilters,
   spendingIncluded: SQL,
@@ -150,6 +171,9 @@ function buildTransactionConditions(
   }
   if (filters.reviewed !== undefined) {
     conditions.push(eq(transactions.reviewed, filters.reviewed));
+  }
+  if (filters.needsReview) {
+    conditions.push(needsReviewCondition());
   }
   if (filters.search) {
     conditions.push(ilike(transactions.name, `%${filters.search}%`));
