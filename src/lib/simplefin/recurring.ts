@@ -227,6 +227,9 @@ export async function applyRecurringDetection(householdId: string, db: LedgrDb =
             id: recurringId,
             householdId,
             plaidStreamId: null,
+            // Detection groups by exact name, so that name is the rule the
+            // panel shows and later matching uses; the user can loosen it.
+            matchName: group.name,
             createdAt: now,
             ...fields,
           });

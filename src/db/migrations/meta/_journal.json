@@ -106,6 +106,13 @@
       "when": 1793554400843,
       "tag": "0014_sticky_anita_blake",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1793554519794,
+      "tag": "0015_parallel_gladiator",
+      "breakpoints": true
     }
   ]
 }

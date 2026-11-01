@@ -4,6 +4,7 @@ import { categorizeSyncedTransactions } from "@/lib/categorization/engine";
 import { applyTransferDetection } from "@/lib/transfer-detection";
 import { computeInvestmentTransferTagging } from "@/lib/investment-transfer-tagging";
 import { syncRecurringTransactions } from "./recurring";
+import { applyRecurringMatching } from "@/lib/recurring-matching";
 import type { PlaidApi } from "plaid";
 import {
   PlaidSyncResponseSchema,
@@ -674,6 +675,11 @@ async function doSync(
       await syncRecurringTransactions(itemId, householdId, accessToken, db);
     } catch (recurringError) {
       console.error("Recurring sync failed for item", JSON.stringify(itemId), recurringError);
+    }
+    try {
+      await applyRecurringMatching(householdId, db);
+    } catch (matchError) {
+      console.error("Recurring matching failed for item", JSON.stringify(itemId), matchError);
     }
 
     // AI categorization and merchant/logo resolution — fire-and-forget, same

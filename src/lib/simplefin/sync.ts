@@ -14,6 +14,7 @@ import { categorizeSyncedTransactions } from "@/lib/categorization/engine";
 import { applyTransferDetection } from "@/lib/transfer-detection";
 import { computeInvestmentTransferTagging } from "@/lib/investment-transfer-tagging";
 import { applyRecurringDetection } from "@/lib/simplefin/recurring";
+import { applyRecurringMatching } from "@/lib/recurring-matching";
 import { withHousehold } from "@/lib/household-context";
 
 // SimpleFIN brokerages don't send a security type the way Plaid does. These
@@ -546,6 +547,11 @@ async function doSync(
       await applyRecurringDetection(householdId, db);
     } catch (recurringError) {
       console.error("Recurring detection failed for connection", JSON.stringify(connectionId), recurringError);
+    }
+    try {
+      await applyRecurringMatching(householdId, db);
+    } catch (matchError) {
+      console.error("Recurring matching failed for connection", JSON.stringify(connectionId), matchError);
     }
 
     // AI categorization and merchant/logo resolution — fire-and-forget, same

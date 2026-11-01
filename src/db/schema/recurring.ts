@@ -1,4 +1,4 @@
-import { index, integer, pgTable, text, boolean, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { index, integer, pgTable, primaryKey, text, boolean, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { households } from "./households";
 import { accounts } from "./accounts";
 import { merchants } from "./merchants";
@@ -53,4 +53,19 @@ export const recurringTransactions = pgTable(
     index("idx_recurring_next").on(table.nextDate),
     uniqueIndex("idx_recurring_plaid_stream_id").on(table.plaidStreamId),
   ]
+);
+
+/**
+ * Transactions the user pulled out of a recurring item. Auto-matching consults
+ * this so an unlinked transaction is not silently linked again on the next sync.
+ */
+export const recurringExclusions = pgTable(
+  "recurring_exclusions",
+  {
+    recurringId: text("recurring_id")
+      .notNull()
+      .references(() => recurringTransactions.id, { onDelete: "cascade" }),
+    transactionId: text("transaction_id").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.recurringId, table.transactionId] })],
 );

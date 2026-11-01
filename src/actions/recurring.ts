@@ -1,10 +1,14 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+import { v4 as uuid } from "uuid";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db as defaultDb, type LedgrDb } from "@/db";
-import { recurringTransactions, categories } from "@/db/schema";
+import { recurringTransactions, recurringExclusions, transactions, categories } from "@/db/schema";
+import { withHousehold } from "@/lib/household-context";
+import { nextDateAfter } from "@/lib/recurring-match";
+import { applyRecurringMatching } from "@/lib/recurring-matching";
 import { scopedQuery } from "@/lib/scoped-query";
 import { authorizeAction } from "@/lib/auth/authorize-action";
 
@@ -126,4 +130,281 @@ export async function deleteRecurringTransaction(
   const auth = await authorizeAction();
   if ("error" in auth) return auth;
   return deleteRecurringTransactionScoped(auth.householdId, billId, db);
+}
+
+// ---------------------------------------------------------------------------
+// Status, creation, match rules and transaction links
+
+const idSchema = z.string().min(1);
+
+function refresh() {
+  revalidatePath("/recurrings");
+  revalidatePath("/");
+}
+
+export async function setRecurringStatusScoped(
+  householdId: string,
+  id: string,
+  status: "active" | "paused" | "archived",
+  db: LedgrDb = defaultDb,
+): Promise<ActionResult> {
+  const parsed = z.object({ id: idSchema, status: z.enum(["active", "paused", "archived"]) }).safeParse({ id, status });
+  if (!parsed.success) return { error: "Invalid input" };
+
+  const scoped = scopedQuery(householdId, db);
+  const updated = await db
+    .update(recurringTransactions)
+    .set({ status: parsed.data.status, updatedAt: new Date() })
+    .where(scoped.where(recurringTransactions, eq(recurringTransactions.id, parsed.data.id)))
+    .returning({ id: recurringTransactions.id });
+  if (updated.length === 0) return { error: "Recurring item not found" };
+  refresh();
+  return { success: true };
+}
+
+export async function setRecurringStatus(id: string, status: "active" | "paused" | "archived", db: LedgrDb = defaultDb) {
+  const auth = await authorizeAction();
+  if ("error" in auth) return auth;
+  return setRecurringStatusScoped(auth.householdId, id, status, db);
+}
+
+const createSchema = z.object({
+  name: z.string().transform((s) => s.trim()).pipe(z.string().min(1).max(200)),
+  amount: z.number().int().min(0),
+  frequency: z.enum(FREQUENCIES),
+  nextDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  categoryId: z.string().min(1).nullable(),
+  accountId: z.string().min(1).nullable(),
+});
+export type RecurringCreateInput = z.input<typeof createSchema>;
+
+export async function createRecurringTransactionScoped(
+  householdId: string,
+  input: RecurringCreateInput,
+  db: LedgrDb = defaultDb,
+): Promise<{ success: true; recurringId: string } | { error: string }> {
+  const parsed = createSchema.safeParse(input);
+  if (!parsed.success) return { error: "Check the name, amount, frequency and date." };
+  const d = parsed.data;
+  if (d.categoryId !== null && !(await categoryBelongsToHousehold(householdId, d.categoryId, db))) {
+    return { error: "Category not found" };
+  }
+
+  const recurringId = uuid();
+  const now = new Date();
+  await db.insert(recurringTransactions).values({
+    id: recurringId,
+    householdId,
+    name: d.name,
+    accountId: d.accountId,
+    categoryId: d.categoryId,
+    averageAmount: d.amount,
+    lastAmount: -d.amount,
+    frequency: d.frequency,
+    nextDate: d.nextDate,
+    isActive: true,
+    isIncome: false,
+    status: "active",
+    source: "manual",
+    matchName: d.name,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await applyRecurringMatching(householdId, db);
+  refresh();
+  return { success: true, recurringId };
+}
+
+export async function createRecurringTransaction(input: RecurringCreateInput, db: LedgrDb = defaultDb) {
+  const auth = await authorizeAction();
+  if ("error" in auth) return auth;
+  return createRecurringTransactionScoped(auth.householdId, input, db);
+}
+
+/** Turns one transaction into a recurring item and links it. */
+export async function makeTransactionRecurringScoped(
+  householdId: string,
+  transactionId: string,
+  db: LedgrDb = defaultDb,
+): Promise<{ success: true; recurringId: string } | { error: string }> {
+  const parsed = idSchema.safeParse(transactionId);
+  if (!parsed.success) return { error: "Invalid input" };
+
+  return withHousehold(householdId, async (tx) => {
+    const scopedTx = scopedQuery(householdId, tx);
+    const [txn] = await tx
+      .select({
+        id: transactions.id,
+        accountId: transactions.accountId,
+        name: transactions.name,
+        date: transactions.date,
+        normalizedAmount: transactions.normalizedAmount,
+        categoryId: transactions.categoryId,
+      })
+      .from(transactions)
+      .where(scopedTx.where(transactions, eq(transactions.id, parsed.data)))
+      .limit(1);
+    if (!txn) return { error: "Transaction not found" };
+
+    const recurringId = uuid();
+    const now = new Date();
+    await tx.insert(recurringTransactions).values({
+      id: recurringId,
+      householdId,
+      name: txn.name,
+      accountId: txn.accountId,
+      categoryId: txn.categoryId,
+      averageAmount: Math.abs(txn.normalizedAmount),
+      lastAmount: txn.normalizedAmount,
+      frequency: "monthly",
+      lastDate: txn.date,
+      nextDate: nextDateAfter(txn.date, "monthly"),
+      isActive: true,
+      isIncome: txn.normalizedAmount > 0,
+      status: "active",
+      source: "manual",
+      matchName: txn.name,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await tx
+      .update(transactions)
+      .set({ recurringTransactionId: recurringId, updatedAt: now })
+      .where(eq(transactions.id, txn.id));
+    refresh();
+    return { success: true as const, recurringId };
+  }, db);
+}
+
+export async function makeTransactionRecurring(transactionId: string, db: LedgrDb = defaultDb) {
+  const auth = await authorizeAction();
+  if ("error" in auth) return auth;
+  return makeTransactionRecurringScoped(auth.householdId, transactionId, db);
+}
+
+const rulesSchema = z.object({
+  id: idSchema,
+  matchName: z.string().transform((s) => s.trim()).pipe(z.string().min(1).max(200)),
+  matchMinAmount: z.number().int().min(0).nullable(),
+  matchMaxAmount: z.number().int().min(0).nullable(),
+  matchDayOfMonth: z.number().int().min(1).max(31).nullable(),
+  frequency: z.enum(FREQUENCIES),
+});
+export type RecurringRulesInput = z.input<typeof rulesSchema>;
+
+export async function updateRecurringRulesScoped(
+  householdId: string,
+  input: RecurringRulesInput,
+  db: LedgrDb = defaultDb,
+): Promise<ActionResult> {
+  const parsed = rulesSchema.safeParse(input);
+  if (!parsed.success) return { error: "Check the match rules." };
+  const d = parsed.data;
+  if (d.matchMinAmount !== null && d.matchMaxAmount !== null && d.matchMinAmount > d.matchMaxAmount) {
+    return { error: "Minimum amount can't be above the maximum." };
+  }
+
+  const scoped = scopedQuery(householdId, db);
+  const updated = await db
+    .update(recurringTransactions)
+    .set({
+      matchName: d.matchName,
+      matchMinAmount: d.matchMinAmount,
+      matchMaxAmount: d.matchMaxAmount,
+      matchDayOfMonth: d.matchDayOfMonth,
+      frequency: d.frequency,
+      updatedAt: new Date(),
+    })
+    .where(scoped.where(recurringTransactions, eq(recurringTransactions.id, d.id)))
+    .returning({ id: recurringTransactions.id });
+  if (updated.length === 0) return { error: "Recurring item not found" };
+
+  await applyRecurringMatching(householdId, db);
+  refresh();
+  return { success: true };
+}
+
+export async function updateRecurringRules(input: RecurringRulesInput, db: LedgrDb = defaultDb) {
+  const auth = await authorizeAction();
+  if ("error" in auth) return auth;
+  return updateRecurringRulesScoped(auth.householdId, input, db);
+}
+
+export async function linkTransactionToRecurringScoped(
+  householdId: string,
+  recurringId: string,
+  transactionId: string,
+  db: LedgrDb = defaultDb,
+): Promise<ActionResult> {
+  const parsed = z.object({ r: idSchema, t: idSchema }).safeParse({ r: recurringId, t: transactionId });
+  if (!parsed.success) return { error: "Invalid input" };
+
+  return withHousehold(householdId, async (tx) => {
+    const scopedTx = scopedQuery(householdId, tx);
+    const [item] = await tx
+      .select({ id: recurringTransactions.id })
+      .from(recurringTransactions)
+      .where(scopedTx.where(recurringTransactions, eq(recurringTransactions.id, parsed.data.r)))
+      .limit(1);
+    const [txn] = await tx
+      .select({ id: transactions.id })
+      .from(transactions)
+      .where(scopedTx.where(transactions, eq(transactions.id, parsed.data.t)))
+      .limit(1);
+    if (!item || !txn) return { error: "Not found" };
+
+    await tx
+      .delete(recurringExclusions)
+      .where(and(eq(recurringExclusions.recurringId, item.id), eq(recurringExclusions.transactionId, txn.id)));
+    await tx
+      .update(transactions)
+      .set({ recurringTransactionId: item.id, updatedAt: new Date() })
+      .where(eq(transactions.id, txn.id));
+    refresh();
+    return { success: true as const };
+  }, db);
+}
+
+export async function linkTransactionToRecurring(recurringId: string, transactionId: string, db: LedgrDb = defaultDb) {
+  const auth = await authorizeAction();
+  if ("error" in auth) return auth;
+  return linkTransactionToRecurringScoped(auth.householdId, recurringId, transactionId, db);
+}
+
+export async function unlinkTransactionFromRecurringScoped(
+  householdId: string,
+  transactionId: string,
+  db: LedgrDb = defaultDb,
+): Promise<ActionResult> {
+  const parsed = idSchema.safeParse(transactionId);
+  if (!parsed.success) return { error: "Invalid input" };
+
+  return withHousehold(householdId, async (tx) => {
+    const scopedTx = scopedQuery(householdId, tx);
+    const [txn] = await tx
+      .select({ id: transactions.id, recurringId: transactions.recurringTransactionId })
+      .from(transactions)
+      .where(scopedTx.where(transactions, eq(transactions.id, parsed.data)))
+      .limit(1);
+    if (!txn) return { error: "Transaction not found" };
+
+    if (txn.recurringId) {
+      await tx
+        .insert(recurringExclusions)
+        .values({ recurringId: txn.recurringId, transactionId: txn.id })
+        .onConflictDoNothing();
+    }
+    await tx
+      .update(transactions)
+      .set({ recurringTransactionId: null, updatedAt: new Date() })
+      .where(eq(transactions.id, txn.id));
+    refresh();
+    return { success: true as const };
+  }, db);
+}
+
+export async function unlinkTransactionFromRecurring(transactionId: string, db: LedgrDb = defaultDb) {
+  const auth = await authorizeAction();
+  if ("error" in auth) return auth;
+  return unlinkTransactionFromRecurringScoped(auth.householdId, transactionId, db);
 }
