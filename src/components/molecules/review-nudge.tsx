@@ -2,7 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import Link from "next/link";
-import { X, CircleAlert } from "lucide-react";
+import { X, CircleAlert, ArrowRight } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Alert, AlertTitle, AlertDescription, AlertAction } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
@@ -71,7 +71,7 @@ export function ReviewNudge({ unreviewedCount, share, monthLabel }: ReviewNudgeP
     // buttons. Below sm the action flows under the text instead.
     <Alert
       variant="warning"
-      className="mb-6 has-data-[slot=alert-action]:pr-2.5 sm:has-data-[slot=alert-action]:pr-44"
+      className="mb-6 gap-y-1 rounded-2xl px-4 py-3.5 has-data-[slot=alert-action]:pr-4 sm:has-data-[slot=alert-action]:pr-56"
     >
       <CircleAlert />
       <AlertTitle>
@@ -84,9 +84,16 @@ export function ReviewNudge({ unreviewedCount, share, monthLabel }: ReviewNudgeP
           uncategorized, so budgets and reports are under-counting.
         </AlertDescription>
       )}
-      <AlertAction className="static col-start-2 mt-2 flex items-center gap-1 sm:absolute sm:mt-0">
-        <Link href="/transactions?mode=review" className={cn(buttonVariants({ size: "sm" }))}>
+      <AlertAction className="static col-start-2 mt-3 flex items-center gap-1.5 sm:absolute sm:top-1/2 sm:right-3 sm:mt-0 sm:-translate-y-1/2">
+        <Link
+          href="/transactions?mode=review"
+          className={cn(
+            buttonVariants({ size: "default" }),
+            "h-9 gap-1.5 rounded-full px-4 font-semibold shadow-sm",
+          )}
+        >
           Start reviewing
+          <ArrowRight />
         </Link>
         <Button
           variant="ghost"
