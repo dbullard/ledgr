@@ -10,6 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Command, CommandInput, CommandList, CommandEmpty } from "@/components/ui/command";
 import { CategoryCommandItems } from "@/components/molecules/category-command-items";
 import { categoryPillLabel } from "@/components/molecules/category-pill-label";
+import { categoryToneStyle } from "@/lib/category-tone";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -75,6 +76,7 @@ export function CategoryPill({
     ? (v: boolean) => controlledOnOpenChange?.(v)
     : setInternalOpen;
 
+  const pill = categoryPillLabel(categoryName, isTransfer, transferSource);
   const totalCategoryCount = categories.reduce((sum, g) => sum + g.categories.length, 0);
 
   function handleSelect(categoryId: string | null) {
@@ -137,24 +139,26 @@ export function CategoryPill({
         >
           <Badge
             variant="outline"
+            style={pill.variant === "category" ? categoryToneStyle(categoryName) : undefined}
             className={cn(
               "text-xs gap-1 transition-colors",
+              pill.variant === "category" &&
+                "border-transparent text-[10px] font-semibold uppercase tracking-wide",
               // The affordance is in the resting state, not on hover — a control
               // that only looks interactive once you find it with a pointer is
               // invisible to anyone who doesn't explore by hovering.
-              !disabled && "group-hover:border-foreground/30 group-hover:bg-accent",
+              !disabled && pill.variant !== "category" && "group-hover:border-foreground/30 group-hover:bg-accent",
+              !disabled && pill.variant === "category" && "group-hover:brightness-125",
             )}
           >
             <span className="truncate">
-              {(() => {
-                const { text, variant } = categoryPillLabel(categoryName, isTransfer, transferSource);
-                if (variant === "category") return text;
-                return (
-                  <span className={cn("text-muted-foreground", variant === "uncategorized" && "italic")}>
-                    {text}
-                  </span>
-                );
-              })()}
+              {pill.variant === "category" ? (
+                pill.text
+              ) : (
+                <span className={cn("text-muted-foreground", pill.variant === "uncategorized" && "italic")}>
+                  {pill.text}
+                </span>
+              )}
             </span>
             {!disabled && <ChevronDown aria-hidden className="size-3 shrink-0 opacity-50" />}
           </Badge>

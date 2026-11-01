@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useCallback, useTransition } from "react";
 import { Responsive, useContainerWidth } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
@@ -55,6 +56,17 @@ interface DashboardGridProps {
   layout: DashboardLayout;
   data: DashboardData;
 }
+
+/** Where each card's "View all" link goes. */
+const WIDGET_LINKS: Record<string, string> = {
+  accounts: "/accounts",
+  spending: "/reports",
+  "cash-flow": "/reports",
+  "recent-txns": "/transactions",
+  budgets: "/budgets",
+  bills: "/bills",
+  investments: "/investments",
+};
 
 export function DashboardGrid({ layout, data }: DashboardGridProps) {
   const { width, containerRef, mounted } = useContainerWidth({ initialWidth: 1200 });
@@ -171,7 +183,17 @@ export function DashboardGrid({ layout, data }: DashboardGridProps) {
                   <CardTitle className="text-sm font-medium">
                     {WIDGET_TITLE_MAP.get(item.i) ?? item.i}
                   </CardTitle>
-                  <GripVertical className="size-4 text-muted-foreground cursor-grab drag-handle opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity" />
+                  <div className="flex items-center gap-2">
+                    {WIDGET_LINKS[item.i] && (
+                      <Link
+                        href={WIDGET_LINKS[item.i]}
+                        className="text-xs text-muted-foreground hover:text-primary transition-colors"
+                      >
+                        View all ›
+                      </Link>
+                    )}
+                    <GripVertical className="size-4 text-muted-foreground cursor-grab drag-handle opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity" />
+                  </div>
                 </div>
                 <CardContent className="flex-1 min-h-0 pb-3 px-4">
                   {renderWidget(item.i)}
