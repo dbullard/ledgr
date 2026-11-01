@@ -7,7 +7,7 @@ import {
   categoryGroups,
 } from "@/db/schema";
 import { scopedQuery } from "@/lib/scoped-query";
-import { notDeleted, notHidden, sumAbs, sumCol } from "@/lib/query-helpers";
+import { notDeleted, sumAbs, sumCol, isVisibleTransaction } from "@/lib/query-helpers";
 import { UNCATEGORIZED, resolvedCategoryLabel } from "@/lib/labels";
 import { getIncomeCategoryIds, includedInSpending, notIncome } from "@/queries/shared-conditions";
 import type { ReportFilters } from "@/queries/reports";
@@ -31,7 +31,7 @@ export interface SpendingChartItem {
 export async function spendingBaseConditions(householdId: string, filters: ReportFilters, db: LedgrDb) {
   const conditions = [
     notDeleted(transactions),
-    notHidden(transactions),
+    isVisibleTransaction(transactions),
     lt(transactions.normalizedAmount, 0),
     eq(transactions.pending, false),
     await includedInSpending(householdId, db),
@@ -56,7 +56,7 @@ export async function incomeBaseConditions(householdId: string, filters: ReportF
   const incomeCatIds = await getIncomeCategoryIds(householdId, db);
   const conditions = [
     notDeleted(transactions),
-    notHidden(transactions),
+    isVisibleTransaction(transactions),
     eq(transactions.pending, false),
     eq(transactions.isTransfer, false),
     isNull(transactions.transferPairId),

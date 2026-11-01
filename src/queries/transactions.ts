@@ -3,7 +3,7 @@ import { db as defaultDb, type LedgrDb } from "@/db";
 import { transactions, categories, categoryGroups, merchants, accounts, transactionSplits, type CategorySource } from "@/db/schema";
 import { scopedQuery } from "@/lib/scoped-query";
 import { includedInSpending } from "@/queries/shared-conditions";
-import { notDeleted, notHidden, encodeCursor, decodeCursor, countRows } from "@/lib/query-helpers";
+import { notDeleted, encodeCursor, decodeCursor, countRows, isVisibleTransaction } from "@/lib/query-helpers";
 
 export interface TransactionFilters {
   dateFrom?: string;
@@ -131,7 +131,7 @@ function buildTransactionConditions(
   // flips this into the one dedicated view that shows them.
   const conditions: (SQL | undefined)[] = [
     notDeleted(transactions),
-    filters.hidden === true ? eq(transactions.isHidden, true) : notHidden(transactions),
+    filters.hidden === true ? eq(transactions.isHidden, true) : isVisibleTransaction(transactions),
   ];
 
   if (filters.dateFrom) {
@@ -321,7 +321,7 @@ export async function getSuggestedTransfers(
 ): Promise<TransactionRow[]> {
   const { rows } = await fetchTransactionPage(
     householdId,
-    [notDeleted(transactions), notHidden(transactions), eq(transactions.transferSource, "suggested")],
+    [notDeleted(transactions), isVisibleTransaction(transactions), eq(transactions.transferSource, "suggested")],
     200,
     null,
     db,
@@ -337,7 +337,7 @@ export async function getSuggestedTransferCount(
   const [result] = await db
     .select({ count: countRows() })
     .from(transactions)
-    .where(scoped.where(transactions, notDeleted(transactions), notHidden(transactions), eq(transactions.transferSource, "suggested")))
+    .where(scoped.where(transactions, notDeleted(transactions), isVisibleTransaction(transactions), eq(transactions.transferSource, "suggested")))
     .limit(1);
   return result?.count ?? 0;
 }

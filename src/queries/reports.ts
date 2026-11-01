@@ -9,7 +9,7 @@ import {
   recurringTransactions,
 } from "@/db/schema";
 import { scopedQuery } from "@/lib/scoped-query";
-import { notDeleted, notHidden, sumAbs, sumCol, countRows } from "@/lib/query-helpers";
+import { notDeleted, sumAbs, sumCol, countRows, isVisibleTransaction } from "@/lib/query-helpers";
 import { getIncomeCategoryIds, includedInSpending, notIncome } from "@/queries/shared-conditions";
 import { classifyAccountType } from "@/lib/account-utils";
 import { resolvedCategoryLabel, UNCATEGORIZED } from "@/lib/labels";
@@ -97,7 +97,7 @@ export async function getIncomeVsExpense(
 
   const conditions = [
     notDeleted(transactions),
-    notHidden(transactions),
+    isVisibleTransaction(transactions),
     eq(transactions.pending, false),
     await includedInSpending(householdId, db),
     gte(transactions.date, filters.dateFrom),
@@ -159,7 +159,7 @@ export async function getCategoryTrends(
   const scoped = scopedQuery(householdId, db);
   const conditions = [
     notDeleted(transactions),
-    notHidden(transactions),
+    isVisibleTransaction(transactions),
     lt(transactions.normalizedAmount, 0),
     eq(transactions.pending, false),
     await includedInSpending(householdId, db),
@@ -281,7 +281,7 @@ export async function getIncomeExpenseByCategory(
 
   const conditions = [
     notDeleted(transactions),
-    notHidden(transactions),
+    isVisibleTransaction(transactions),
     eq(transactions.pending, false),
     await includedInSpending(householdId, db),
     gte(transactions.date, filters.dateFrom),
@@ -580,7 +580,7 @@ export async function getCashFlowSankey(
 
   const conditions = [
     notDeleted(transactions),
-    notHidden(transactions),
+    isVisibleTransaction(transactions),
     eq(transactions.pending, false),
     await includedInSpending(householdId, db),
     gte(transactions.date, filters.dateFrom),
@@ -764,7 +764,7 @@ export async function getSafeToSpend(
       scoped.where(
         transactions,
         notDeleted(transactions),
-        notHidden(transactions),
+        isVisibleTransaction(transactions),
         gte(transactions.date, dateFrom),
         lte(transactions.date, dateTo),
         eq(transactions.isTransfer, false),
@@ -837,7 +837,7 @@ export async function getSafeToSpend(
       scoped.where(
         transactions,
         notDeleted(transactions),
-        notHidden(transactions),
+        isVisibleTransaction(transactions),
         gte(transactions.date, dateFrom),
         lte(transactions.date, dateTo),
         eq(transactions.pending, false),
