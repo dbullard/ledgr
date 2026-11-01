@@ -1,23 +1,29 @@
 import { getHouseholdId } from "@/lib/auth/session";
-import { getUpcomingBills, getRecurringSummary } from "@/queries/recurring";
+import { getRecurrings, getRecurringSummary, getRecurringTransactions } from "@/queries/recurring";
 import { getCategories } from "@/queries/categories";
 import { centsToDisplay } from "@/lib/money";
-import { BillList } from "@/components/organisms/bill-list";
+import { RecurringList } from "@/components/organisms/recurring-list";
 import { BillSearch } from "@/components/molecules/bill-search";
 import { BillEmptyState } from "@/components/molecules/bill-empty-state";
 
-export default async function BillsPage({
+export default async function RecurringsPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const householdId = await getHouseholdId();
   const params = await searchParams;
-  const [bills, summary, categoryGroups] = await Promise.all([
-    getUpcomingBills(householdId, { search: params.q }),
+  const [groups, summary, categoryGroups] = await Promise.all([
+    getRecurrings(householdId, { search: params.q }),
     getRecurringSummary(householdId),
     getCategories(householdId),
   ]);
+
+  const all = [...groups.overdue, ...groups.thisMonth, ...groups.future, ...groups.paused, ...groups.archived];
+  const item = params.item ? all.find((r) => r.id === params.item) : undefined;
+  const selected = item
+    ? { item, transactions: await getRecurringTransactions(householdId, item.id) }
+    : null;
 
   return (
     <div className="space-y-4">
@@ -38,10 +44,14 @@ export default async function BillsPage({
             )}
           </p>
         </div>
-        {bills.length > 0 && <BillSearch />}
+        {all.length > 0 && <BillSearch />}
       </div>
 
-      {bills.length === 0 ? <BillEmptyState /> : <BillList bills={bills} categoryGroups={categoryGroups} />}
+      {all.length === 0 ? (
+        <BillEmptyState />
+      ) : (
+        <RecurringList groups={groups} categoryGroups={categoryGroups} selected={selected} />
+      )}
     </div>
   );
 }

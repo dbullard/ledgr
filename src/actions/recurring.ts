@@ -9,6 +9,8 @@ import { recurringTransactions, recurringExclusions, transactions, categories } 
 import { withHousehold } from "@/lib/household-context";
 import { nextDateAfter } from "@/lib/recurring-match";
 import { applyRecurringMatching } from "@/lib/recurring-matching";
+import { getLinkableTransactions } from "@/queries/recurring";
+import type { TransactionRow } from "@/queries/transactions";
 import { scopedQuery } from "@/lib/scoped-query";
 import { authorizeAction } from "@/lib/auth/authorize-action";
 
@@ -407,4 +409,15 @@ export async function unlinkTransactionFromRecurring(transactionId: string, db: 
   const auth = await authorizeAction();
   if ("error" in auth) return auth;
   return unlinkTransactionFromRecurringScoped(auth.householdId, transactionId, db);
+}
+
+/** Recent unlinked transactions for the detail panel's "Add" picker. */
+export async function fetchLinkableTransactions(
+  search: string,
+  db: LedgrDb = defaultDb,
+): Promise<{ rows: TransactionRow[] } | { error: string }> {
+  const auth = await authorizeAction();
+  if ("error" in auth) return auth;
+  const rows = await getLinkableTransactions(auth.householdId, { search: search.trim() || undefined }, db);
+  return { rows };
 }
