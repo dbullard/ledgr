@@ -62,7 +62,7 @@ const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
     label: "Planning",
     items: [
       { href: "/budgets", label: "Budgets", icon: Wallet },
-      { href: "/bills", label: "Bills", icon: Receipt },
+      { href: "/recurrings", label: "Recurrings", icon: Receipt },
       { href: "/reports", label: "Reports", icon: BarChart3 },
     ],
   },

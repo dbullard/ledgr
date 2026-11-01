@@ -61,7 +61,7 @@ export const DASHBOARD_WIDGETS: WidgetConfig[] = [
   { id: "cash-flow", title: "Cash Flow", defaultHeight: 2 },
   { id: "recent-txns", title: "Recent Transactions", defaultHeight: 2 },
   { id: "budgets", title: "Budget Progress", defaultHeight: 1 },
-  { id: "bills", title: "Upcoming Bills", defaultHeight: 2 },
+  { id: "bills", title: "Upcoming Recurrings", defaultHeight: 2 },
   { id: "investments", title: "Investments", defaultHeight: 2 },
 ];
 

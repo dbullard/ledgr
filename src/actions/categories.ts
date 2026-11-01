@@ -32,7 +32,7 @@ const categoryInputSchema = z.object({
 });
 
 function revalidateCategoryConsumers() {
-  for (const path of ["/categories", "/transactions", "/rules", "/budgets", "/bills", "/reports"]) {
+  for (const path of ["/categories", "/transactions", "/rules", "/budgets", "/recurrings", "/reports"]) {
     revalidatePath(path);
   }
 }

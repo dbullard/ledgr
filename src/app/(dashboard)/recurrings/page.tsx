@@ -23,7 +23,7 @@ export default async function BillsPage({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Bills</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Recurrings</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             {summary.monthlyExpenses > 0 && (
               <span>

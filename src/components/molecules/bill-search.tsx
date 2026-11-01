@@ -41,7 +41,7 @@ export function BillSearch() {
         <Search />
       </InputGroupAddon>
       <InputGroupInput
-        placeholder="Search bills..."
+        placeholder="Search recurrings..."
         value={value}
         onChange={(e) => handleChange(e.target.value)}
       />

@@ -72,7 +72,7 @@ const WIDGET_LINKS: Record<string, string> = {
   "recent-txns": "/transactions",
   review: "/transactions",
   budgets: "/budgets",
-  bills: "/bills",
+  bills: "/recurrings",
   investments: "/investments",
 };
 

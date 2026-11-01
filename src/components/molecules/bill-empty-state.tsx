@@ -5,9 +5,9 @@ export function BillEmptyState() {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
       <CalendarX2 className="h-10 w-10 text-muted-foreground/40 mb-3" />
-      <h3 className="text-lg font-medium">No recurring bills detected yet</h3>
+      <h3 className="text-lg font-medium">No recurring items yet</h3>
       <p className="text-sm text-muted-foreground mt-1">
-        Connect an account and sync transactions — bills are identified automatically.
+        Connect an account and sync transactions — recurring items are detected automatically, or add one yourself.
       </p>
       <Link
         href="/accounts"

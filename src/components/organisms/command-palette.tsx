@@ -36,7 +36,7 @@ const PAGES = [
   { href: "/categories", label: "Categories", icon: Shapes },
   { href: "/investments", label: "Investments", icon: TrendingUp },
   { href: "/budgets", label: "Budgets", icon: Wallet },
-  { href: "/bills", label: "Bills", icon: Receipt },
+  { href: "/recurrings", label: "Recurrings", icon: Receipt },
   { href: "/reports", label: "Reports", icon: BarChart3 },
   { href: "/import", label: "Import", icon: Upload },
   { href: "/settings", label: "Settings", icon: Settings },

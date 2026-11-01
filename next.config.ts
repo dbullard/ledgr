@@ -11,6 +11,10 @@ const nextConfig: NextConfig = {
   env: {
     APP_VERSION: version,
   },
+  // Bills became Recurrings; keep old bookmarks and links working.
+  async redirects() {
+    return [{ source: "/bills", destination: "/recurrings", permanent: false }];
+  },
 };
 
 export default nextConfig;

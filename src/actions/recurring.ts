@@ -88,7 +88,7 @@ export async function updateRecurringTransactionScoped(
 
   if (updated.length === 0) return { error: "Bill not found" };
 
-  revalidatePath("/bills");
+  revalidatePath("/recurrings");
   revalidatePath("/");
   return { success: true };
 }
@@ -118,7 +118,7 @@ export async function deleteRecurringTransactionScoped(
 
   if (deleted.length === 0) return { error: "Bill not found" };
 
-  revalidatePath("/bills");
+  revalidatePath("/recurrings");
   revalidatePath("/");
   return { success: true };
 }

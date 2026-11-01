@@ -28,7 +28,7 @@ export function UpcomingBillsWidget({ data }: UpcomingBillsWidgetProps) {
   if (data.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-        No upcoming bills
+        Nothing upcoming
       </div>
     );
   }
@@ -64,10 +64,10 @@ export function UpcomingBillsWidget({ data }: UpcomingBillsWidgetProps) {
         ))}
       </div>
       <Link
-        href="/bills"
+        href="/recurrings"
         className="text-xs text-primary hover:underline mt-2 text-center"
       >
-        View all bills
+        View all recurrings
       </Link>
     </div>
   );
