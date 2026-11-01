@@ -117,10 +117,13 @@ export async function syncRecurringTransactions(
         const name = merchantName ?? titleCase(stream.description);
 
         const [existing] = await tx
-          .select({ id: recurringTransactions.id })
+          .select({ id: recurringTransactions.id, status: recurringTransactions.status })
           .from(recurringTransactions)
           .where(eq(recurringTransactions.plaidStreamId, stream.stream_id))
           .limit(1);
+
+        // Archived by the user: keep it archived, don't refresh or re-link it.
+        if (existing?.status === "archived") continue;
 
         // Track the recurring row's id from the upsert so we don't re-SELECT it.
         let recurringId: string;

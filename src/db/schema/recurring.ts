@@ -31,6 +31,20 @@ export const recurringTransactions = pgTable(
     nextDate: text("next_date"),
     isActive: boolean("is_active").default(true),
     isIncome: boolean("is_income").default(false),
+    // User-owned lifecycle. Detection writes isActive on every pass, so
+    // pausing or archiving needs its own column or the next sync undoes it.
+    status: text("status", { enum: ["active", "paused", "archived"] })
+      .notNull()
+      .default("active"),
+    // "manual" items are created by the user and are never swept by detection.
+    source: text("source", { enum: ["detected", "manual"] })
+      .notNull()
+      .default("detected"),
+    // Match rules; null means "any". A null matchName matches nothing.
+    matchName: text("match_name"),
+    matchMinAmount: integer("match_min_amount"),
+    matchMaxAmount: integer("match_max_amount"),
+    matchDayOfMonth: integer("match_day_of_month"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

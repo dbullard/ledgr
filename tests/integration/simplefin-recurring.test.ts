@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
 import { createTestDb } from "./setup";
-import { insertHousehold, insertAccount, insertTransaction, insertCategoryGroup, insertCategory } from "./helpers";
+import { insertHousehold, insertAccount, insertTransaction, insertCategoryGroup, insertCategory, insertRecurringTransaction } from "./helpers";
 import { applyRecurringDetection } from "@/lib/simplefin/recurring";
 import { recurringTransactions, transactions } from "@/db/schema";
 
@@ -333,5 +333,86 @@ describe("applyRecurringDetection", () => {
     } finally {
       await close();
     }
+  });
+
+  describe("user-owned status and source", () => {
+    async function seedNetflix(db: Parameters<typeof insertTransaction>[0], householdId: string, accountId: string) {
+      for (const date of [monthsAgoDate(2), monthsAgoDate(1), monthsAgoDate(0)]) {
+        await insertTransaction(db, householdId, accountId, {
+          date, name: "Netflix", normalizedAmount: -1599, amount: 1599, provider: "simplefin",
+        });
+      }
+    }
+
+    it("does not update, re-activate or duplicate an archived item", async () => {
+      const { db, close } = await createTestDb();
+      try {
+        const { householdId } = await insertHousehold(db);
+        const { accountId } = await insertAccount(db, householdId, { type: "credit" });
+        await seedNetflix(db, householdId, accountId);
+        const { recurringId } = await insertRecurringTransaction(db, householdId, {
+          accountId, name: "Netflix", status: "archived", isActive: false, averageAmount: 1,
+        });
+
+        await applyRecurringDetection(householdId, db);
+
+        const rows = await db.select().from(recurringTransactions).where(eq(recurringTransactions.householdId, householdId));
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ id: recurringId, status: "archived", isActive: false, averageAmount: 1 });
+      } finally {
+        await close();
+      }
+    });
+
+    it("leaves a paused item's status alone", async () => {
+      const { db, close } = await createTestDb();
+      try {
+        const { householdId } = await insertHousehold(db);
+        const { accountId } = await insertAccount(db, householdId, { type: "credit" });
+        await seedNetflix(db, householdId, accountId);
+        await insertRecurringTransaction(db, householdId, { accountId, name: "Netflix", status: "paused" });
+
+        await applyRecurringDetection(householdId, db);
+
+        const [row] = await db.select().from(recurringTransactions).where(eq(recurringTransactions.householdId, householdId));
+        expect(row.status).toBe("paused");
+      } finally {
+        await close();
+      }
+    });
+
+    it("does not sweep a manual item that detection never saw", async () => {
+      const { db, close } = await createTestDb();
+      try {
+        const { householdId } = await insertHousehold(db);
+        const { recurringId } = await insertRecurringTransaction(db, householdId, { name: "Gym", source: "manual", isActive: true });
+
+        await applyRecurringDetection(householdId, db);
+
+        const [row] = await db.select().from(recurringTransactions).where(eq(recurringTransactions.id, recurringId));
+        expect(row.isActive).toBe(true);
+      } finally {
+        await close();
+      }
+    });
+
+    it("still detects the same name on another account when one is archived", async () => {
+      const { db, close } = await createTestDb();
+      try {
+        const { householdId } = await insertHousehold(db);
+        const { accountId: a } = await insertAccount(db, householdId, { type: "credit" });
+        const { accountId: b } = await insertAccount(db, householdId, { type: "credit" });
+        await seedNetflix(db, householdId, b);
+        await insertRecurringTransaction(db, householdId, { accountId: a, name: "Netflix", status: "archived", isActive: false });
+
+        await applyRecurringDetection(householdId, db);
+
+        const rows = await db.select().from(recurringTransactions).where(eq(recurringTransactions.accountId, b));
+        expect(rows).toHaveLength(1);
+        expect(rows[0].status).toBe("active");
+      } finally {
+        await close();
+      }
+    });
   });
 });

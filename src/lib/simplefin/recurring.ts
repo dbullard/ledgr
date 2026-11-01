@@ -179,7 +179,11 @@ export async function applyRecurringDetection(householdId: string, db: LedgrDb =
 
       for (const group of groups) {
         const [existing] = await tx
-          .select({ id: recurringTransactions.id, categoryId: recurringTransactions.categoryId })
+          .select({
+            id: recurringTransactions.id,
+            categoryId: recurringTransactions.categoryId,
+            status: recurringTransactions.status,
+          })
           .from(recurringTransactions)
           .where(
             and(
@@ -190,6 +194,10 @@ export async function applyRecurringDetection(householdId: string, db: LedgrDb =
             ),
           )
           .limit(1);
+
+        // An archived item is the user saying "this is not a recurring": leave
+        // it, and its transactions, entirely alone.
+        if (existing?.status === "archived") continue;
 
         const fields = {
           accountId: group.accountId,
@@ -248,6 +256,7 @@ export async function applyRecurringDetection(householdId: string, db: LedgrDb =
       const sweepConditions = [
         eq(recurringTransactions.householdId, householdId),
         isNull(recurringTransactions.plaidStreamId),
+        eq(recurringTransactions.source, "detected"),
         eq(recurringTransactions.isActive, true),
       ];
       if (upsertedIds.length > 0) {
