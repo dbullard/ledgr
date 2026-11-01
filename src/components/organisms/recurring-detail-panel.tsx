@@ -63,6 +63,7 @@ export function RecurringDetailPanel({ item, transactions, categoryGroups, onClo
   const [day, setDay] = useState(item.matchDayOfMonth ? String(item.matchDayOfMonth) : ANY_DAY);
   const [frequency, setFrequency] = useState<Frequency>((item.frequency as Frequency) ?? "monthly");
 
+  const [editingRules, setEditingRules] = useState(false);
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState("");
   const [candidates, setCandidates] = useState<TransactionRow[]>([]);
@@ -122,6 +123,14 @@ export function RecurringDetailPanel({ item, transactions, categoryGroups, onClo
     next: item.nextDate && item.averageAmount ? { date: item.nextDate, amount: item.averageAmount } : null,
   });
   const metrics = yearlyMetrics(transactions);
+  const rulePills = [
+    item.matchName ? `named ${item.matchName}` : "no name rule yet",
+    item.matchMinAmount !== null || item.matchMaxAmount !== null
+      ? `from ${item.matchMinAmount !== null ? centsToDisplay(item.matchMinAmount) : "any"} to ${item.matchMaxAmount !== null ? centsToDisplay(item.matchMaxAmount) : "any"}`
+      : "any amount",
+    `every ${({ weekly: "week", biweekly: "2 weeks", semimonthly: "half month", monthly: "month", yearly: "year" } as Record<string, string>)[item.frequency ?? "monthly"] ?? "month"}`,
+    item.matchDayOfMonth ? `on day ${item.matchDayOfMonth}` : "on any day of the month",
+  ];
   const lastAccount = transactions[0]?.accountName ?? item.accountName;
   const archived = item.lifecycle === "archived";
   const paused = item.lifecycle === "paused" || (item.lifecycle === "active" && !item.isActive);
@@ -149,100 +158,123 @@ export function RecurringDetailPanel({ item, transactions, categoryGroups, onClo
         </div>
       )}
 
-      <div className="space-y-1.5">
-        <Label htmlFor="rec-category">Category</Label>
-        <Select value={categoryId} onValueChange={(v) => v !== null && saveCategory(v)} disabled={pending}>
-          <SelectTrigger id="rec-category">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={NO_CATEGORY}>Uncategorized</SelectItem>
-            {categories.map((c) => (
-              <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      <section className="space-y-2">
+        <div className="flex items-center justify-between">
+          <h4 className="text-sm font-semibold">Rules</h4>
+          <Button variant="ghost" size="sm" onClick={() => setEditingRules((v) => !v)}>
+            {editingRules ? "Done" : "Edit"}
+          </Button>
+        </div>
+        <div className="flex flex-wrap gap-1.5 text-xs">
+          {rulePills.map((pill) => (
+            <span key={pill} className="rounded-md border bg-muted/40 px-2 py-1">{pill}</span>
+          ))}
+        </div>
+        {editingRules && (
+          <div className="space-y-4 pt-2">
+            <p className="text-xs text-muted-foreground">
+              Transactions that fit these rules are added to this item and move its next payment date.
+            </p>
+            <div className="space-y-1.5">
+              <Label htmlFor="rec-category">Category</Label>
+              <Select value={categoryId} onValueChange={(v) => v !== null && saveCategory(v)} disabled={pending}>
+                <SelectTrigger id="rec-category">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_CATEGORY}>Uncategorized</SelectItem>
+                  {categories.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-      <section className="space-y-3">
-        <h4 className="text-sm font-semibold">Rules</h4>
-        <p className="text-xs text-muted-foreground">
-          Transactions that fit these rules are added to this item and move its next payment date.
-        </p>
-        <div className="space-y-1.5">
-          <Label htmlFor="rec-display-name">Name</Label>
-          <Input id="rec-display-name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="rec-name">Matches transactions named</Label>
-          <Input
-            id="rec-name"
-            value={matchName}
-            placeholder="Part of the name your bank shows"
-            onChange={(e) => setMatchName(e.target.value)}
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="rec-min">From ($)</Label>
-            <Input id="rec-min" type="number" step="0.01" min="0" value={minAmount} onChange={(e) => setMinAmount(e.target.value)} />
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="rec-display-name">Name</Label>
+                <Input id="rec-display-name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="rec-name">Matches transactions named</Label>
+                <Input
+                  id="rec-name"
+                  value={matchName}
+                  placeholder="Part of the name your bank shows"
+                  onChange={(e) => setMatchName(e.target.value)}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="rec-min">From ($)</Label>
+                  <Input id="rec-min" type="number" step="0.01" min="0" value={minAmount} onChange={(e) => setMinAmount(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="rec-max">To ($)</Label>
+                  <Input id="rec-max" type="number" step="0.01" min="0" value={maxAmount} onChange={(e) => setMaxAmount(e.target.value)} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="rec-frequency">Every</Label>
+                  <Select value={frequency} onValueChange={(v) => v !== null && setFrequency(v as Frequency)}>
+                    <SelectTrigger id="rec-frequency"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {FREQUENCIES.map((f) => (
+                        <SelectItem key={f} value={f}>{FREQUENCY_LABELS[f]}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="rec-day">On</Label>
+                  <Select value={day} onValueChange={(v) => v !== null && setDay(v)}>
+                    <SelectTrigger id="rec-day"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ANY_DAY}>Any day of the month</SelectItem>
+                      {Array.from({ length: 31 }, (_, i) => (
+                        <SelectItem key={i + 1} value={String(i + 1)}>Day {i + 1}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <Button size="sm" onClick={saveRules} disabled={pending || !matchName.trim() || !displayName.trim()}>
+                Save rules
+              </Button>
+            </div>
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="rec-max">To ($)</Label>
-            <Input id="rec-max" type="number" step="0.01" min="0" value={maxAmount} onChange={(e) => setMaxAmount(e.target.value)} />
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="rec-frequency">Every</Label>
-            <Select value={frequency} onValueChange={(v) => v !== null && setFrequency(v as Frequency)}>
-              <SelectTrigger id="rec-frequency"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {FREQUENCIES.map((f) => (
-                  <SelectItem key={f} value={f}>{FREQUENCY_LABELS[f]}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="rec-day">On</Label>
-            <Select value={day} onValueChange={(v) => v !== null && setDay(v)}>
-              <SelectTrigger id="rec-day"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ANY_DAY}>Any day of the month</SelectItem>
-                {Array.from({ length: 31 }, (_, i) => (
-                  <SelectItem key={i + 1} value={String(i + 1)}>Day {i + 1}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-        <Button size="sm" onClick={saveRules} disabled={pending || !matchName.trim() || !displayName.trim()}>
-          Save rules
-        </Button>
+        )}
       </section>
 
-      {transactions.length > 0 && (
-        <section className="space-y-3">
-          <RecurringHistoryChart points={series} />
-          <div>
-            <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 text-xs text-muted-foreground">
-              <h4 className="text-sm font-semibold text-foreground">Key metrics</h4>
-              <span className="text-right">Spent per year</span>
-              <span className="text-right">Avg transaction</span>
+      <section className="space-y-3">
+        {transactions.length > 0 ? (
+          <>
+            <RecurringHistoryChart points={series} />
+            <div>
+              <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 text-xs text-muted-foreground">
+                <h4 className="text-sm font-semibold text-foreground">Key metrics</h4>
+                <span className="text-right">Spent per year</span>
+                <span className="text-right">Avg transaction</span>
+              </div>
+              <dl className="mt-1 space-y-0.5 text-sm">
+                {metrics.map((m) => (
+                  <div key={m.year} className="grid grid-cols-[1fr_auto_auto] gap-x-4">
+                    <dt className="text-muted-foreground">{m.year}</dt>
+                    <dd className="text-right tabular-nums">{centsToDisplay(m.spent)}</dd>
+                    <dd className="text-right tabular-nums">{centsToDisplay(m.average)}</dd>
+                  </div>
+                ))}
+              </dl>
             </div>
-            <dl className="mt-1 space-y-0.5 text-sm">
-              {metrics.map((m) => (
-                <div key={m.year} className="grid grid-cols-[1fr_auto_auto] gap-x-4">
-                  <dt className="text-muted-foreground">{m.year}</dt>
-                  <dd className="text-right tabular-nums">{centsToDisplay(m.spent)}</dd>
-                  <dd className="text-right tabular-nums">{centsToDisplay(m.average)}</dd>
-                </div>
-              ))}
-            </dl>
-          </div>
-        </section>
-      )}
+          </>
+        ) : (
+          <p className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
+            No payment history yet. Once transactions match this item&apos;s rules, a chart of what
+            you&apos;ve paid over time appears here. Use Edit to check the name it matches.
+          </p>
+        )}
+      </section>
 
       {lastAccount && (
         <section>
