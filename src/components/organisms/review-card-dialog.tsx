@@ -137,7 +137,10 @@ export function ReviewCardDialog({
             <Button onClick={handleExit}>Done</Button>
           </div>
         ) : currentTransaction ? (
-          <div className="space-y-4">
+          // min-w-0: DialogContent is a grid, and a grid item won't shrink below its
+          // content's min width — a long merchant string would widen the whole
+          // card past a phone screen without it.
+          <div className="min-w-0 space-y-4">
             <ReviewProgressBar
               current={sessionReviewedCount}
               total={queueLength}
@@ -153,20 +156,21 @@ export function ReviewCardDialog({
               onNotesSave={handleNotesSave}
             />
 
-            <div className="flex items-center justify-between pt-2 border-t">
+            <div className="flex items-center justify-between gap-2 pt-2 border-t">
               <Button
                 variant="outline"
                 size="sm"
+                className="max-sm:h-10 max-sm:px-4"
                 onClick={retreat}
                 disabled={currentIndex === 0 || isSaving}
               >
                 Back
               </Button>
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={skip} disabled={isSaving}>
+                <Button variant="outline" size="sm" className="max-sm:h-10 max-sm:px-4" onClick={skip} disabled={isSaving}>
                   Skip
                 </Button>
-                <Button size="sm" onClick={confirm} disabled={isSaving}>
+                <Button size="sm" className="max-sm:h-10 max-sm:px-4" onClick={confirm} disabled={isSaving}>
                   {isSaving ? "Saving..." : "Confirm"}
                 </Button>
               </div>

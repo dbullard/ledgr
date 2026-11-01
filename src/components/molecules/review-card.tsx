@@ -38,7 +38,7 @@ export function ReviewCard({
     <div
       ref={cardRef}
       tabIndex={-1}
-      className="outline-none space-y-4"
+      className="min-w-0 outline-none space-y-4"
       data-direction={direction}
       key={transaction.id}
       style={{
@@ -53,7 +53,7 @@ export function ReviewCard({
           size="md"
         />
         <div className="min-w-0 flex-1">
-          <p className="font-semibold truncate">{transaction.name}</p>
+          <p className="font-semibold line-clamp-2 break-words">{transaction.name}</p>
           <p className="text-xs text-muted-foreground">
             {transaction.accountName} &middot; {formatDateShort(transaction.date)}
           </p>

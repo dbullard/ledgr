@@ -10,7 +10,8 @@ export function ReviewProgressBar({ current, total }: ReviewProgressBarProps) {
 
   return (
     <div className="space-y-1" aria-live="polite">
-      <div className="flex justify-between text-xs text-muted-foreground">
+      {/* pr-8 keeps the percentage clear of the dialog's close button, which sits in this corner. */}
+      <div className="flex justify-between pr-8 text-xs text-muted-foreground">
         <span>{current} of {total} reviewed</span>
         <span>{pct}%</span>
       </div>
