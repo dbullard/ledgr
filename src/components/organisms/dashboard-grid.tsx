@@ -30,6 +30,7 @@ import type { MonthlySpendingRow, CashFlowRow } from "@/queries/dashboard";
 import type { TransactionRow } from "@/queries/transactions";
 import type { AccountType } from "@/db/schema/accounts";
 import type { BudgetMonth } from "@/queries/budgets";
+import type { CategoryGroup } from "@/queries/categories";
 import type { BillRow } from "@/queries/recurring";
 import type { getInvestmentsSummary } from "@/queries/dashboard";
 
@@ -39,6 +40,7 @@ export interface DashboardData {
   cashFlow: CashFlowRow[];
   recentTransactions: TransactionRow[];
   reviewQueue: { rows: TransactionRow[]; total: number };
+  categories: CategoryGroup[];
   accounts: {
     id: string;
     name: string;
@@ -130,7 +132,11 @@ export function DashboardGrid({ layout, data }: DashboardGridProps) {
       case "recent-txns":
         return <RecentTransactionsWidget data={data.recentTransactions} />;
       case "review":
-        return <ReviewQueueWidget rows={data.reviewQueue.rows} total={data.reviewQueue.total} />;
+        return <ReviewQueueWidget
+            rows={data.reviewQueue.rows}
+            total={data.reviewQueue.total}
+            categories={data.categories}
+          />;
       case "accounts":
         return <AccountBalancesWidget data={data.accounts} />;
       case "budgets":

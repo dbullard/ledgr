@@ -13,6 +13,7 @@ import {
 import { getAccountsByInstitution } from "@/queries/accounts";
 import { getBudgetForMonth } from "@/queries/budgets";
 import { getUpcomingBills } from "@/queries/recurring";
+import { getCategories } from "@/queries/categories";
 import { getTransactionSummary, getSuggestedTransferCount, getTransactions } from "@/queries/transactions";
 import { getCurrentMonth, shiftMonth, formatMonthLong } from "@/lib/date-utils";
 import { uncategorizedShare } from "@/lib/uncategorized-share";
@@ -50,7 +51,7 @@ export default async function DashboardPage() {
   const heroRange =
     rangeSupport(fullCoverageSince, new Date()).find((r) => r.recommended)?.range ?? "1M";
 
-  const [summary, prevSummary, netWorthHistory, monthlySpending, cashFlow, recentTransactions, accountGroups, budgetData, upcomingBills, investmentsData, savedLayout, unreviewedSummary, suggestedTransferCount, reviewPage] =
+  const [summary, prevSummary, netWorthHistory, monthlySpending, cashFlow, recentTransactions, accountGroups, budgetData, upcomingBills, investmentsData, savedLayout, unreviewedSummary, suggestedTransferCount, reviewPage, categories] =
     await Promise.all([
       withHousehold(householdId, (tx) => getDashboardSummary(householdId, spendingMonth, tx)),
       withHousehold(householdId, (tx) => getDashboardSummary(householdId, prevMonth, tx)),
@@ -66,6 +67,7 @@ export default async function DashboardPage() {
       withHousehold(householdId, (tx) => getTransactionSummary(householdId, { needsReview: true }, tx)),
       withHousehold(householdId, (tx) => getSuggestedTransferCount(householdId, tx)),
       withHousehold(householdId, (tx) => getTransactions(householdId, { needsReview: true }, 10, null, tx)),
+      withHousehold(householdId, (tx) => getCategories(householdId, tx)),
     ]);
 
   // Flattened from the institution grouping so the balances widget can show the
@@ -113,6 +115,7 @@ export default async function DashboardPage() {
     cashFlow,
     recentTransactions,
     reviewQueue: { rows: reviewPage.rows, total: unreviewedSummary.count },
+    categories,
     accounts,
     budgetData,
     upcomingBills,

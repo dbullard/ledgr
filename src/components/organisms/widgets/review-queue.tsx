@@ -5,23 +5,25 @@ import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
 import { bulkMarkReviewed } from "@/actions/transactions";
 import { AmountDisplay } from "@/components/atoms/amount-display";
-import { CategoryChip } from "@/components/molecules/category-chip";
+import { CategoryPill } from "@/components/molecules/category-pill";
 import { WidgetPlaceholder } from "@/components/molecules/widget-placeholder";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { TransactionRow } from "@/queries/transactions";
+import type { CategoryGroup } from "@/queries/categories";
 
 interface ReviewQueueWidgetProps {
   rows: TransactionRow[];
   /** Everything still awaiting review, not just the rows shown. */
   total: number;
+  categories: CategoryGroup[];
 }
 
 function formatDate(date: string) {
   return new Date(date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-export function ReviewQueueWidget({ rows, total }: ReviewQueueWidgetProps) {
+export function ReviewQueueWidget({ rows, total, categories }: ReviewQueueWidgetProps) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
@@ -79,7 +81,21 @@ export function ReviewQueueWidget({ rows, total }: ReviewQueueWidgetProps) {
               <p className="truncate text-sm font-medium">{tx.merchantName ?? tx.name}</p>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <span className="shrink-0">{formatDate(tx.date)}</span>
-                {!tx.isTransfer && <CategoryChip name={tx.categoryName} />}
+                {/* The pill is a button inside the row's label; keep its clicks from ticking the checkbox. */}
+                <div className="min-w-0" onClick={(e) => e.stopPropagation()}>
+                  <CategoryPill
+                    key={`${tx.id}-cat-${tx.categoryId}`}
+                    transactionId={tx.id}
+                    currentCategoryId={tx.categoryId}
+                    currentCategoryName={tx.categoryName}
+                    categories={categories}
+                    disabled={tx.hasSplits}
+                    isTransfer={tx.isTransfer}
+                    transferSource={tx.transferSource}
+                    merchantId={tx.merchantId}
+                    merchantName={tx.merchantName}
+                  />
+                </div>
               </div>
             </div>
             <AmountDisplay amount={tx.normalizedAmount} currency={tx.currency} />
