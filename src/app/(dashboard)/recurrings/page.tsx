@@ -3,6 +3,7 @@ import { getRecurrings, getRecurringSummary, getRecurringTransactions } from "@/
 import { getCategories } from "@/queries/categories";
 import { centsToDisplay } from "@/lib/money";
 import { RecurringList } from "@/components/organisms/recurring-list";
+import { RecurringCreateDialog } from "@/components/organisms/recurring-create-dialog";
 import { BillSearch } from "@/components/molecules/bill-search";
 import { BillEmptyState } from "@/components/molecules/bill-empty-state";
 
@@ -44,7 +45,10 @@ export default async function RecurringsPage({
             )}
           </p>
         </div>
-        {all.length > 0 && <BillSearch />}
+        <div className="flex items-center gap-2">
+          {all.length > 0 && <BillSearch />}
+          <RecurringCreateDialog categoryGroups={categoryGroups} />
+        </div>
       </div>
 
       {all.length === 0 ? (

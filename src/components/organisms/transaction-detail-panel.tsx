@@ -13,6 +13,7 @@ import { CategoryPill } from "@/components/molecules/category-pill";
 import { DetailGroup, DetailRow } from "@/components/molecules/detail-group";
 import { SplitEditor } from "@/components/molecules/split-editor";
 import { TransactionNoteField } from "@/components/molecules/transaction-note-field";
+import { MakeRecurringButton } from "@/components/molecules/make-recurring-button";
 import { useTransactionDetail } from "@/hooks/use-transaction-detail";
 import type { TransactionPatch } from "@/hooks/use-transaction-rows";
 import { centsToDisplay } from "@/lib/money";
@@ -298,6 +299,10 @@ function TransactionDetail({
             >
               {txn.reviewed ? "Mark as unreviewed" : "Mark as reviewed"}
             </Button>
+          </DetailRow>
+
+          <DetailRow label="Recurring">
+            <MakeRecurringButton transactionId={txn.id} />
           </DetailRow>
 
           {detailLoaded && txn.categorySource && (
