@@ -21,6 +21,13 @@ export async function createLinkToken() {
   const auth = await authorizeAction();
   if ("error" in auth) return auth;
 
+  if (!process.env.PLAID_CLIENT_ID || !process.env.PLAID_SECRET) {
+    return {
+      error:
+        "Plaid isn't set up on this server. Add PLAID_CLIENT_ID and PLAID_SECRET, or connect through SimpleFIN instead.",
+    };
+  }
+
   try {
     const response = await getPlaidClient().linkTokenCreate({
       user: { client_user_id: auth.userId },
