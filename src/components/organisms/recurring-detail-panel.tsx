@@ -114,7 +114,7 @@ export function RecurringDetailPanel({ item, transactions, categoryGroups, onClo
 
   const lastAccount = transactions[0]?.accountName ?? item.accountName;
   const archived = item.lifecycle === "archived";
-  const paused = item.lifecycle === "paused";
+  const paused = item.lifecycle === "paused" || (item.lifecycle === "active" && !item.isActive);
 
   return (
     <div className="space-y-5">

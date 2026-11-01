@@ -156,7 +156,13 @@ export async function setRecurringStatusScoped(
   const scoped = scopedQuery(householdId, db);
   const updated = await db
     .update(recurringTransactions)
-    .set({ status: parsed.data.status, updatedAt: new Date() })
+    // Resuming also clears detection's "looks stopped" flag, or the item
+    // would stay in Paused with nothing the user could press to bring it back.
+    .set({
+      status: parsed.data.status,
+      ...(parsed.data.status === "active" ? { isActive: true } : {}),
+      updatedAt: new Date(),
+    })
     .where(scoped.where(recurringTransactions, eq(recurringTransactions.id, parsed.data.id)))
     .returning({ id: recurringTransactions.id });
   if (updated.length === 0) return { error: "Recurring item not found" };

@@ -148,6 +148,13 @@ describe("recurring actions", () => {
     expect(item).toMatchObject({ name: "Gym", matchName: "Gym", source: "manual", status: "active", averageAmount: 3999 });
   });
 
+  it("resuming an item detection had marked stopped makes it live again", async () => {
+    const recurringId = await seedItem({ isActive: false });
+    await setRecurringStatusScoped(householdId, recurringId, "active", db);
+    const [item] = await db.select().from(recurringTransactions).where(eq(recurringTransactions.id, recurringId));
+    expect(item).toMatchObject({ status: "active", isActive: true });
+  });
+
   it("setRecurringStatus archives and restores", async () => {
     const recurringId = await seedItem();
     expect(await setRecurringStatusScoped(householdId, recurringId, "archived", db)).toEqual({ success: true });
