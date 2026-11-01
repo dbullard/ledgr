@@ -1,4 +1,5 @@
 import { getHouseholdId } from "@/lib/auth/session";
+import { withHousehold } from "@/lib/household-context";
 import { getRecurrings, getRecurringSummary, getRecurringTransactions } from "@/queries/recurring";
 import { getCategories } from "@/queries/categories";
 import { centsToDisplay } from "@/lib/money";
@@ -23,7 +24,7 @@ export default async function RecurringsPage({
   const all = [...groups.overdue, ...groups.thisMonth, ...groups.future, ...groups.paused, ...groups.archived];
   const item = params.item ? all.find((r) => r.id === params.item) : undefined;
   const selected = item
-    ? { item, transactions: await getRecurringTransactions(householdId, item.id) }
+    ? { item, transactions: await withHousehold(householdId, (tx) => getRecurringTransactions(householdId, item.id, tx)) }
     : null;
 
   return (

@@ -427,6 +427,8 @@ export async function fetchLinkableTransactions(
 ): Promise<{ rows: TransactionRow[] } | { error: string }> {
   const auth = await authorizeAction();
   if ("error" in auth) return auth;
-  const rows = await getLinkableTransactions(auth.householdId, { search: search.trim() || undefined }, db);
+  // `transactions` is row-level-secured by household, so the read must run inside it.
+  const rows = await withHousehold(auth.householdId, (tx) =>
+    getLinkableTransactions(auth.householdId, { search: search.trim() || undefined }, tx), db);
   return { rows };
 }
