@@ -41,6 +41,8 @@ export interface DashboardData {
   recentTransactions: TransactionRow[];
   reviewQueue: { rows: TransactionRow[]; total: number };
   categories: CategoryGroup[];
+  /** Last sync per bank connection (ISO strings, so they cross to the client). */
+  syncTimes: { institutionName: string; lastSyncedAt: string }[];
   accounts: {
     id: string;
     name: string;
@@ -138,7 +140,7 @@ export function DashboardGrid({ layout, data }: DashboardGridProps) {
             categories={data.categories}
           />;
       case "accounts":
-        return <AccountBalancesWidget data={data.accounts} />;
+        return <AccountBalancesWidget data={data.accounts} syncTimes={data.syncTimes} />;
       case "budgets":
         return data.budgetData ? (
           <BudgetProgressWidget data={data.budgetData} />

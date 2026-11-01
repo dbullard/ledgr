@@ -115,6 +115,9 @@ export default async function DashboardPage() {
     cashFlow,
     recentTransactions,
     reviewQueue: { rows: reviewPage.rows, total: unreviewedSummary.count },
+    syncTimes: accountGroups
+      .filter((g) => g.lastSyncedAt)
+      .map((g) => ({ institutionName: g.institutionName, lastSyncedAt: g.lastSyncedAt!.toISOString() })),
     categories,
     accounts,
     budgetData,

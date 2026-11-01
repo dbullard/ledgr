@@ -5,6 +5,7 @@ import { accountDisplayName } from "@/lib/account-name";
 import { groupAccountsByType } from "@/lib/group-accounts-by-type";
 import { EntityAvatar } from "@/components/molecules/entity-avatar";
 import { BalanceDisplay } from "@/components/atoms/balance-display";
+import { formatRelativeTime } from "@/lib/relative-time";
 import type { AccountType } from "@/db/schema/accounts";
 
 interface AccountBalanceRow {
@@ -21,15 +22,26 @@ interface AccountBalanceRow {
 
 interface AccountBalancesWidgetProps {
   data: AccountBalanceRow[];
+  syncTimes?: { institutionName: string; lastSyncedAt: string }[];
 }
 
-export function AccountBalancesWidget({ data }: AccountBalancesWidgetProps) {
+export function AccountBalancesWidget({ data, syncTimes = [] }: AccountBalancesWidgetProps) {
   // The same grouping and the same subtotal component the Accounts page uses
   // (organisms/account-list.tsx), so the widget and the page it links to name,
   // order and total their sections identically. Flat, every balance read as the
   // same kind of number: an $18,240 savings balance and a -$8,400 loan sat in
   // one undifferentiated run with nothing marking which side each was on.
   const groups = groupAccountsByType(data);
+
+  // The oldest connection is the honest "as of": one stale bank shouldn't be
+  // hidden behind a fresher one. Hovering lists each bank's own time.
+  const oldest = syncTimes.reduce<string | null>(
+    (min, s) => (min === null || s.lastSyncedAt < min ? s.lastSyncedAt : min),
+    null,
+  );
+  const syncTitle = syncTimes
+    .map((s) => `${s.institutionName}: ${new Date(s.lastSyncedAt).toLocaleString()}`)
+    .join("\n");
 
   if (groups.length === 0) {
     return (
@@ -107,9 +119,18 @@ export function AccountBalancesWidget({ data }: AccountBalancesWidgetProps) {
           ))}
         </table>
       </div>
+      {oldest && (
+        <p
+          title={syncTitle}
+          suppressHydrationWarning
+          className="pt-2 mt-auto text-center text-xs text-muted-foreground"
+        >
+          Updated {formatRelativeTime(oldest)} · {new Date(oldest).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+        </p>
+      )}
       <Link
         href="/accounts"
-        className="text-xs text-primary hover:underline text-center pt-2 mt-auto"
+        className={`text-xs text-primary hover:underline text-center pt-1 ${oldest ? "" : "mt-auto pt-2"}`}
       >
         View all accounts
       </Link>
