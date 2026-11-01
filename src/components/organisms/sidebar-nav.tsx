@@ -90,7 +90,7 @@ export function SidebarNav({ userName, userEmail }: SidebarNavProps) {
     <Sidebar variant="inset" collapsible="offcanvas">
       <SidebarHeader className="px-4 py-4 gap-3">
         <Link href="/" className="flex items-center gap-2 text-lg font-bold tracking-tight">
-          <span className="flex size-5 items-center justify-center rounded-md bg-positive text-[11px] font-extrabold text-background">
+          <span className="flex size-5 items-center justify-center rounded-md bg-primary text-[11px] font-extrabold text-primary-foreground">
             L
           </span>
           Ledgr
@@ -119,7 +119,7 @@ export function SidebarNav({ userName, userEmail }: SidebarNavProps) {
                       }
                       isActive={isActive}
                       tooltip={item.label}
-                      className="data-active:bg-positive/10 data-active:text-positive"
+                      className="data-active:bg-sidebar-primary data-active:text-sidebar-primary-foreground data-active:font-semibold"
                     >
                       <item.icon />
                       <span>{item.label}</span>
