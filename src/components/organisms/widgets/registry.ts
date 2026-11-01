@@ -25,6 +25,23 @@ export function sameLayout(a: readonly GridItem[], b: readonly GridItem[]): bool
   });
 }
 
+/**
+ * Appends any registered widget a saved layout doesn't know about, below
+ * everything else. Without this a widget added after a user first moved their
+ * cards would never appear on their dashboard.
+ */
+export function withMissingWidgets(items: readonly GridItem[]): GridItem[] {
+  const present = new Set(items.map((item) => item.i));
+  const result = [...items];
+  let y = items.reduce((max, item) => Math.max(max, item.y + item.h), 0);
+  for (const widget of DASHBOARD_WIDGETS) {
+    if (present.has(widget.id)) continue;
+    result.push({ i: widget.id, x: 0, y, w: 1, h: widget.defaultHeight });
+    y += widget.defaultHeight;
+  }
+  return result;
+}
+
 export interface DashboardLayout {
   desktop: GridItem[];
   tablet: GridItem[];
@@ -40,6 +57,7 @@ export interface WidgetConfig {
 export const DASHBOARD_WIDGETS: WidgetConfig[] = [
   { id: "accounts", title: "Account Balances", defaultHeight: 2 },
   { id: "spending", title: "Spending", defaultHeight: 2 },
+  { id: "review", title: "To Review", defaultHeight: 4 },
   { id: "cash-flow", title: "Cash Flow", defaultHeight: 2 },
   { id: "recent-txns", title: "Recent Transactions", defaultHeight: 2 },
   { id: "budgets", title: "Budget Progress", defaultHeight: 1 },
@@ -58,6 +76,7 @@ export const WIDGET_TITLE_MAP = new Map(
 
 const DESKTOP_ORDER: { id: string; col: 0 | 1 }[] = [
   { id: "spending", col: 0 },
+  { id: "review", col: 0 },
   { id: "cash-flow", col: 1 },
   { id: "budgets", col: 0 },
   { id: "recent-txns", col: 1 },

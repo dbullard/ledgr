@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { DASHBOARD_WIDGETS, WIDGET_TITLE_MAP, getDefaultLayout, sameLayout, toGridItems } from "./registry";
+import { DASHBOARD_WIDGETS, WIDGET_TITLE_MAP, getDefaultLayout, sameLayout, toGridItems, withMissingWidgets } from "./registry";
 
 describe("widget registry", () => {
   it("has no duplicate widget IDs", () => {
@@ -45,5 +45,22 @@ describe("sameLayout", () => {
 
   it("toGridItems keeps only the persisted fields", () => {
     expect(toGridItems([{ ...saved[0], moved: false } as never])).toEqual([saved[0]]);
+  });
+});
+
+describe("withMissingWidgets", () => {
+  it("adds widgets a saved layout lacks, below the existing ones", () => {
+    const saved = [{ i: "accounts", x: 1, y: 0, w: 1, h: 2 }];
+    const result = withMissingWidgets(saved);
+    const review = result.find((item) => item.i === "review");
+    expect(review).toMatchObject({ x: 0, w: 1 });
+    expect(review!.y).toBeGreaterThanOrEqual(2);
+    expect(result.filter((item) => item.i === "accounts")).toHaveLength(1);
+    expect(result).toHaveLength(DASHBOARD_WIDGETS.length);
+  });
+
+  it("leaves a complete layout untouched", () => {
+    const full = getDefaultLayout().desktop;
+    expect(withMissingWidgets(full)).toEqual(full);
   });
 });

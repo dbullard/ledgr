@@ -11,6 +11,7 @@ import { BudgetProgressWidget } from "./widgets/budget-progress";
 import { SpendingByCategory } from "./widgets/spending-by-category";
 import { CashFlowBarChart } from "@/components/atoms/cash-flow-bar-chart";
 import { RecentTransactionsWidget } from "./widgets/recent-transactions";
+import { ReviewQueueWidget } from "./widgets/review-queue";
 import { AccountBalancesWidget } from "./widgets/account-balances";
 import { UpcomingBillsWidget } from "./widgets/upcoming-bills";
 import { InvestmentsWidget } from "./widgets/investments-widget";
@@ -20,6 +21,7 @@ import {
   RETIRED_WIDGET_IDS,
   sameLayout,
   toGridItems,
+  withMissingWidgets,
   type GridItem,
   type DashboardLayout,
 } from "./widgets/registry";
@@ -36,6 +38,7 @@ export interface DashboardData {
   spendingMonth: string;
   cashFlow: CashFlowRow[];
   recentTransactions: TransactionRow[];
+  reviewQueue: { rows: TransactionRow[]; total: number };
   accounts: {
     id: string;
     name: string;
@@ -63,6 +66,7 @@ const WIDGET_LINKS: Record<string, string> = {
   spending: "/reports",
   "cash-flow": "/reports",
   "recent-txns": "/transactions",
+  review: "/transactions",
   budgets: "/budgets",
   bills: "/bills",
   investments: "/investments",
@@ -74,9 +78,9 @@ export function DashboardGrid({ layout, data }: DashboardGridProps) {
   // (net worth and summary now render as the page hero and stat row).
   const filterRetired = (items: GridItem[]) => items.filter((i) => !RETIRED_WIDGET_IDS.has(i.i));
   const [layouts, setLayouts] = useState({
-    lg: filterRetired(layout.desktop),
-    md: filterRetired(layout.tablet),
-    sm: filterRetired(layout.mobile),
+    lg: filterRetired(withMissingWidgets(layout.desktop)),
+    md: filterRetired(withMissingWidgets(layout.tablet)),
+    sm: filterRetired(withMissingWidgets(layout.mobile)),
   });
   const [spendMonth, setSpendMonth] = useState(data.spendingMonth);
   const [spendData, setSpendData] = useState(data.monthlySpending);
@@ -125,6 +129,8 @@ export function DashboardGrid({ layout, data }: DashboardGridProps) {
         return <CashFlowBarChart data={data.cashFlow} />;
       case "recent-txns":
         return <RecentTransactionsWidget data={data.recentTransactions} />;
+      case "review":
+        return <ReviewQueueWidget rows={data.reviewQueue.rows} total={data.reviewQueue.total} />;
       case "accounts":
         return <AccountBalancesWidget data={data.accounts} />;
       case "budgets":
