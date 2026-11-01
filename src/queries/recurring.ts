@@ -1,8 +1,10 @@
-import { eq, asc, ilike } from "drizzle-orm";
+import { eq, asc, ilike, isNull } from "drizzle-orm";
+import { fetchTransactionPage, type TransactionRow } from "@/queries/transactions";
+import { notDeleted } from "@/lib/query-helpers";
 import { db as defaultDb, type LedgrDb } from "@/db";
-import { recurringTransactions, merchants, categories } from "@/db/schema";
+import { recurringTransactions, merchants, categories, accounts, transactions } from "@/db/schema";
 import { scopedQuery } from "@/lib/scoped-query";
-import { deriveBillStatus, relativeDateLabel, type BillStatus } from "@/lib/date-utils";
+import { deriveBillStatus, relativeDateLabel, todayDateString, type BillStatus } from "@/lib/date-utils";
 
 export interface BillRow {
   id: string;
@@ -29,6 +31,7 @@ export async function getUpcomingBills(
 
   const conditions = [
     eq(recurringTransactions.isActive, true),
+    eq(recurringTransactions.status, "active"),
     eq(recurringTransactions.isIncome, false),
   ];
 
@@ -79,6 +82,141 @@ export async function getUpcomingBills(
   }));
 }
 
+export interface RecurringRow extends BillRow {
+  lifecycle: "active" | "paused" | "archived";
+  source: "detected" | "manual";
+  categoryId: string | null;
+  accountId: string | null;
+  accountName: string | null;
+  isActive: boolean;
+  matchName: string | null;
+  matchMinAmount: number | null;
+  matchMaxAmount: number | null;
+  matchDayOfMonth: number | null;
+}
+
+export interface RecurringGroups {
+  overdue: RecurringRow[];
+  thisMonth: RecurringRow[];
+  future: RecurringRow[];
+  paused: RecurringRow[];
+  archived: RecurringRow[];
+}
+
+/**
+ * Every expense item, bucketed the way the Recurrings page shows them.
+ * Archived and user-paused items get their own groups; an item detection
+ * considers stopped (`isActive` false) is shown as paused rather than hidden,
+ * so the user can still find and archive or revive it.
+ */
+export async function getRecurrings(
+  householdId: string,
+  opts: { search?: string } = {},
+  db: LedgrDb = defaultDb,
+): Promise<RecurringGroups> {
+  const scoped = scopedQuery(householdId, db);
+  const conditions = [eq(recurringTransactions.isIncome, false)];
+  if (opts.search) conditions.push(ilike(recurringTransactions.name, `%${opts.search}%`));
+
+  const rows = await db
+    .select({
+      id: recurringTransactions.id,
+      name: recurringTransactions.name,
+      merchantName: merchants.name,
+      categoryId: recurringTransactions.categoryId,
+      categoryName: categories.name,
+      categoryIcon: categories.icon,
+      accountId: recurringTransactions.accountId,
+      accountName: accounts.name,
+      averageAmount: recurringTransactions.averageAmount,
+      lastAmount: recurringTransactions.lastAmount,
+      frequency: recurringTransactions.frequency,
+      nextDate: recurringTransactions.nextDate,
+      lastDate: recurringTransactions.lastDate,
+      isIncome: recurringTransactions.isIncome,
+      isActive: recurringTransactions.isActive,
+      status: recurringTransactions.status,
+      source: recurringTransactions.source,
+      matchName: recurringTransactions.matchName,
+      matchMinAmount: recurringTransactions.matchMinAmount,
+      matchMaxAmount: recurringTransactions.matchMaxAmount,
+      matchDayOfMonth: recurringTransactions.matchDayOfMonth,
+    })
+    .from(recurringTransactions)
+    .leftJoin(merchants, eq(recurringTransactions.merchantId, merchants.id))
+    .leftJoin(categories, eq(recurringTransactions.categoryId, categories.id))
+    .leftJoin(accounts, eq(recurringTransactions.accountId, accounts.id))
+    .where(scoped.where(recurringTransactions, ...conditions))
+    .orderBy(asc(recurringTransactions.nextDate));
+
+  const today = todayDateString();
+  const month = today.slice(0, 7);
+  const groups: RecurringGroups = { overdue: [], thisMonth: [], future: [], paused: [], archived: [] };
+
+  for (const row of rows) {
+    const item: RecurringRow = {
+      id: row.id,
+      name: row.name,
+      merchantName: row.merchantName,
+      categoryId: row.categoryId,
+      categoryName: row.categoryName,
+      categoryIcon: row.categoryIcon,
+      accountId: row.accountId,
+      accountName: row.accountName,
+      averageAmount: row.averageAmount ? Math.abs(row.averageAmount) : null,
+      lastAmount: row.lastAmount ? Math.abs(row.lastAmount) : null,
+      frequency: row.frequency,
+      nextDate: row.nextDate,
+      lastDate: row.lastDate,
+      isIncome: Boolean(row.isIncome),
+      isActive: Boolean(row.isActive),
+      lifecycle: row.status,
+      source: row.source,
+      matchName: row.matchName,
+      matchMinAmount: row.matchMinAmount,
+      matchMaxAmount: row.matchMaxAmount,
+      matchDayOfMonth: row.matchDayOfMonth,
+      status: deriveBillStatus(row.nextDate, true),
+      relativeDateLabel: row.nextDate ? relativeDateLabel(row.nextDate) : null,
+    };
+
+    if (row.status === "archived") groups.archived.push(item);
+    else if (row.status === "paused" || !row.isActive) groups.paused.push(item);
+    else if (row.nextDate && row.nextDate < today) groups.overdue.push(item);
+    else if (row.nextDate && row.nextDate.slice(0, 7) === month) groups.thisMonth.push(item);
+    else groups.future.push(item);
+  }
+  return groups;
+}
+
+/** Transactions linked to one recurring item, newest first. */
+export async function getRecurringTransactions(
+  householdId: string,
+  recurringId: string,
+  db: LedgrDb = defaultDb,
+): Promise<TransactionRow[]> {
+  const page = await fetchTransactionPage(
+    householdId,
+    [eq(transactions.recurringTransactionId, recurringId), notDeleted(transactions)],
+    200,
+    null,
+    db,
+  );
+  return page.rows;
+}
+
+/** Recent settled transactions not yet linked to any item, for the panel's "Add". */
+export async function getLinkableTransactions(
+  householdId: string,
+  opts: { search?: string } = {},
+  db: LedgrDb = defaultDb,
+): Promise<TransactionRow[]> {
+  const conditions = [isNull(transactions.recurringTransactionId), notDeleted(transactions), eq(transactions.pending, false)];
+  if (opts.search) conditions.push(ilike(transactions.name, `%${opts.search}%`));
+  const page = await fetchTransactionPage(householdId, conditions, 25, null, db);
+  return page.rows;
+}
+
 const MONTHLY_MULTIPLIER: Record<string, number> = {
   weekly: 52 / 12,
   biweekly: 26 / 12,
@@ -101,7 +239,11 @@ export async function getRecurringSummary(
     })
     .from(recurringTransactions)
     .where(
-      scoped.where(recurringTransactions, eq(recurringTransactions.isActive, true)),
+      scoped.where(
+        recurringTransactions,
+        eq(recurringTransactions.isActive, true),
+        eq(recurringTransactions.status, "active"),
+      ),
     );
 
   let monthlyIncome = 0;
