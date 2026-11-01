@@ -68,9 +68,8 @@ export function RecurringList({ groups, categoryGroups, selected }: RecurringLis
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
       <div className="space-y-6">
-        {sections.map((section) => (
-          <section key={section.title}>
-            <h2 className="mb-1 px-2 text-sm font-semibold">{section.title}</h2>
+        {sections.map((section) => {
+          const rows = (
             <div>
               {section.rows.map((item) => (
                 <RecurringItemRow
@@ -81,8 +80,28 @@ export function RecurringList({ groups, categoryGroups, selected }: RecurringLis
                 />
               ))}
             </div>
-          </section>
-        ))}
+          );
+          // Archived can run long (detection archives what you dismiss), so it
+          // starts folded, unless the open item lives in it.
+          if (section.title === "Archived") {
+            const holdsSelected = section.rows.some((r) => r.id === selected?.item.id);
+            return (
+              <details key={section.title} open={holdsSelected || undefined}>
+                <summary className="mb-1 cursor-pointer px-2">
+                  <h2 className="inline text-sm font-semibold">Archived</h2>
+                  <span className="ml-1.5 text-xs text-muted-foreground">({section.rows.length})</span>
+                </summary>
+                {rows}
+              </details>
+            );
+          }
+          return (
+            <section key={section.title}>
+              <h2 className="mb-1 px-2 text-sm font-semibold">{section.title}</h2>
+              {rows}
+            </section>
+          );
+        })}
       </div>
 
       {selected && !isMobile && (
