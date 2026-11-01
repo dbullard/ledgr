@@ -292,6 +292,8 @@ export async function makeTransactionRecurring(transactionId: string, db: LedgrD
 
 const rulesSchema = z.object({
   id: idSchema,
+  // The display name; the match rule below is what finds bank transactions.
+  name: z.string().transform((s) => s.trim()).pipe(z.string().min(1).max(200)).optional(),
   matchName: z.string().transform((s) => s.trim()).pipe(z.string().min(1).max(200)),
   matchMinAmount: z.number().int().min(0).nullable(),
   matchMaxAmount: z.number().int().min(0).nullable(),
@@ -316,6 +318,7 @@ export async function updateRecurringRulesScoped(
   const updated = await db
     .update(recurringTransactions)
     .set({
+      ...(d.name !== undefined ? { name: d.name } : {}),
       matchName: d.matchName,
       matchMinAmount: d.matchMinAmount,
       matchMaxAmount: d.matchMaxAmount,

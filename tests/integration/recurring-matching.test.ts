@@ -10,6 +10,7 @@ import {
   unlinkTransactionFromRecurringScoped,
   setRecurringStatusScoped,
   createRecurringTransactionScoped,
+  updateRecurringRulesScoped,
 } from "@/actions/recurring";
 import type { LedgrDb } from "@/db";
 
@@ -153,6 +154,22 @@ describe("recurring actions", () => {
     await setRecurringStatusScoped(householdId, recurringId, "active", db);
     const [item] = await db.select().from(recurringTransactions).where(eq(recurringTransactions.id, recurringId));
     expect(item).toMatchObject({ status: "active", isActive: true });
+  });
+
+  it("renames an item and links by its match rule, independent of the display name", async () => {
+    const recurringId = await seedItem({ name: "Phone Bill", matchName: null });
+    const { transactionId } = await insertTransaction(db, householdId, accountId, att({ name: "Verizon Wireless Payment" }));
+
+    const result = await updateRecurringRulesScoped(
+      householdId,
+      { id: recurringId, name: "Verizon", matchName: "verizon wireless", matchMinAmount: null, matchMaxAmount: null, matchDayOfMonth: null, frequency: "monthly" },
+      db,
+    );
+
+    expect(result).toEqual({ success: true });
+    const [item] = await db.select().from(recurringTransactions).where(eq(recurringTransactions.id, recurringId));
+    expect(item).toMatchObject({ name: "Verizon", matchName: "verizon wireless" });
+    expect(await linkOf(transactionId)).toBe(recurringId);
   });
 
   it("setRecurringStatus archives and restores", async () => {

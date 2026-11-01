@@ -52,6 +52,7 @@ export function RecurringDetailPanel({ item, transactions, categoryGroups, onClo
   const [pending, startTransition] = useTransition();
 
   const [categoryId, setCategoryId] = useState(item.categoryId ?? NO_CATEGORY);
+  const [displayName, setDisplayName] = useState(item.name);
   const [matchName, setMatchName] = useState(item.matchName ?? "");
   const [minAmount, setMinAmount] = useState(toDollars(item.matchMinAmount));
   const [maxAmount, setMaxAmount] = useState(toDollars(item.matchMaxAmount));
@@ -95,6 +96,7 @@ export function RecurringDetailPanel({ item, transactions, categoryGroups, onClo
     run(() =>
       updateRecurringRules({
         id: item.id,
+        name: displayName,
         matchName,
         matchMinAmount: min,
         matchMaxAmount: max,
@@ -160,8 +162,17 @@ export function RecurringDetailPanel({ item, transactions, categoryGroups, onClo
           Transactions that fit these rules are added to this item and move its next payment date.
         </p>
         <div className="space-y-1.5">
-          <Label htmlFor="rec-name">Named (contains)</Label>
-          <Input id="rec-name" value={matchName} onChange={(e) => setMatchName(e.target.value)} />
+          <Label htmlFor="rec-display-name">Name</Label>
+          <Input id="rec-display-name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="rec-name">Matches transactions named</Label>
+          <Input
+            id="rec-name"
+            value={matchName}
+            placeholder="Part of the name your bank shows"
+            onChange={(e) => setMatchName(e.target.value)}
+          />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
@@ -198,7 +209,7 @@ export function RecurringDetailPanel({ item, transactions, categoryGroups, onClo
             </Select>
           </div>
         </div>
-        <Button size="sm" onClick={saveRules} disabled={pending || !matchName.trim()}>
+        <Button size="sm" onClick={saveRules} disabled={pending || !matchName.trim() || !displayName.trim()}>
           Save rules
         </Button>
       </section>
