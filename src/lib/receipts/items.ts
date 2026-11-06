@@ -22,6 +22,9 @@ export const parsedReceiptSchema = z.object({
   ),
   taxCents: z.number().optional(),
   totalCents: z.number().optional(),
+  merchant: z.string().optional(),
+  /** YYYY-MM-DD */
+  date: z.string().optional(),
 });
 export type ParsedReceipt = z.infer<typeof parsedReceiptSchema>;
 
@@ -131,8 +134,11 @@ export function buildItemsPrompt(text: string | null, categoryNames: string[]): 
     "- totalCents is the line's price in integer cents (a $3.49 line is 349). Discount or coupon lines are negative.",
     "- quantity is the count or weight when printed, else 1.",
     '- product is a short plain-English name for the item (e.g. "KS ORG BNNA" -> "Bananas").',
-    `- category must be exactly one of: ${categoryNames.join(", ")}. Omit it if none fits.`,
+    ...(categoryNames.length
+      ? [`- category must be exactly one of: ${categoryNames.join(", ")}. Omit it if none fits.`]
+      : []),
     "- taxCents and totalCents are the receipt's printed tax and grand total, if present.",
+    "- merchant is the store name and date is the purchase date as YYYY-MM-DD, if present.",
     ...(text ? ["", "Receipt text:", text.slice(0, 12_000)] : ["", "The receipt is the attached image."]),
   ].join("\n");
 }

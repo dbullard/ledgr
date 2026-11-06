@@ -7,6 +7,7 @@ import { createTestDb } from "./setup";
 import { insertAccount, insertHousehold, insertTransaction } from "./helpers";
 import { receipts } from "../../src/db/schema";
 import type { LedgrDb } from "../../src/db";
+import { createCanvas } from "@napi-rs/canvas";
 
 let currentHousehold = "";
 vi.mock("../../src/lib/auth/authorize-action", () => ({
@@ -23,6 +24,7 @@ let root: string;
 let accountId: string;
 let amazonId: string;
 let spotifyNovId: string;
+let costcoId: string;
 
 const file = (name: string, content: string) => {
   const fd = new FormData();
@@ -47,6 +49,7 @@ beforeAll(async () => {
   ({ transactionId: amazonId } = await mk("Amazon", "2026-11-02", 7539));
   await mk("Spotify", "2026-10-04", 2408);
   ({ transactionId: spotifyNovId } = await mk("Spotify", "2026-11-04", 2408));
+  ({ transactionId: costcoId } = await mk("Costco", "2026-11-04", 12345));
   await mk("Shell", "2026-11-03", 5000);
   await mk("Chevron", "2026-11-03", 5000);
 });
@@ -105,6 +108,42 @@ describe("unmatched receipts", () => {
     expect(
       await uploadUnmatchedReceipt(file("gas-again.txt", "Date: 2026-11-03\nTotal: $50.00"), db, root),
     ).toEqual({ status: "duplicate" });
+  });
+});
+
+describe("photos", () => {
+  it("OCRs a JPG receipt and attaches it like a text one", async () => {
+    const { uploadUnmatchedReceipt } = await import("../../src/actions/receipts");
+    const canvas = createCanvas(600, 300);
+    const g = canvas.getContext("2d");
+    g.fillStyle = "#fff";
+    g.fillRect(0, 0, 600, 300);
+    g.fillStyle = "#000";
+    g.font = "bold 40px sans-serif";
+    g.fillText("COSTCO", 200, 60);
+    g.font = "28px sans-serif";
+    g.fillText("Date: 2026-11-04", 40, 140);
+    g.fillText("Grand Total: $123.45", 40, 200);
+    const fd = new FormData();
+    fd.set("file", new File([new Uint8Array(canvas.toBuffer("image/jpeg", 90))], "IMG_0042.jpg", { type: "image/jpeg" }));
+    expect(await uploadUnmatchedReceipt(fd, db, root)).toEqual({ status: "attached", transactionId: costcoId });
+    const [row] = await db.select().from(receipts).where(eq(receipts.transactionId, costcoId));
+    expect(row.filePath).toBe("2026/11/2026-11-04_costco_123.45.jpg");
+    expect(row.hintTotalCents).toBe(12345);
+  }, 90_000);
+
+  it("falls back to the vision model for total, date and merchant, only when a local model is set", async () => {
+    vi.resetModules();
+    vi.doMock("../../src/lib/receipts/parse-model", () => ({
+      receiptModelBlocker: () => null,
+      runReceiptModel: async () => ({ items: [], totalCents: 4200, date: "Nov 4, 2026", merchant: " Costco " }),
+    }));
+    const { visionHints } = await import("../../src/lib/receipts/ingest");
+    expect(await visionHints("jpg", Buffer.from("x"))).toEqual({ totalCents: 4200, date: "2026-11-04", merchant: "Costco" });
+    expect(await visionHints("jpg", Buffer.from("x"), "no local model")).toEqual({});
+    expect(await visionHints("txt", Buffer.from("x"))).toEqual({});
+    vi.doUnmock("../../src/lib/receipts/parse-model");
+    vi.resetModules();
   });
 });
 

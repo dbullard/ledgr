@@ -105,15 +105,28 @@ export function extractHints(filename: string, text: string | null): ReceiptHint
   return { totalCents, date, merchant };
 }
 
-/** Pulls text out of the file types we can read without OCR; null otherwise. */
+const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp"]);
+/** A PDF with less text than this is treated as a scan and sent through OCR. */
+const SCANNED_PDF_CHARS = 40;
+
+/**
+ * Text from a receipt file: read directly for txt/eml and text PDFs, via local
+ * OCR for photos (png, jpg, webp) and scanned PDFs. null when nothing readable.
+ */
 export async function readReceiptText(ext: string, data: Buffer): Promise<string | null> {
   try {
     if (ext === "txt" || ext === "eml") return data.toString("utf8").slice(0, 200_000);
+    if (IMAGE_EXTS.has(ext)) {
+      const { ocrImage } = await import("./ocr");
+      return (await ocrImage(data)) || null;
+    }
     if (ext === "pdf") {
       const { extractText, getDocumentProxy } = await import("unpdf");
       const pdf = await getDocumentProxy(new Uint8Array(data));
       const { text } = await extractText(pdf, { mergePages: true });
-      return text.slice(0, 200_000);
+      if (text.trim().length >= SCANNED_PDF_CHARS) return text.slice(0, 200_000);
+      const { ocrPdf } = await import("./ocr");
+      return (await ocrPdf(data)) || null;
     }
   } catch {
     // Unreadable or encrypted files are still stored, just without hints.

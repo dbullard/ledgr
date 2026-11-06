@@ -5,7 +5,9 @@ import { receipts, transactions } from "@/db/schema";
 import { isVisibleTransaction, notDeleted } from "@/lib/query-helpers";
 import { scopedQuery } from "@/lib/scoped-query";
 import { todayDateString } from "@/lib/date-utils";
-import { extractHints, readReceiptText, type ReceiptHints } from "./hints";
+import { extractHints, findDate, readReceiptText, type ReceiptHints } from "./hints";
+import { renderPdfPages } from "./ocr";
+import { receiptModelBlocker, runReceiptModel } from "./parse-model";
 import { confidentMatch, suggestMatches, type Suggestion, type TxnCandidate } from "./match";
 import { MAX_RECEIPT_BYTES, RECEIPT_TYPES, receiptExtension, receiptsRoot } from "./paths";
 import { deleteReceiptFile, sha256Hex, writeReceipt } from "./storage";
@@ -48,6 +50,40 @@ export async function candidateTransactions(
       ),
     )
     .limit(500);
+}
+
+const VISION_EXTS: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp" };
+
+/**
+ * Second chance for a photo or scan whose OCR found no total: ask the household's
+ * own vision model for just the total, date and merchant. Skipped when no local
+ * model is configured; never throws, and never waits longer than the timeout.
+ */
+export async function visionHints(
+  ext: string,
+  data: Buffer,
+  blocker: string | null = receiptModelBlocker(),
+): Promise<Partial<ReceiptHints>> {
+  if (blocker) return {};
+  try {
+    const image = VISION_EXTS[ext]
+      ? { data, mediaType: VISION_EXTS[ext] }
+      : ext === "pdf"
+        ? await renderPdfPages(data, 1).then((p) => (p[0] ? { data: p[0], mediaType: "image/png" } : null))
+        : null;
+    if (!image) return {};
+    const out = await Promise.race([
+      runReceiptModel({ text: null, image, categoryNames: [] }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 45_000)),
+    ]);
+    if (!out) return {};
+    const total = out.totalCents && out.totalCents > 0 ? Math.round(out.totalCents) : null;
+    const date = out.date ? findDate(out.date) : null;
+    return { totalCents: total, date, merchant: out.merchant?.trim().slice(0, 80) || null };
+  } catch (e) {
+    console.error("[receipts] vision hints failed", e);
+    return {};
+  }
 }
 
 export type IngestResult =
@@ -95,7 +131,18 @@ export async function ingestReceipt(opts: {
     .limit(1);
   if (dupe) return { status: "duplicate" };
 
-  const hints = extractHints(filename, await readReceiptText(ext, data));
+  const text = await readReceiptText(ext, data);
+  let hints = extractHints(filename, text);
+  // Photos and scans only: a text file or text PDF with no total has nothing more to find.
+  const needsEyes = ext !== "txt" && ext !== "eml" && (ext !== "pdf" || (text ?? "").length < 200);
+  if (hints.totalCents === null && needsEyes) {
+    const v = await visionHints(ext, data);
+    hints = {
+      totalCents: v.totalCents ?? hints.totalCents,
+      date: hints.date ?? v.date ?? null,
+      merchant: hints.merchant ?? v.merchant ?? null,
+    };
+  }
   const suggestions = suggestMatches(hints, await candidateTransactions(householdId, hints, db, today));
   const match = confidentMatch(hints, suggestions);
 
