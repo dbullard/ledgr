@@ -7,6 +7,9 @@ import {
   getNetWorthHistory,
   getRecentTransactions,
 } from "@/queries/dashboard";
+import { getAccountsByInstitution, getAccountSummary } from "@/queries/accounts";
+import { balanceHistory } from "@/db/schema";
+import { and, eq, gte } from "drizzle-orm";
 import { getTransactions, type TransactionFilters } from "@/queries/transactions";
 import { getCategories } from "@/queries/categories";
 import { getItemSpendByCategory, getTopProducts } from "@/queries/receipt-items";
@@ -30,6 +33,8 @@ export const dynamic = "force-dynamic";
  *   POST   /api/native/receipts/attach   { receiptId, transactionId }
  *   DELETE /api/native/receipts/:id
  *   GET    /api/native/items?from&to
+ *   GET    /api/native/accounts                      (grouped by institution + totals)
+ *   GET    /api/native/accounts/:id/history?days=90
  */
 
 const RANGES = ["1M", "3M", "6M", "1Y", "all"] as const;
@@ -64,6 +69,51 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
       withHousehold(householdId, (tx) => getRecentTransactions(householdId, 8, tx)),
     ]);
     return ok({ summary, history, spending, recent });
+  }
+
+  if (head === "accounts" && !id && method === "GET") {
+    const [groups, summary] = await withHousehold(householdId, (tx) =>
+      Promise.all([getAccountsByInstitution(householdId, tx), getAccountSummary(householdId, tx)]),
+    );
+    return ok({
+      summary,
+      groups: groups.map((g) => ({
+        institutionName: g.institutionName,
+        provider: g.provider,
+        status: g.status,
+        errorMessage: g.errorMessage,
+        lastDataAt: g.lastDataAt,
+        primaryColor: g.primaryColor,
+        accounts: g.accounts.map((a) => ({
+          id: a.id,
+          name: a.name,
+          officialName: a.officialName,
+          type: a.type,
+          subtype: a.subtype,
+          currentBalance: a.currentBalance,
+          availableBalance: a.availableBalance,
+          creditLimit: a.creditLimit,
+          isHidden: a.isHidden ?? false,
+          isManual: a.isManual ?? false,
+        })),
+      })),
+    });
+  }
+
+  if (head === "accounts" && id && (await ctx.params).path[2] === "history" && method === "GET") {
+    const days = Math.min(Math.max(Number(q.get("days")) || 90, 7), 1825);
+    const from = iso(new Date(Date.now() - days * 86_400_000));
+    const rows = await withHousehold(householdId, async (tx) => {
+      const owned = await getAccountsByInstitution(householdId, tx);
+      if (!owned.some((g) => g.accounts.some((a) => a.id === id))) return null;
+      return tx
+        .select({ date: balanceHistory.date, balance: balanceHistory.balance })
+        .from(balanceHistory)
+        .where(and(eq(balanceHistory.accountId, id), gte(balanceHistory.date, from)))
+        .orderBy(balanceHistory.date);
+    });
+    if (!rows) return fail("Not found", 404);
+    return ok(rows);
   }
 
   if (head === "transactions" && !id && method === "GET") {

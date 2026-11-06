@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum AppSection: Hashable {
-    case dashboard, transactions, receipts, items, more
+    case dashboard, transactions, accounts, receipts, items, more
     case web(WebPage)
 }
 
@@ -13,7 +13,6 @@ struct WebPage: Identifiable, Hashable {
     var id: String { path }
 
     static let all: [WebPage] = [
-        WebPage(title: "Accounts", path: "/accounts", symbol: "building.columns"),
         WebPage(title: "Budgets", path: "/budgets", symbol: "chart.pie"),
         WebPage(title: "Reports", path: "/reports", symbol: "chart.bar.xaxis"),
         WebPage(title: "Recurring", path: "/recurrings", symbol: "repeat"),
@@ -50,6 +49,9 @@ struct MoreView: View {
 
     var body: some View {
         List {
+            Section("Native") {
+                NavigationLink { ItemsView() } label: { Label("Items", systemImage: "cart") }
+            }
             Section("Full app") {
                 ForEach(WebPage.all) { page in
                     NavigationLink(value: page) { Label(page.title, systemImage: page.symbol) }
@@ -101,11 +103,12 @@ struct MainView: View {
                 Section("Overview") {
                     Label("Dashboard", systemImage: "square.grid.2x2").tag(AppSection.dashboard)
                     Label("Transactions", systemImage: "list.bullet").tag(AppSection.transactions)
+                    Label("Accounts", systemImage: "building.columns").tag(AppSection.accounts)
                     Label("Receipts", systemImage: "receipt").tag(AppSection.receipts)
                     Label("Items", systemImage: "cart").tag(AppSection.items)
                 }
                 Section("Manage") {
-                    ForEach(WebPage.all.prefix(6)) { page in
+                    ForEach(WebPage.all.filter { $0.path != "/accounts" }.prefix(5)) { page in
                         Label(page.title, systemImage: page.symbol).tag(AppSection.web(page))
                     }
                 }
@@ -123,9 +126,9 @@ struct MainView: View {
         TabView(selection: Binding(get: { section ?? .dashboard }, set: { section = $0 })) {
             detail(for: .dashboard).tabItem { Label("Dashboard", systemImage: "square.grid.2x2") }.tag(AppSection.dashboard)
             detail(for: .transactions).tabItem { Label("Transactions", systemImage: "list.bullet") }.tag(AppSection.transactions)
+            detail(for: .accounts).tabItem { Label("Accounts", systemImage: "building.columns") }.tag(AppSection.accounts)
             detail(for: .receipts).tabItem { Label("Receipts", systemImage: "receipt") }
                 .badge(queue.items.count).tag(AppSection.receipts)
-            detail(for: .items).tabItem { Label("Items", systemImage: "cart") }.tag(AppSection.items)
             detail(for: .more).tabItem { Label("More", systemImage: "ellipsis.circle") }.tag(AppSection.more)
         }
         #endif
@@ -138,12 +141,14 @@ struct MainView: View {
                 switch section {
                 case .dashboard: DashboardView()
                 case .transactions: TransactionsView()
+                case .accounts: AccountsView()
                 case .receipts: ReceiptsView()
                 case .items: ItemsView()
                 case .more: MoreView()
                 case .web(let page): WebPageView(page: page)
                 }
             }
+            .navigationDestination(for: AccountRowModel.self) { AccountDetailView(account: $0) }
             .navigationDestination(for: Txn.self) { TransactionDetailView(initial: $0) }
             .navigationDestination(for: WebPage.self) { WebPageView(page: $0) }
             .toolbar {
