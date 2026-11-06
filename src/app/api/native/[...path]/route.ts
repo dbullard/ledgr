@@ -7,6 +7,8 @@ import {
   getNetWorthHistory,
   getRecentTransactions,
 } from "@/queries/dashboard";
+import { getRecurrings, getRecurringSummary, getRecurringTransactions } from "@/queries/recurring";
+import { createRecurringTransaction, setRecurringStatus } from "@/actions/recurring";
 import { getBudgetForMonth } from "@/queries/budgets";
 import {
   copyBudgetFromMonth,
@@ -45,6 +47,10 @@ export const dynamic = "force-dynamic";
  *   GET    /api/native/items?from&to
  *   GET    /api/native/accounts                      (grouped by institution + totals)
  *   GET    /api/native/accounts/:id/history?days=90
+ *   GET    /api/native/recurring                     (bucketed list + monthly totals)
+ *   GET    /api/native/recurring/:id/transactions
+ *   PATCH  /api/native/recurring/:id    { status: "active"|"paused"|"archived" }
+ *   POST   /api/native/recurring        { name, amount, frequency, nextDate }
  *   GET    /api/native/budgets?month=YYYY-MM
  *   POST   /api/native/budgets           { month, copyFromPrevious? }
  *   PATCH  /api/native/budgets/:id       { type: "category"|"flex" }
@@ -86,6 +92,44 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
       withHousehold(householdId, (tx) => getRecentTransactions(householdId, 8, tx)),
     ]);
     return ok({ summary, history, spending, recent });
+  }
+
+  if (head === "recurring") {
+    if (!id && method === "GET") {
+      const [groups, summary] = await Promise.all([
+        getRecurrings(householdId),
+        withHousehold(householdId, (tx) => getRecurringSummary(householdId, tx)),
+      ]);
+      return ok({ groups, summary });
+    }
+    if (id && segs[2] === "transactions" && method === "GET") {
+      const rows = await withHousehold(householdId, (tx) => getRecurringTransactions(householdId, id, tx));
+      return ok(rows);
+    }
+    if (id && !segs[2] && method === "PATCH") {
+      const body = (await req.json().catch(() => null)) as { status?: "active" | "paused" | "archived" } | null;
+      if (!body?.status) return fail("Invalid input");
+      const result = await setRecurringStatus(id, body.status);
+      return "error" in result ? fail(result.error) : ok(result);
+    }
+    if (!id && method === "POST") {
+      const body = (await req.json().catch(() => null)) as {
+        name?: string;
+        amount?: number;
+        frequency?: string;
+        nextDate?: string;
+      } | null;
+      if (!body) return fail("Invalid input");
+      const result = await createRecurringTransaction({
+        name: body.name ?? "",
+        amount: body.amount ?? -1,
+        frequency: body.frequency as never,
+        nextDate: body.nextDate ?? "",
+        categoryId: null,
+        accountId: null,
+      });
+      return "error" in result ? fail(String(result.error)) : ok(result);
+    }
   }
 
   if (head === "budgets") {

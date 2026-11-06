@@ -115,6 +115,28 @@ struct BudgetStatusIntent: AppIntent {
     }
 }
 
+struct UpcomingBillsIntent: AppIntent {
+    static let title: LocalizedStringResource = "Upcoming Bills"
+    static let description = IntentDescription("Bills that are overdue or due soon.")
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let api = try await readyAPI()
+        let r: RecurringResponse = try await api.get("api/native/recurring")
+        let late = r.groups.overdue
+        let soon = r.groups.thisMonth.sorted { ($0.nextDate ?? "") < ($1.nextDate ?? "") }.prefix(4)
+        if late.isEmpty && soon.isEmpty { return .result(dialog: "Nothing is due the rest of this month.") }
+        var parts: [String] = []
+        if !late.isEmpty {
+            parts.append("\(late.count) overdue: " + late.prefix(3).map { "\($0.name), \(Fmt.money($0.amount))" }.joined(separator: "; "))
+        }
+        if !soon.isEmpty {
+            parts.append("Coming up: " + soon.map { "\($0.name), \(Fmt.money($0.amount)) \($0.relativeDateLabel ?? "")" }.joined(separator: "; "))
+        }
+        return .result(dialog: IntentDialog(stringLiteral: parts.joined(separator: ". ") + "."))
+    }
+}
+
 struct FindTransactionsIntent: AppIntent {
     static let title: LocalizedStringResource = "Find Transactions"
     static let description = IntentDescription("Search your transactions by merchant or name.")
@@ -187,6 +209,10 @@ struct LedgrShortcuts: AppShortcutsProvider {
             intent: BudgetStatusIntent(),
             phrases: ["How's my budget in \(.applicationName)", "\(.applicationName) budget left"],
             shortTitle: "Budget", systemImageName: "chart.pie")
+        AppShortcut(
+            intent: UpcomingBillsIntent(),
+            phrases: ["What bills are due in \(.applicationName)", "\(.applicationName) upcoming bills"],
+            shortTitle: "Bills Due", systemImageName: "calendar.badge.clock")
         AppShortcut(
             intent: ReviewQueueIntent(),
             phrases: ["What needs review in \(.applicationName)", "\(.applicationName) review queue"],

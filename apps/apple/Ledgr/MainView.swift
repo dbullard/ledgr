@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum AppSection: Hashable {
-    case dashboard, transactions, accounts, budgets, receipts, items, more
+    case dashboard, transactions, accounts, budgets, recurring, receipts, items, more
     case web(WebPage)
 }
 
@@ -14,7 +14,6 @@ struct WebPage: Identifiable, Hashable {
 
     static let all: [WebPage] = [
         WebPage(title: "Reports", path: "/reports", symbol: "chart.bar.xaxis"),
-        WebPage(title: "Recurring", path: "/recurrings", symbol: "repeat"),
         WebPage(title: "Investments", path: "/investments", symbol: "chart.line.uptrend.xyaxis"),
         WebPage(title: "Categories", path: "/categories", symbol: "tag"),
         WebPage(title: "Rules", path: "/rules", symbol: "wand.and.stars"),
@@ -50,6 +49,7 @@ struct MoreView: View {
         List {
             Section("Native") {
                 NavigationLink { BudgetsView() } label: { Label("Budgets", systemImage: "chart.pie") }
+                NavigationLink { RecurringView() } label: { Label("Recurring", systemImage: "repeat") }
                 NavigationLink { ItemsView() } label: { Label("Items", systemImage: "cart") }
             }
             Section("Full app") {
@@ -105,11 +105,12 @@ struct MainView: View {
                     Label("Transactions", systemImage: "list.bullet").tag(AppSection.transactions)
                     Label("Accounts", systemImage: "building.columns").tag(AppSection.accounts)
                     Label("Budgets", systemImage: "chart.pie").tag(AppSection.budgets)
+                    Label("Recurring", systemImage: "repeat").tag(AppSection.recurring)
                     Label("Receipts", systemImage: "receipt").tag(AppSection.receipts)
                     Label("Items", systemImage: "cart").tag(AppSection.items)
                 }
                 Section("Manage") {
-                    ForEach(WebPage.all.filter { $0.path != "/budgets" }.prefix(5)) { page in
+                    ForEach(WebPage.all.filter { $0.path != "/recurrings" }.prefix(5)) { page in
                         Label(page.title, systemImage: page.symbol).tag(AppSection.web(page))
                     }
                 }
@@ -144,12 +145,14 @@ struct MainView: View {
                 case .transactions: TransactionsView()
                 case .accounts: AccountsView()
                 case .budgets: BudgetsView()
+                case .recurring: RecurringView()
                 case .receipts: ReceiptsView()
                 case .items: ItemsView()
                 case .more: MoreView()
                 case .web(let page): WebPageView(page: page)
                 }
             }
+            .navigationDestination(for: RecurringItem.self) { RecurringDetailView(item: $0) }
             .navigationDestination(for: AccountRowModel.self) { AccountDetailView(account: $0) }
             .navigationDestination(for: Txn.self) { TransactionDetailView(initial: $0) }
             .navigationDestination(for: WebPage.self) { WebPageView(page: $0) }
