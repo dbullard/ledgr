@@ -137,6 +137,43 @@ struct UpcomingBillsIntent: AppIntent {
     }
 }
 
+struct CategorizeTransactionIntent: AppIntent {
+    static let title: LocalizedStringResource = "Categorize Transaction"
+    static let description = IntentDescription("Puts an uncategorized transaction into a category, after you confirm.")
+
+    @Parameter(title: "Merchant or name") var search: String
+    @Parameter(title: "Category") var category: String
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Categorize \(\.$search) as \(\.$category)")
+    }
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let api = try await readyAPI()
+        let groups: [CategoryGroup] = try await api.get("api/native/categories")
+        let all = groups.flatMap(\.categories)
+        let q = category.trimmingCharacters(in: .whitespaces)
+        let exact = all.filter { $0.name.caseInsensitiveCompare(q) == .orderedSame }
+        let matches = exact.isEmpty ? all.filter { $0.name.localizedCaseInsensitiveContains(q) } : exact
+        guard matches.count == 1, let cat = matches.first else {
+            let text = matches.isEmpty ? "I couldn't find a category called \(q)." : "More than one category matches \(q). Say the full name."
+            return .result(dialog: IntentDialog(stringLiteral: text))
+        }
+        let page: TxnPage = try await api.get("api/native/transactions", query: ["search": search, "needsReview": "1", "limit": "5"])
+        let open = page.rows.filter { $0.categoryId == nil }
+        guard open.count == 1, let txn = open.first else {
+            let text = open.isEmpty
+                ? "I found no uncategorized transactions matching \(search)."
+                : "\(open.count) uncategorized transactions match \(search). Be more specific, or use the app."
+            return .result(dialog: IntentDialog(stringLiteral: text))
+        }
+        try await requestConfirmation(result: .result(dialog: IntentDialog(stringLiteral: "Put \(txn.name) for \(Fmt.money(abs(txn.normalizedAmount))) in \(cat.name)?")))
+        let _: Ok = try await api.patch("api/native/transactions/\(txn.id)", body: ["categoryId": cat.id])
+        return .result(dialog: IntentDialog(stringLiteral: "Done. \(txn.name) is now in \(cat.name)."))
+    }
+}
+
 struct FindTransactionsIntent: AppIntent {
     static let title: LocalizedStringResource = "Find Transactions"
     static let description = IntentDescription("Search your transactions by merchant or name.")
@@ -213,6 +250,10 @@ struct LedgrShortcuts: AppShortcutsProvider {
             intent: UpcomingBillsIntent(),
             phrases: ["What bills are due in \(.applicationName)", "\(.applicationName) upcoming bills"],
             shortTitle: "Bills Due", systemImageName: "calendar.badge.clock")
+        AppShortcut(
+            intent: CategorizeTransactionIntent(),
+            phrases: ["Categorize a transaction in \(.applicationName)"],
+            shortTitle: "Categorize", systemImageName: "tag")
         AppShortcut(
             intent: ReviewQueueIntent(),
             phrases: ["What needs review in \(.applicationName)", "\(.applicationName) review queue"],

@@ -7,6 +7,20 @@ import {
   getNetWorthHistory,
   getRecentTransactions,
 } from "@/queries/dashboard";
+import { getCategoryRules } from "@/queries/category-rules";
+import {
+  createCategoryRule,
+  deleteCategoryRule,
+  updateCategoryRule,
+} from "@/actions/category-rules";
+import {
+  createCategory,
+  createCategoryGroup,
+  deleteCategory,
+  deleteCategoryGroup,
+  renameCategory,
+  renameCategoryGroup,
+} from "@/actions/categories";
 import { getRecurrings, getRecurringSummary, getRecurringTransactions } from "@/queries/recurring";
 import { createRecurringTransaction, setRecurringStatus } from "@/actions/recurring";
 import { getBudgetForMonth } from "@/queries/budgets";
@@ -47,6 +61,13 @@ export const dynamic = "force-dynamic";
  *   GET    /api/native/items?from&to
  *   GET    /api/native/accounts                      (grouped by institution + totals)
  *   GET    /api/native/accounts/:id/history?days=90
+ *   POST   /api/native/categories        { name, groupId, isIncome? }
+ *   PATCH  /api/native/categories/:id    { name }       DELETE /api/native/categories/:id
+ *   POST   /api/native/category-groups   { name }
+ *   PATCH  /api/native/category-groups/:id { name }     DELETE /api/native/category-groups/:id
+ *   GET    /api/native/category-rules
+ *   POST   /api/native/category-rules    { categoryId, matchField, matchPattern, priority }
+ *   PATCH  /api/native/category-rules/:id  (same fields)  DELETE /api/native/category-rules/:id
  *   GET    /api/native/recurring                     (bucketed list + monthly totals)
  *   GET    /api/native/recurring/:id/transactions
  *   PATCH  /api/native/recurring/:id    { status: "active"|"paused"|"archived" }
@@ -92,6 +113,68 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
       withHousehold(householdId, (tx) => getRecentTransactions(householdId, 8, tx)),
     ]);
     return ok({ summary, history, spending, recent });
+  }
+
+  const fin = (r: { success: true } | { error: string } | { success: true; id: string }) =>
+    "error" in r ? fail(r.error) : ok(r);
+
+  if (head === "categories" && method !== "GET") {
+    const body = (await req.json().catch(() => null)) as { name?: string; groupId?: string; isIncome?: boolean } | null;
+    if (!id && method === "POST") {
+      if (!body?.name || !body.groupId) return fail("Invalid input");
+      return fin(await createCategory({
+        name: body.name,
+        groupId: body.groupId,
+        isIncome: body.isIncome ?? false,
+        includeTransferInSpending: false,
+        excludeFromSpending: false,
+      }));
+    }
+    if (id && method === "PATCH") {
+      if (!body?.name) return fail("Invalid input");
+      return fin(await renameCategory(id, body.name));
+    }
+    if (id && method === "DELETE") return fin(await deleteCategory(id));
+  }
+
+  if (head === "category-groups") {
+    const body = (await req.json().catch(() => null)) as { name?: string } | null;
+    if (!id && method === "POST") {
+      if (!body?.name) return fail("Invalid input");
+      return fin(await createCategoryGroup(body.name));
+    }
+    if (id && method === "PATCH") {
+      if (!body?.name) return fail("Invalid input");
+      return fin(await renameCategoryGroup(id, body.name));
+    }
+    if (id && method === "DELETE") return fin(await deleteCategoryGroup(id));
+  }
+
+  if (head === "category-rules") {
+    if (!id && method === "GET") {
+      return ok(await withHousehold(householdId, (tx) => getCategoryRules(householdId, tx)));
+    }
+    const body = (await req.json().catch(() => null)) as {
+      categoryId?: string;
+      matchField?: "name" | "merchant";
+      matchPattern?: string;
+      priority?: number;
+    } | null;
+    const input = body && {
+      categoryId: body.categoryId ?? "",
+      matchField: body.matchField ?? ("name" as const),
+      matchPattern: body.matchPattern ?? "",
+      priority: body.priority ?? 0,
+    };
+    if (!id && method === "POST") {
+      if (!input) return fail("Invalid input");
+      return fin(await createCategoryRule(input));
+    }
+    if (id && method === "PATCH") {
+      if (!input) return fail("Invalid input");
+      return fin(await updateCategoryRule({ id, ...input }));
+    }
+    if (id && method === "DELETE") return fin(await deleteCategoryRule(id));
   }
 
   if (head === "recurring") {

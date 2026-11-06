@@ -107,6 +107,7 @@ struct CategoryGroup: Codable, Identifiable {
     let id: String
     let name: String
     let icon: String?
+    let isSystem: Bool?
     let categories: [Category]
 }
 
@@ -115,6 +116,7 @@ struct Category: Codable, Identifiable, Hashable {
     let name: String
     let icon: String?
     let isIncome: Bool
+    let isSystem: Bool?
 }
 
 struct ItemsResponse: Codable {
