@@ -18,7 +18,20 @@ function passkeyRpID(): string {
   }
 }
 
+/**
+ * Extra origins allowed to sign in, comma-separated. Set when the app is
+ * reached by more than one address (LAN IP and a VPN or proxy name), e.g. from
+ * the native apps' home/away switching.
+ */
+function trustedOrigins(): string[] {
+  return (process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? "")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
+}
+
 export const auth = betterAuth({
+  trustedOrigins: trustedOrigins(),
   database: drizzleAdapter(db, {
     provider: "pg",
   }),
