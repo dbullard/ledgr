@@ -70,7 +70,7 @@ import { getCategories } from "@/queries/categories";
 import { getItemSpendByCategory, getTopProducts } from "@/queries/receipt-items";
 import { fetchTransactionDetail, updateTransactionFields } from "@/actions/transaction-detail";
 import { toggleReviewed, updateTransactionCategory } from "@/actions/transactions";
-import { attachReceipt, deleteReceipt, fetchReceipts, fetchUnmatchedReceipts } from "@/actions/receipts";
+import { attachReceipt, deleteReceipt, fetchReceipts, fetchUnmatchedReceipts, uploadReceipt } from "@/actions/receipts";
 
 export const dynamic = "force-dynamic";
 
@@ -85,6 +85,7 @@ export const dynamic = "force-dynamic";
  *   PATCH  /api/native/transactions/:id   { categoryId?, reviewed?, notes? }
  *   GET    /api/native/categories
  *   GET    /api/native/receipts                      (waiting for a transaction)
+ *   POST   /api/native/transactions/:id/receipts   (multipart `file`; attaches directly)
  *   POST   /api/native/receipts/attach   { receiptId, transactionId }
  *   DELETE /api/native/receipts/:id
  *   GET    /api/native/items?from&to
@@ -498,6 +499,17 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
       getTransactions(householdId, filters, limit, q.get("cursor"), tx),
     );
     return ok(page);
+  }
+
+  if (head === "transactions" && id && segs[2] === "receipts" && method === "POST") {
+    let form: FormData;
+    try {
+      form = await req.formData();
+    } catch (e) {
+      return fail(`Couldn't read the upload: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const res = await uploadReceipt(id, form);
+    return "error" in res ? fail(res.error) : ok(res.data);
   }
 
   if (head === "transactions" && id && method === "GET") {

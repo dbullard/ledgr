@@ -1,5 +1,7 @@
 import SwiftUI
 import QuickLook
+import PhotosUI
+import UniformTypeIdentifiers
 
 enum TxnFilter: String, CaseIterable, Identifiable {
     case all = "All", needsReview = "Needs review", expense = "Spending", credits = "Income"
@@ -119,6 +121,12 @@ struct TransactionDetailView: View {
     @State private var preview: URL?
     @State private var opening: String?
     @FocusState private var notesFocused: Bool
+    @State private var showPhotos = false
+    @State private var showFiles = false
+    @State private var showScan = false
+    @State private var showWaiting = false
+    @State private var photoItems: [PhotosPickerItem] = []
+    @State private var attaching = false
 
     private var txn: Txn { detail?.txn ?? initial }
 
@@ -189,8 +197,24 @@ struct TransactionDetailView: View {
                         .tint(.primary)
                     }
                 } else {
-                    Text("No receipt. Optional — add one from the Receipts tab.").font(.footnote).foregroundStyle(.secondary)
+                    Text("No receipt yet. Optional.").font(.footnote).foregroundStyle(.secondary)
                 }
+                Menu {
+                    #if os(iOS)
+                    if DocumentScanner.isAvailable {
+                        Button { showScan = true } label: { Label("Scan receipt", systemImage: "doc.viewfinder") }
+                    }
+                    #endif
+                    Button { showPhotos = true } label: { Label("Choose photo", systemImage: "photo") }
+                    Button { showFiles = true } label: { Label("Choose file…", systemImage: "folder") }
+                    Button { showWaiting = true } label: { Label("From waiting receipts…", systemImage: "tray") }
+                } label: {
+                    HStack {
+                        if attaching { ProgressView().controlSize(.small) }
+                        Label("Add receipt", systemImage: "paperclip")
+                    }
+                }
+                .disabled(attaching)
             } header: { Text("Receipts") }
 
             if let error {
@@ -202,6 +226,45 @@ struct TransactionDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .quickLookPreview($preview)
+        .photosPicker(isPresented: $showPhotos, selection: $photoItems, matching: .images)
+        .fileImporter(isPresented: $showFiles, allowedContentTypes: RootView.receiptTypes, allowsMultipleSelection: true) { result in
+            if case .success(let urls) = result {
+                Task {
+                    for url in urls {
+                        let scoped = url.startAccessingSecurityScopedResource()
+                        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                        if let data = try? Data(contentsOf: url) { await attach(data, url.lastPathComponent) }
+                    }
+                }
+            }
+        }
+        .onChange(of: photoItems) { _, items in
+            guard !items.isEmpty else { return }
+            Task {
+                for item in items {
+                    if let data = try? await item.loadTransferable(type: Data.self) {
+                        await attach(ImageTools.jpegData(fromImageData: data) ?? data, "photo-\(UploadQueue.stamp()).jpg")
+                    }
+                }
+                photoItems = []
+            }
+        }
+        #if os(iOS)
+        .fullScreenCover(isPresented: $showScan) {
+            DocumentScanner { pages in
+                if let file = ImageTools.receiptFile(fromScans: pages) {
+                    Task { await attach(file.data, "scan-\(UploadQueue.stamp()).\(file.ext)") }
+                }
+            }
+            .ignoresSafeArea()
+        }
+        #endif
+        .sheet(isPresented: $showWaiting) {
+            WaitingReceiptPicker(transactionId: initial.id) { await load() }
+                #if os(macOS)
+                .frame(minWidth: 420, minHeight: 360)
+                #endif
+        }
         .task {
             notes = initial.notes ?? ""
             await load()
@@ -240,6 +303,18 @@ struct TransactionDetailView: View {
         await patch(["notes": trimmed])
     }
 
+    /// Uploads straight onto this transaction (no matching step).
+    private func attach(_ data: Data, _ filename: String) async {
+        attaching = true
+        defer { attaching = false }
+        do {
+            _ = try await api.upload("api/native/transactions/\(initial.id)/receipts", fields: [:], file: data, filename: filename)
+            error = nil
+            await load()
+        } catch APIError.unauthorized {
+        } catch { self.error = error.localizedDescription }
+    }
+
     private func open(_ r: ReceiptSummary) async {
         opening = r.id
         defer { opening = nil }
@@ -253,5 +328,49 @@ extension TxnDetail {
         self.txn = txn
         self.splits = splits
         self.receipts = receipts
+    }
+}
+
+/// Pick a receipt that was uploaded without a transaction and attach it here.
+struct WaitingReceiptPicker: View {
+    let transactionId: String
+    let onDone: () async -> Void
+    @EnvironmentObject var api: API
+    @Environment(\.dismiss) private var dismiss
+    @State private var waiting: [UnmatchedReceipt]?
+    @State private var error: String?
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if let waiting {
+                    if waiting.isEmpty { Text("No receipts are waiting.").foregroundStyle(.secondary) }
+                    ForEach(waiting) { r in
+                        Button { Task { await attach(r) } } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(r.hintMerchant ?? r.originalFilename).font(.body.weight(.medium)).lineLimit(1)
+                                Text([r.hintTotalCents.map { Fmt.money($0) }, r.hintDate.map { Fmt.shortDate($0) }].compactMap { $0 }.joined(separator: " · "))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .tint(.primary)
+                    }
+                } else { ProgressView() }
+                if let error { Text(error).foregroundStyle(.red).font(.footnote) }
+            }
+            .navigationTitle("Waiting receipts")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .task {
+                if let list: [UnmatchedReceipt] = try? await api.get("api/native/receipts") { waiting = list } else { waiting = [] }
+            }
+        }
+    }
+
+    private func attach(_ r: UnmatchedReceipt) async {
+        do {
+            try await api.post("api/native/receipts/attach", body: ["receiptId": r.id, "transactionId": transactionId])
+            await onDone()
+            dismiss()
+        } catch { self.error = error.localizedDescription }
     }
 }
