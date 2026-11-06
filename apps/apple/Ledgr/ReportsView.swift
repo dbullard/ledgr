@@ -154,13 +154,16 @@ struct ReportsView: View {
                     }
                 }
                 let top = Array(s.rows.sorted { $0.total > $1.total }.prefix(8))
-                if !top.isEmpty {
-                    Chart(top) { r in
-                        BarMark(x: .value("Spent", Double(r.total) / 100), y: .value("Category", r.categoryName))
-                            .foregroundStyle(Color.accentColor)
+                let maxTotal = Double(top.first?.total ?? 1)
+                ForEach(top) { r in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(r.categoryName).font(.subheadline)
+                            Spacer()
+                            Text(Fmt.moneyWhole(r.total)).font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
+                        }
+                        ProgressBar(fraction: Double(r.total) / maxTotal)
                     }
-                    .chartXAxis { AxisMarks { AxisValueLabel(format: .currency(code: "USD").notation(.compactName)) } }
-                    .frame(height: CGFloat(top.count) * 30 + 20)
                 }
             }
             Card("By category", trailing: s.comparisonLabel.map { AnyView(Text($0).font(.caption).foregroundStyle(.secondary)) }) {
