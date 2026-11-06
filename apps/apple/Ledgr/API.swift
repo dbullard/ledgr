@@ -21,6 +21,11 @@ final class API: ObservableObject {
     enum AuthState { case unknown, signedOut, signedIn }
 
     @Published private(set) var auth: AuthState = .unknown
+    /// Why the last request was turned away, shown on the sign-in screen.
+    @Published private(set) var lastIssue: String?
+
+    /// Session cookies (name to value), kept in the Keychain.
+    private var cookies: [String: String] = SessionStore.load()
 
     private let connection: Connection
     private let web: WebModel
@@ -34,6 +39,36 @@ final class API: ObservableObject {
         config.httpShouldSetCookies = false
         config.timeoutIntervalForRequest = 30
         session = URLSession(configuration: config, delegate: noRedirect, delegateQueue: nil)
+    }
+
+    // MARK: Cookies
+
+    /// Cookie header for requests to `url`: our own copy first, then whatever the web view holds.
+    func cookieHeader(for url: URL) async -> String? {
+        if !cookies.isEmpty {
+            return cookies.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "; ")
+        }
+        return await web.cookieHeader(for: url)
+    }
+
+    /// Picks up cookies a response sets (sign-in, and the server refreshing the session).
+    private func absorb(_ http: HTTPURLResponse, from url: URL) {
+        let headers = http.allHeaderFields as? [String: String] ?? [:]
+        var changed = false
+        // Parse as if over https: Apple's parser drops Secure cookies that arrive over plain http,
+        // but Ledgr sets them that way whenever its public address is https.
+        var secureURL = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        secureURL?.scheme = "https"
+        let parseURL = secureURL?.url ?? url
+        for cookie in HTTPCookie.cookies(withResponseHeaderFields: headers, for: parseURL) where cookie.name.contains("better-auth") {
+            if let exp = cookie.expiresDate, exp < Date() {
+                if cookies.removeValue(forKey: cookie.name) != nil { changed = true }
+            } else if cookies[cookie.name] != cookie.value {
+                cookies[cookie.name] = cookie.value
+                changed = true
+            }
+        }
+        if changed { SessionStore.save(cookies) }
     }
 
     // MARK: Requests
@@ -68,7 +103,7 @@ final class API: ObservableObject {
         guard let url = parts?.url else { throw APIError.offline }
         var request = URLRequest(url: url)
         request.httpMethod = method
-        if let cookie = await web.cookieHeader(for: base) { request.setValue(cookie, forHTTPHeaderField: "Cookie") }
+        if let cookie = await cookieHeader(for: base) { request.setValue(cookie, forHTTPHeaderField: "Cookie") }
         if let body {
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -78,9 +113,15 @@ final class API: ObservableObject {
         catch { throw APIError.offline }
         guard let http = response as? HTTPURLResponse else { throw APIError.offline }
         if http.statusCode == 401 || (300..<400).contains(http.statusCode) {
+            if !cookies.isEmpty {
+                lastIssue = "\(base.host ?? "The server") didn't accept the saved sign-in (code \(http.statusCode))."
+                cookies = [:]
+                SessionStore.clear()
+            }
             auth = .signedOut
             throw APIError.unauthorized
         }
+        absorb(http, from: base)
         if !(200..<300).contains(http.statusCode) {
             let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
             throw APIError.server(message ?? "The server returned an error (\(http.statusCode)).")
@@ -119,12 +160,35 @@ final class API: ObservableObject {
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             throw APIError.server(json?["message"] as? String ?? "Couldn't sign in. Check your email and password.")
         }
-        let headers = http.allHeaderFields as? [String: String] ?? [:]
-        let store = WKWebsiteDataStore.default().httpCookieStore
-        for cookie in HTTPCookie.cookies(withResponseHeaderFields: headers, for: base) {
-            await store.setCookie(cookie)
+        absorb(http, from: base)
+        guard cookies.keys.contains(where: { $0.contains("session_token") }) else {
+            throw APIError.server("The server signed you in but sent no session. Try the other address in Server settings.")
         }
-        await CookieSync.sync(between: [connection.homeURL, connection.awayURL].compactMap { $0 })
+        // Verify the session before declaring success, so a rejected one is explained here.
+        do {
+            let _: [CategoryGroup] = try await get("api/native/categories")
+        } catch APIError.unauthorized {
+            throw APIError.server("Signed in, but \(base.host ?? "the server") rejected the session (code check failed).")
+        }
+        lastIssue = nil
+        await mirrorToWebView(base: base)
+        auth = .signedIn
+    }
+
+    /// Best effort: also hand the session to the web view so the "Full app" pages are signed in.
+    /// Secure cookies are stripped to plain ones on http addresses, which would otherwise be refused.
+    private func mirrorToWebView(base: URL) async {
+        let store = WKWebsiteDataStore.default().httpCookieStore
+        for url in [connection.homeURL, connection.awayURL].compactMap({ $0 }) {
+            guard let host = url.host else { continue }
+            let secure = url.scheme == "https"
+            for (name, value) in cookies {
+                var props: [HTTPCookiePropertyKey: Any] = [.name: name, .value: value, .domain: host, .path: "/"]
+                props[.expires] = Date().addingTimeInterval(7 * 86_400)
+                if secure { props[.secure] = "TRUE" }
+                if let cookie = HTTPCookie(properties: props) { await store.setCookie(cookie) }
+            }
+        }
         auth = .signedIn
     }
 
@@ -135,9 +199,11 @@ final class API: ObservableObject {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue(Self.origin(base), forHTTPHeaderField: "Origin")
             request.httpBody = Data("{}".utf8)
-            if let cookie = await web.cookieHeader(for: base) { request.setValue(cookie, forHTTPHeaderField: "Cookie") }
+            if let cookie = await cookieHeader(for: base) { request.setValue(cookie, forHTTPHeaderField: "Cookie") }
             _ = try? await session.data(for: request)
         }
+        cookies = [:]
+        SessionStore.clear()
         let store = WKWebsiteDataStore.default().httpCookieStore
         for cookie in await store.allCookies() where cookie.name.contains("better-auth") {
             await store.deleteCookie(cookie)
@@ -155,7 +221,7 @@ final class API: ObservableObject {
     func downloadReceipt(_ receipt: ReceiptSummary) async throws -> URL {
         guard let base = connection.active else { throw APIError.offline }
         var request = URLRequest(url: base.appendingPathComponent("api/receipts/\(receipt.id)"))
-        if let cookie = await web.cookieHeader(for: base) { request.setValue(cookie, forHTTPHeaderField: "Cookie") }
+        if let cookie = await cookieHeader(for: base) { request.setValue(cookie, forHTTPHeaderField: "Cookie") }
         let (data, response): (Data, URLResponse)
         do { (data, response) = try await session.data(for: request) }
         catch { throw APIError.offline }

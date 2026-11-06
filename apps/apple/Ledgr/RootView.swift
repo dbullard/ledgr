@@ -132,7 +132,7 @@ struct RootView: View {
     private func flush() {
         guard api.auth == .signedIn, let base = connection.active, !queue.items.isEmpty else { return }
         Task {
-            let cookie = await web.cookieHeader(for: base)
+            let cookie = await api.cookieHeader(for: base)
             await queue.flush(to: base, cookie: cookie)
         }
     }

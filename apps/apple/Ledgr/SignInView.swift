@@ -43,7 +43,7 @@ struct SignInView: View {
                     .onSubmit { Task { await signIn() } }
                     .padding(12)
                     .background(Color.card, in: RoundedRectangle(cornerRadius: 12))
-                if let error {
+                if let error = error ?? api.lastIssue {
                     Text(error).font(.footnote).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 Button {
