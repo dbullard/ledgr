@@ -130,6 +130,11 @@ struct BudgetsView: View {
         }
     }
 
+    private func setType(_ id: String, _ type: String) async {
+        do { let _: Ok = try await api.patch("api/native/budgets/\(id)", body: ["type": type]); await load() }
+        catch { self.error = error.localizedDescription }
+    }
+
     // MARK: Pieces
 
     private var monthBar: some View {
@@ -178,6 +183,15 @@ struct BudgetsView: View {
                     Text("Budget \(Fmt.moneyWhole(s.totalBudgeted))")
                 }
                 .font(.footnote).foregroundStyle(.secondary)
+                if let b = d.budget {
+                    Picker("Budget style", selection: Binding(get: { b.type }, set: { v in Task { await setType(b.id, v) } })) {
+                        Text("By category").tag("category")
+                        Text("Flexible").tag("flex")
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .padding(.top, 6)
+                }
             }
         }
     }

@@ -117,6 +117,7 @@ struct Category: Codable, Identifiable, Hashable {
     let icon: String?
     let isIncome: Bool
     let isSystem: Bool?
+    let excludeFromSpending: Bool?
 }
 
 struct ItemsResponse: Codable {

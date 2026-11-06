@@ -38,8 +38,12 @@ import {
   createCategoryGroup,
   deleteCategory,
   deleteCategoryGroup,
+  mergeCategories,
+  mergeCategoryGroups,
+  moveCategoryToGroup,
   renameCategory,
   renameCategoryGroup,
+  updateCategoryExclusion,
 } from "@/actions/categories";
 import { getMcpSettings } from "@/queries/mcp-settings";
 import { revokeMcpClient, toggleMcpEndpoint } from "@/actions/mcp-settings";
@@ -279,7 +283,13 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
     "error" in r ? fail(r.error) : ok(r);
 
   if (head === "categories" && method !== "GET") {
-    const body = (await req.json().catch(() => null)) as { name?: string; groupId?: string; isIncome?: boolean } | null;
+    const body = (await req.json().catch(() => null)) as {
+      name?: string; groupId?: string; isIncome?: boolean; excludeFromSpending?: boolean; targetId?: string;
+    } | null;
+    if (id && segs[2] === "merge" && method === "POST") {
+      if (!body?.targetId) return fail("Invalid input");
+      return fin(await mergeCategories(id, body.targetId));
+    }
     if (!id && method === "POST") {
       if (!body?.name || !body.groupId) return fail("Invalid input");
       return fin(await createCategory({
@@ -291,6 +301,8 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
       }));
     }
     if (id && method === "PATCH") {
+      if (body?.groupId) return fin(await moveCategoryToGroup(id, body.groupId));
+      if (typeof body?.excludeFromSpending === "boolean") return fin(await updateCategoryExclusion(id, body.excludeFromSpending));
       if (!body?.name) return fail("Invalid input");
       return fin(await renameCategory(id, body.name));
     }
@@ -298,7 +310,11 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
   }
 
   if (head === "category-groups") {
-    const body = (await req.json().catch(() => null)) as { name?: string } | null;
+    const body = (await req.json().catch(() => null)) as { name?: string; targetId?: string } | null;
+    if (id && segs[2] === "merge" && method === "POST") {
+      if (!body?.targetId) return fail("Invalid input");
+      return fin(await mergeCategoryGroups(id, body.targetId));
+    }
     if (!id && method === "POST") {
       if (!body?.name) return fail("Invalid input");
       return fin(await createCategoryGroup(body.name));

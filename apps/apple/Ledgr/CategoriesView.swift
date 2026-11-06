@@ -60,6 +60,11 @@ struct CategoriesView: View {
                 Button("Add income category") { prompt = NamePrompt(title: "New income category", initial: "", kind: .newCategory(groupId: g.id, income: true)) }
                 if g.isSystem != true {
                     Button("Rename group") { prompt = NamePrompt(title: "Rename group", initial: g.name, kind: .renameGroup(id: g.id)) }
+                    Menu("Merge into…") {
+                        ForEach(groups.filter { $0.id != g.id }) { t in
+                            Button(t.name) { Task { await post("api/native/category-groups/\(g.id)/merge", ["targetId": t.id]) } }
+                        }
+                    }
                     Button("Delete group", role: .destructive) { Task { await remove("api/native/category-groups/\(g.id)") } }
                 }
             } label: { Image(systemName: "ellipsis.circle") }
@@ -71,11 +76,29 @@ struct CategoriesView: View {
                 HStack(spacing: 12) {
                     CategoryBadge(icon: c.icon, size: 32)
                     Text(c.name).font(.body)
+                    if c.excludeFromSpending == true { Text("Excluded").font(.caption2).foregroundStyle(.secondary) }
                     if c.isIncome { Text("Income").font(.caption2).padding(.horizontal, 6).padding(.vertical, 2).background(Color.income.opacity(0.15), in: Capsule()).foregroundStyle(Color.income) }
                     Spacer()
                     if c.isSystem != true {
                         Menu {
                             Button("Rename") { prompt = NamePrompt(title: "Rename category", initial: c.name, kind: .renameCategory(id: c.id)) }
+                            Menu("Move to group") {
+                                ForEach(groups.filter { $0.id != g.id }) { t in
+                                    Button(t.name) { Task { await patch("api/native/categories/\(c.id)", ["groupId": t.id]) } }
+                                }
+                            }
+                            Menu("Merge into…") {
+                                ForEach(groups) { t in
+                                    Menu(t.name) {
+                                        ForEach(t.categories.filter { $0.id != c.id }) { o in
+                                            Button(o.name) { Task { await post("api/native/categories/\(c.id)/merge", ["targetId": o.id]) } }
+                                        }
+                                    }
+                                }
+                            }
+                            Button(c.excludeFromSpending == true ? "Include in spending" : "Exclude from spending") {
+                                Task { await patch("api/native/categories/\(c.id)", ["excludeFromSpending": c.excludeFromSpending != true]) }
+                            }
                             Button("Delete", role: .destructive) { Task { await remove("api/native/categories/\(c.id)") } }
                         } label: { Image(systemName: "ellipsis") }
                         .menuStyle(.borderlessButton)
@@ -113,6 +136,16 @@ struct CategoriesView: View {
             await load()
             return nil
         } catch { return error.localizedDescription }
+    }
+
+    private func patch(_ path: String, _ body: [String: Any]) async {
+        do { let _: Ok = try await api.patch(path, body: body); message = nil; await load() }
+        catch { message = error.localizedDescription }
+    }
+
+    private func post(_ path: String, _ body: [String: Any]) async {
+        do { try await api.post(path, body: body); message = nil; await load() }
+        catch { message = error.localizedDescription }
     }
 
     private func remove(_ path: String) async {
