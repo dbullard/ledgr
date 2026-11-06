@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum AppSection: Hashable {
-    case dashboard, transactions, accounts, budgets, recurring, investments, reports, categories, rules, receipts, items, more
+    case dashboard, transactions, accounts, budgets, recurring, investments, reports, categories, rules, receipts, items, importFile, more
     case web(WebPage)
 }
 
@@ -13,7 +13,6 @@ struct WebPage: Identifiable, Hashable {
     var id: String { path }
 
     static let all: [WebPage] = [
-        WebPage(title: "Import", path: "/import", symbol: "square.and.arrow.down"),
         WebPage(title: "Web settings", path: "/settings", symbol: "gearshape"),
     ]
 }
@@ -51,14 +50,12 @@ struct MoreView: View {
                 NavigationLink { CategoriesView() } label: { Label("Categories", systemImage: "tag") }
                 NavigationLink { RulesView() } label: { Label("Rules", systemImage: "wand.and.stars") }
                 NavigationLink { ItemsView() } label: { Label("Items", systemImage: "cart") }
+                NavigationLink { ImportView() } label: { Label("Import", systemImage: "square.and.arrow.down") }
             }
-            Section("Full app") {
-                ForEach(WebPage.all) { page in
-                    NavigationLink(value: page) { Label(page.title, systemImage: page.symbol) }
-                }
-            }
+
             Section("This app") {
-                Button { actions.showSettings = true } label: { Label("Server settings", systemImage: "network") }
+                NavigationLink { AccountSettingsView() } label: { Label("Settings", systemImage: "gearshape") }
+                Button { actions.showSettings = true } label: { Label("Server addresses", systemImage: "network") }
                 Button(role: .destructive) { Task { await api.signOut() } } label: {
                     Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
                 }
@@ -116,9 +113,7 @@ struct MainView: View {
                     Label("Rules", systemImage: "wand.and.stars").tag(AppSection.rules)
                 }
                 Section("Manage") {
-                    ForEach(WebPage.all.filter { ["/import"].contains($0.path) }) { page in
-                        Label(page.title, systemImage: page.symbol).tag(AppSection.web(page))
-                    }
+                    Label("Import", systemImage: "square.and.arrow.down").tag(AppSection.importFile)
                 }
                 Section {
                     Label("Settings", systemImage: "gearshape").tag(AppSection.more)
@@ -158,7 +153,8 @@ struct MainView: View {
                 case .rules: RulesView()
                 case .receipts: ReceiptsView()
                 case .items: ItemsView()
-                case .more: MoreView()
+                case .importFile: ImportView()
+                case .more: AccountSettingsView()
                 case .web(let page): WebPageView(page: page)
                 }
             }

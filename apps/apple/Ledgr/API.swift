@@ -91,6 +91,36 @@ final class API: ObservableObject {
         _ = try await send("DELETE", path)
     }
 
+    /// Multipart upload for endpoints that take a file plus form fields. Returns the JSON object.
+    func upload(_ path: String, fields: [String: String], file: Data, filename: String) async throws -> [String: Any] {
+        guard let base = connection.active else { throw APIError.offline }
+        let boundary = "ledgr-\(UUID().uuidString)"
+        var body = Data()
+        func add(_ s: String) { body.append(Data(s.utf8)) }
+        for (k, v) in fields {
+            add("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(k)\"\r\n\r\n\(v)\r\n")
+        }
+        add("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\nContent-Type: application/octet-stream\r\n\r\n")
+        body.append(file)
+        add("\r\n--\(boundary)--\r\n")
+        var request = URLRequest(url: base.appendingPathComponent(path))
+        request.httpMethod = "POST"
+        request.httpBody = body
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        if let cookie = await cookieHeader(for: base) { request.setValue(cookie, forHTTPHeaderField: "Cookie") }
+        let (data, response): (Data, URLResponse)
+        do { (data, response) = try await session.data(for: request) }
+        catch { throw APIError.offline }
+        guard let http = response as? HTTPURLResponse else { throw APIError.offline }
+        if http.statusCode == 401 || (300..<400).contains(http.statusCode) { auth = .signedOut; throw APIError.unauthorized }
+        absorb(http, from: base)
+        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        if !(200..<300).contains(http.statusCode) {
+            throw APIError.server(json["error"] as? String ?? "The server returned an error (\(http.statusCode)).")
+        }
+        return json
+    }
+
     private func decode<T: Decodable>(_ data: Data) throws -> T {
         do { return try JSONDecoder().decode(T.self, from: data) }
         catch { throw APIError.server("Unexpected response from the server.") }

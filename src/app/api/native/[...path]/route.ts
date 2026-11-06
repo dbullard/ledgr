@@ -41,6 +41,11 @@ import {
   renameCategory,
   renameCategoryGroup,
 } from "@/actions/categories";
+import { getMcpSettings } from "@/queries/mcp-settings";
+import { revokeMcpClient, toggleMcpEndpoint } from "@/actions/mcp-settings";
+import { toggleDemoMode } from "@/actions/demo-mode";
+import { isDemoMode } from "@/lib/demo-mode";
+import { getAccountsForImport } from "@/queries/accounts";
 import { getRecurrings, getRecurringSummary, getRecurringTransactions } from "@/queries/recurring";
 import { createRecurringTransaction, setRecurringStatus } from "@/actions/recurring";
 import { getBudgetForMonth } from "@/queries/budgets";
@@ -81,6 +86,12 @@ export const dynamic = "force-dynamic";
  *   GET    /api/native/items?from&to
  *   GET    /api/native/accounts                      (grouped by institution + totals)
  *   GET    /api/native/accounts/:id/history?days=90
+ *   GET    /api/native/settings                      (profile, demo mode, MCP access)
+ *   POST   /api/native/settings/demo-mode    (toggle)
+ *   PATCH  /api/native/settings/mcp          { enabled }
+ *   DELETE /api/native/settings/mcp/:clientId
+ *   GET    /api/native/import/accounts       (accounts an import can target)
+ *   (file import itself uses the existing POST /api/import multipart endpoint)
  *   GET    /api/native/reports/spending|income-expense|cash-flow|trends|net-worth?range=1M|3M|6M|1Y|all  (or from&to)
  *   GET    /api/native/investments/overview?range=1M|3M|6M|1Y|all
  *   GET    /api/native/investments/holdings?view=consolidated|by-account&accountId
@@ -137,6 +148,38 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
       withHousehold(householdId, (tx) => getRecentTransactions(householdId, 8, tx)),
     ]);
     return ok({ summary, history, spending, recent });
+  }
+
+  if (head === "settings") {
+    const session = await getSession();
+    if (!session) return fail("Unauthorized", 401);
+    if (!id && method === "GET") {
+      const [mcp, demo] = await Promise.all([getMcpSettings(session.user.id), isDemoMode(session.user.id)]);
+      return ok({
+        user: { name: session.user.name ?? null, email: session.user.email },
+        demoEnabled: demo,
+        mcpEnabled: mcp.mcpEnabled,
+        connectedClients: mcp.connectedClients,
+      });
+    }
+    if (id === "demo-mode" && method === "POST") {
+      const result = await toggleDemoMode();
+      return "error" in result ? fail(result.error) : ok(result);
+    }
+    if (id === "mcp" && !segs[2] && method === "PATCH") {
+      const body = (await req.json().catch(() => null)) as { enabled?: boolean } | null;
+      if (typeof body?.enabled !== "boolean") return fail("Invalid input");
+      const result = await toggleMcpEndpoint({ mcpEnabled: body.enabled });
+      return "error" in result ? fail(result.error) : ok(result);
+    }
+    if (id === "mcp" && segs[2] && method === "DELETE") {
+      const result = await revokeMcpClient({ clientId: segs[2] });
+      return "error" in result ? fail(result.error) : ok(result);
+    }
+  }
+
+  if (head === "import" && id === "accounts" && method === "GET") {
+    return ok(await withHousehold(householdId, (tx) => getAccountsForImport(householdId, tx)));
   }
 
   if (head === "reports" && method === "GET") {

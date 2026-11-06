@@ -17,6 +17,7 @@ struct LedgrApp: App {
     @StateObject private var queue = UploadQueue()
     @StateObject private var actions: AppActions
     @StateObject private var api: API
+    @AppStorage("appearance") private var appearance = AppearanceChoice.system.rawValue
 
     init() {
         let connection = Connection()
@@ -39,6 +40,7 @@ struct LedgrApp: App {
                 .environmentObject(queue)
                 .environmentObject(actions)
                 .environmentObject(api)
+                .preferredColorScheme(AppearanceChoice(rawValue: appearance)?.scheme)
                 #if os(macOS)
                 .frame(minWidth: 900, minHeight: 600)
                 #endif
