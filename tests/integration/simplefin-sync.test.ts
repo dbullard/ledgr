@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { createTestDb } from "./setup";
 import { server } from "../mocks/server";
 import { simplefinAccountsRevokedHandler } from "../mocks/handlers";
-import { bankConnections, accounts, transactions, institutionLogos } from "@/db/schema";
+import { bankConnections, accounts, transactions, institutionLogos, syncLog } from "@/db/schema";
 import { syncConnection } from "@/lib/simplefin/sync";
 import {
   insertHousehold,
@@ -295,6 +295,30 @@ describe("syncConnection", () => {
     expect(requestedStartDate).not.toBeNull();
     const lookbackDays = (Date.now() / 1000 - Number(requestedStartDate)) / (24 * 60 * 60);
     expect(lookbackDays).toBeGreaterThan(300);
+  });
+
+  it("reaches back past a long outage using the bank's last real refresh, not the last poll", async () => {
+    // Regression: failed polls write sync_log rows too, so anchoring on the last
+    // poll skipped everything the bank posted while the login was expired.
+    const { householdId, connectionId } = await setupWithAccount();
+    const day = 24 * 60 * 60 * 1000;
+    await db.update(bankConnections)
+      .set({ lastDataAt: new Date(Date.now() - 20 * day) })
+      .where(eq(bankConnections.id, connectionId));
+    await db.insert(syncLog).values({ id: "log-fail", connectionId, syncedAt: new Date(Date.now() - 1 * day), error: "HTTP_500" });
+
+    let requestedStartDate: string | null = null;
+    server.use(
+      http.get("https://bridge.simplefin.test/simplefin/accounts", ({ request }) => {
+        requestedStartDate = new URL(request.url).searchParams.get("start-date");
+        return HttpResponse.json({ accounts: [] });
+      }),
+    );
+
+    await syncConnection(connectionId, householdId, db);
+
+    const lookbackDays = (Date.now() / 1000 - Number(requestedStartDate)) / (24 * 60 * 60);
+    expect(lookbackDays).toBeGreaterThan(26);
   });
 
   it("returns an error for a connection that doesn't exist", async () => {

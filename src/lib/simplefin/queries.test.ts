@@ -53,17 +53,18 @@ describe("listActiveSimplefinConnections", () => {
     expect(result.map((c) => c.connectionId)).toEqual(["conn-real"]);
   });
 
-  it("excludes connections with terminal or pending statuses", async () => {
+  it("excludes connections that need the user (revoked, reauth) or are pending, but keeps retrying transient errors", async () => {
     await db.insert(bankConnections).values([
       { id: "conn-active", householdId: "hh-1", provider: "simplefin", credential: "t", status: "active" },
       { id: "conn-revoked", householdId: "hh-1", provider: "simplefin", credential: "t", status: "revoked" },
       { id: "conn-error", householdId: "hh-1", provider: "simplefin", credential: "t", status: "error" },
+      { id: "conn-reauth", householdId: "hh-1", provider: "simplefin", credential: "t", status: "reauth_required" },
       { id: "conn-pending", householdId: "hh-1", provider: "simplefin", credential: "t", status: "pending_classification" },
     ]);
 
     const result = await listActiveSimplefinConnections(db);
 
-    expect(result.map((c) => c.connectionId)).toEqual(["conn-active"]);
+    expect(result.map((c) => c.connectionId)).toEqual(["conn-active", "conn-error"]);
   });
 
   it("excludes non-simplefin connections", async () => {

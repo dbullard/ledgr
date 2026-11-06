@@ -80,6 +80,8 @@ export const SimplefinErrorSchema = z.object({
   code: z.string().nullable().optional(),
   msg: z.string(),
   conn_id: z.string().nullable().optional(),
+  // act.* errors name the account they apply to instead of a connection.
+  account_id: z.string().nullable().optional(),
 });
 
 export type SimplefinError = z.infer<typeof SimplefinErrorSchema>;

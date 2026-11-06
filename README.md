@@ -238,7 +238,7 @@ Migrations run automatically on container startup.
 | `PLAID_ENV` | No | `production` | `production` or `sandbox` |
 | `PLAID_SYNC_MODE` | No | `poll` | `poll` (scheduled) or `webhook` (real-time) |
 | `PLAID_WEBHOOK_URL` | No | -- | Public URL for Plaid webhooks (webhook mode) |
-| `SCHEDULER_SIMPLEFIN_SYNC_CRON` | No | `45 4 * * *` | Daily SimpleFIN account sync (no webhooks, so this is the only sync trigger) |
+| `SCHEDULER_SIMPLEFIN_SYNC_CRON` | No | `45 */6 * * *` | SimpleFIN account sync, every 6 hours (no webhooks, so this is the only sync trigger; the Bridge allows ~24 requests/day) |
 | `AI_PROVIDER` | No | -- | `openai`, `anthropic`, `google`, `openrouter`, or `custom` |
 | `AI_API_KEY` | No | -- | Provider API key for AI chat & categorization |
 | `MCP_ENABLED` | No | `false` | Enable the MCP endpoint for AI agents |

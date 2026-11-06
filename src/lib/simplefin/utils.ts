@@ -20,8 +20,13 @@ export function classifyPollError(err: unknown): {
   return { status: "error", errorCode, message };
 }
 
-/** Bank data older than this (by SimpleFIN's balance-date) is reported as stale. */
-export const STALE_DATA_DAYS = 3;
+/**
+ * Bank data older than this (by SimpleFIN's balance-date) is reported as stale.
+ * The Bridge refreshes about every 24h; banks that need re-authentication
+ * (Arvest, every ~2 days) often just stop updating without an error, so wait
+ * a day and a half rather than three days before saying something.
+ */
+export const STALE_DATA_HOURS = 36;
 
 export interface ConnectionIssue {
   status: Extract<ConnectionStatus, "reauth_required" | "error">;
@@ -44,9 +49,11 @@ const AUTH_PATTERN = /auth|log ?in|sign ?in|credential|password|expired/i;
  * each account's `balance-date`. This turns both into one specific issue so the
  * UI can say what is wrong rather than just "stale".
  *
- * An error with a conn_id only counts if one of this connection's own accounts
- * belongs to that conn_id (one Access URL can span several banks); an error
- * without a conn_id applies to the whole credential.
+ * An error with a conn_id counts if one of this connection's own accounts
+ * belongs to that conn_id (one Access URL can span several banks) or if the
+ * conn_id can't be matched to any account at all; an act.* error counts only
+ * for the account it names; an error with neither applies to the whole
+ * credential.
  */
 export function assessConnectionHealth(
   response: SimplefinAccountsResponse,
@@ -56,10 +63,21 @@ export function assessConnectionHealth(
   const owned = response.accounts.filter((a) => ownedExternalAccountIds.has(a.id));
   const ownedConnIds = new Set(owned.map((a) => a.conn_id).filter((c): c is string => !!c));
 
+  // Every conn_id the response mentions on an account. A con.* error whose
+  // conn_id is absent here means the bridge dropped that connection's accounts
+  // (typical when its login is broken), so we can't prove it isn't ours.
+  const presentConnIds = new Set(response.accounts.map((a) => a.conn_id).filter((c): c is string => !!c));
+  const appliesToUs = (e: { conn_id?: string | null; account_id?: string | null }): boolean => {
+    if (e.account_id) return ownedExternalAccountIds.has(e.account_id);
+    if (!e.conn_id) return true;
+    if (ownedConnIds.has(e.conn_id)) return true;
+    // Our accounts carry no conn_id, or the error's connection has no accounts
+    // in this response: surface it rather than silently reporting "healthy".
+    return ownedConnIds.size === 0 || !presentConnIds.has(e.conn_id);
+  };
+
   const reported: { code: string; msg: string }[] = [
-    ...(response.errlist ?? [])
-      .filter((e) => !e.conn_id || ownedConnIds.has(e.conn_id))
-      .map((e) => ({ code: e.code ?? "", msg: e.msg })),
+    ...(response.errlist ?? []).filter(appliesToUs).map((e) => ({ code: e.code ?? "", msg: e.msg })),
     ...(response.errors ?? []).map((msg) => ({ code: "", msg })),
   ];
 
@@ -82,14 +100,15 @@ export function assessConnectionHealth(
     };
   }
   if (lastDataAt) {
-    const ageDays = Math.floor((now.getTime() - lastDataAt.getTime()) / 86_400_000);
-    if (ageDays >= STALE_DATA_DAYS) {
+    const ageHours = Math.floor((now.getTime() - lastDataAt.getTime()) / 3_600_000);
+    if (ageHours >= STALE_DATA_HOURS) {
+      const age = ageHours >= 48 ? `${Math.floor(ageHours / 24)} days` : `${ageHours} hours`;
       return {
         lastDataAt,
         issue: {
           status: "error",
           errorCode: "NO_RECENT_DATA",
-          message: `The bank has not refreshed in ${ageDays} days, but SimpleFIN reported no error.`,
+          message: `The bank has not refreshed in ${age} and SimpleFIN reported no error. It may need reauthorizing on the SimpleFIN Bridge.`,
         },
       };
     }

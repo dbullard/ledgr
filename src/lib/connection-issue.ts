@@ -46,7 +46,7 @@ export function describeConnectionIssue({ status, errorCode, errorMessage }: Inp
     case "NO_RECENT_DATA":
       return {
         label: "No recent bank data",
-        detail: errorMessage ?? "The bank has not refreshed recently, but SimpleFIN reported no error.",
+        detail: errorMessage ?? "The bank has not refreshed recently and SimpleFIN reported no error. It may need reauthorizing on the SimpleFIN Bridge.",
         tone: "warning",
       };
     case "HTTP_429":

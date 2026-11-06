@@ -11,8 +11,9 @@ export type SchedulerConfig = {
 const DEFAULTS = {
   snapshotCron: "15 3 * * *",
   safetySyncCron: "30 4 * * *",
-  // Staggered 15 minutes after the Plaid safety-sync default.
-  simplefinSyncCron: "45 4 * * *",
+  // Every 6h, offset 15 minutes from the Plaid safety-sync. SimpleFIN has no
+  // webhooks, so a once-a-day poll leaves data up to a day old.
+  simplefinSyncCron: "45 */6 * * *",
   receiptInboxCron: "*/10 * * * *",
 } as const;
 

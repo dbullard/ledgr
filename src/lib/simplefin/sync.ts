@@ -473,6 +473,28 @@ async function backfillInstitutionLogo(
     .onConflictDoNothing();
 }
 
+/**
+ * One line per poll with the parts of the response that say whether a bank link
+ * is healthy (errors + per-account conn_id and balance-date). No balances,
+ * descriptions or amounts, so it is safe to leave on and read in `docker logs`.
+ */
+function logSimplefinDiagnostics(connectionId: string, response: SimplefinAccountsResponse): void {
+  const iso = (sec: number) => (sec > 0 ? new Date(sec * 1000).toISOString() : null);
+  console.log(
+    `[simplefin] diag conn=${connectionId.slice(0, 8)} ` +
+      JSON.stringify({
+        errlist: response.errlist ?? null,
+        errors: response.errors ?? null,
+        connections: (response.connections ?? []).map((c) => ({ conn_id: c.conn_id, org_name: c.org_name ?? c.name })),
+        accounts: response.accounts.map((a) => ({
+          id: a.id.slice(-6),
+          conn_id: a.conn_id ?? null,
+          balanceDate: iso(a["balance-date"]),
+        })),
+      }),
+  );
+}
+
 async function doSync(
   connectionId: string,
   householdId: string,
@@ -516,8 +538,17 @@ async function doSync(
     // (usually short, ~7-day) default window, so request a full year of
     // history explicitly instead.
     const INITIAL_SYNC_LOOKBACK_DAYS = 365;
-    const startDate = lastSync
-      ? Math.floor(lastSync.syncedAt.getTime() / 1000) - 7 * 24 * 60 * 60
+    // Anchor on the older of last poll and the bank's last real refresh: failed
+    // polls also write sync_log rows, so after a reauth outage "last poll" would
+    // skip everything the bank posted while the login was expired.
+    const anchor = lastSync
+      ? Math.min(
+          lastSync.syncedAt.getTime(),
+          connection.lastDataAt?.getTime() ?? Number.POSITIVE_INFINITY,
+        )
+      : null;
+    const startDate = anchor !== null
+      ? Math.floor(anchor / 1000) - 7 * 24 * 60 * 60
       : Math.floor(now.getTime() / 1000) - INITIAL_SYNC_LOOKBACK_DAYS * 24 * 60 * 60;
 
     const raw = await simplefinRequest(accessUrl, "/accounts", {
@@ -526,6 +557,8 @@ async function doSync(
       "start-date": startDate,
     });
     const parsed = SimplefinAccountsResponseSchema.parse(raw);
+
+    logSimplefinDiagnostics(connectionId, parsed);
 
     const processed = processBatch(parsed.accounts);
     const balances = balancesFromAccounts(parsed.accounts);

@@ -29,7 +29,7 @@ describe("getSchedulerConfig", () => {
       enabled: true,
       snapshotCron: "15 3 * * *",
       safetySyncCron: "30 4 * * *",
-      simplefinSyncCron: "45 4 * * *",
+      simplefinSyncCron: "45 */6 * * *",
       receiptInboxCron: "*/10 * * * *",
     });
   });

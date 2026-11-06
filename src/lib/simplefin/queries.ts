@@ -1,4 +1,4 @@
-import { and, asc, eq, lt, ne } from "drizzle-orm";
+import { and, asc, eq, inArray, lt, ne } from "drizzle-orm";
 import { db as defaultDb, type LedgrDb } from "@/db";
 import { bankConnections } from "@/db/schema/bank-connections";
 import { DEMO_HOUSEHOLD_ID } from "@/lib/demo-mode";
@@ -11,8 +11,10 @@ export type ActiveSimplefinConnectionRef = {
 };
 
 /**
- * Lists SimpleFIN connections eligible for scheduled sync: status="active"
- * and not belonging to the demo household. Used by the daily SimpleFIN sync
+ * Lists SimpleFIN connections eligible for scheduled sync: status "active" or
+ * "error" (transient: bank hiccup, SimpleFIN 5xx, stale data — these must keep
+ * being retried or they never recover) and not in the demo household.
+ * reauth_required/revoked are skipped: only the user can fix those. Used by the daily SimpleFIN sync
  * task — SimpleFIN has no webhooks, so this poll is the only sync trigger.
  */
 export async function listActiveSimplefinConnections(
@@ -23,7 +25,7 @@ export async function listActiveSimplefinConnections(
     .from(bankConnections)
     .where(
       and(
-        eq(bankConnections.status, "active"),
+        inArray(bankConnections.status, ["active", "error"]),
         eq(bankConnections.provider, "simplefin"),
         ne(bankConnections.householdId, DEMO_HOUSEHOLD_ID),
       ),
