@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum AppSection: Hashable {
-    case dashboard, transactions, accounts, receipts, items, more
+    case dashboard, transactions, accounts, budgets, receipts, items, more
     case web(WebPage)
 }
 
@@ -13,7 +13,6 @@ struct WebPage: Identifiable, Hashable {
     var id: String { path }
 
     static let all: [WebPage] = [
-        WebPage(title: "Budgets", path: "/budgets", symbol: "chart.pie"),
         WebPage(title: "Reports", path: "/reports", symbol: "chart.bar.xaxis"),
         WebPage(title: "Recurring", path: "/recurrings", symbol: "repeat"),
         WebPage(title: "Investments", path: "/investments", symbol: "chart.line.uptrend.xyaxis"),
@@ -50,6 +49,7 @@ struct MoreView: View {
     var body: some View {
         List {
             Section("Native") {
+                NavigationLink { BudgetsView() } label: { Label("Budgets", systemImage: "chart.pie") }
                 NavigationLink { ItemsView() } label: { Label("Items", systemImage: "cart") }
             }
             Section("Full app") {
@@ -104,11 +104,12 @@ struct MainView: View {
                     Label("Dashboard", systemImage: "square.grid.2x2").tag(AppSection.dashboard)
                     Label("Transactions", systemImage: "list.bullet").tag(AppSection.transactions)
                     Label("Accounts", systemImage: "building.columns").tag(AppSection.accounts)
+                    Label("Budgets", systemImage: "chart.pie").tag(AppSection.budgets)
                     Label("Receipts", systemImage: "receipt").tag(AppSection.receipts)
                     Label("Items", systemImage: "cart").tag(AppSection.items)
                 }
                 Section("Manage") {
-                    ForEach(WebPage.all.filter { $0.path != "/accounts" }.prefix(5)) { page in
+                    ForEach(WebPage.all.filter { $0.path != "/budgets" }.prefix(5)) { page in
                         Label(page.title, systemImage: page.symbol).tag(AppSection.web(page))
                     }
                 }
@@ -142,6 +143,7 @@ struct MainView: View {
                 case .dashboard: DashboardView()
                 case .transactions: TransactionsView()
                 case .accounts: AccountsView()
+                case .budgets: BudgetsView()
                 case .receipts: ReceiptsView()
                 case .items: ItemsView()
                 case .more: MoreView()

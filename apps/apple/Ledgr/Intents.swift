@@ -83,6 +83,38 @@ struct SpendingIntent: AppIntent {
     }
 }
 
+struct BudgetStatusIntent: AppIntent {
+    static let title: LocalizedStringResource = "Budget Status"
+    static let description = IntentDescription("How much budget you have left this month, overall or in one category.")
+
+    @Parameter(title: "Category", description: "Leave empty for the whole budget.")
+    var category: String?
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Budget left in \(\.$category)")
+    }
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let api = try await readyAPI()
+        let b: BudgetResponse = try await api.get("api/native/budgets")
+        guard b.budget != nil else { return .result(dialog: "You haven't set up a budget for this month yet.") }
+        if let q = category?.trimmingCharacters(in: .whitespaces), !q.isEmpty {
+            let hit = b.groups.flatMap(\.categories).first { $0.categoryName.localizedCaseInsensitiveContains(q) }
+            guard let c = hit else { return .result(dialog: "\(q) isn't in this month's budget.") }
+            let text = c.remaining >= 0
+                ? "You have \(Fmt.money(c.remaining)) left in \(c.categoryName): \(Fmt.money(c.spent)) spent of \(Fmt.money(c.limitAmount))."
+                : "You're \(Fmt.money(-c.remaining)) over in \(c.categoryName): \(Fmt.money(c.spent)) spent of \(Fmt.money(c.limitAmount))."
+            return .result(dialog: IntentDialog(stringLiteral: text))
+        }
+        let s = b.summary
+        let text = s.totalRemaining >= 0
+            ? "You have \(Fmt.moneyWhole(s.totalRemaining)) left of your \(Fmt.moneyWhole(s.totalBudgeted)) budget this month."
+            : "You're \(Fmt.moneyWhole(-s.totalRemaining)) over your \(Fmt.moneyWhole(s.totalBudgeted)) budget this month."
+        return .result(dialog: IntentDialog(stringLiteral: text))
+    }
+}
+
 struct FindTransactionsIntent: AppIntent {
     static let title: LocalizedStringResource = "Find Transactions"
     static let description = IntentDescription("Search your transactions by merchant or name.")
@@ -151,6 +183,10 @@ struct LedgrShortcuts: AppShortcutsProvider {
             intent: SpendingIntent(),
             phrases: ["How much did I spend in \(.applicationName)", "\(.applicationName) spending"],
             shortTitle: "Spending", systemImageName: "creditcard")
+        AppShortcut(
+            intent: BudgetStatusIntent(),
+            phrases: ["How's my budget in \(.applicationName)", "\(.applicationName) budget left"],
+            shortTitle: "Budget", systemImageName: "chart.pie")
         AppShortcut(
             intent: ReviewQueueIntent(),
             phrases: ["What needs review in \(.applicationName)", "\(.applicationName) review queue"],

@@ -7,6 +7,15 @@ import {
   getNetWorthHistory,
   getRecentTransactions,
 } from "@/queries/dashboard";
+import { getBudgetForMonth } from "@/queries/budgets";
+import {
+  copyBudgetFromMonth,
+  createBudget,
+  removeBudgetCategory,
+  setBudgetCategory,
+  updateBudgetType,
+} from "@/actions/budgets";
+import { getCurrentMonth, shiftMonth } from "@/lib/date-utils";
 import { triggerSync } from "@/actions/sync";
 import { getAccountsByInstitution, getAccountSummary } from "@/queries/accounts";
 import { balanceHistory } from "@/db/schema";
@@ -36,6 +45,11 @@ export const dynamic = "force-dynamic";
  *   GET    /api/native/items?from&to
  *   GET    /api/native/accounts                      (grouped by institution + totals)
  *   GET    /api/native/accounts/:id/history?days=90
+ *   GET    /api/native/budgets?month=YYYY-MM
+ *   POST   /api/native/budgets           { month, copyFromPrevious? }
+ *   PATCH  /api/native/budgets/:id       { type: "category"|"flex" }
+ *   PATCH  /api/native/budgets/:id/categories/:categoryId   { limit }   (cents)
+ *   DELETE /api/native/budgets/:id/categories/:categoryId
  *   POST   /api/native/accounts/sync     { connectionId }   (refresh one bank connection)
  */
 
@@ -56,7 +70,8 @@ function iso(d: Date) {
 
 async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
   if (!(await getSession())) return fail("Unauthorized", 401);
-  const [head, id] = (await ctx.params).path;
+  const segs = (await ctx.params).path;
+  const [head, id] = segs;
   const q = req.nextUrl.searchParams;
   const method = req.method;
   const householdId = await getHouseholdId();
@@ -71,6 +86,44 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
       withHousehold(householdId, (tx) => getRecentTransactions(householdId, 8, tx)),
     ]);
     return ok({ summary, history, spending, recent });
+  }
+
+  if (head === "budgets") {
+    const monthRe = /^\d{4}-\d{2}$/;
+    if (!id && method === "GET") {
+      const asked = q.get("month") ?? "";
+      const month = monthRe.test(asked) ? asked : getCurrentMonth();
+      const prev = shiftMonth(month, -1);
+      const [data, prevData] = await Promise.all([
+        withHousehold(householdId, (tx) => getBudgetForMonth(householdId, month, tx)),
+        withHousehold(householdId, (tx) => getBudgetForMonth(householdId, prev, tx)),
+      ]);
+      return ok({ month, previousMonth: prev, hasPreviousBudget: prevData.budget !== null, ...data });
+    }
+    if (!id && method === "POST") {
+      const body = (await req.json().catch(() => null)) as { month?: string; copyFromPrevious?: boolean } | null;
+      if (!body?.month || !monthRe.test(body.month)) return fail("Invalid month");
+      const result = body.copyFromPrevious
+        ? await copyBudgetFromMonth(shiftMonth(body.month, -1), body.month)
+        : await createBudget(body.month);
+      return "error" in result ? fail(result.error) : ok(result);
+    }
+    if (id && !segs[2] && method === "PATCH") {
+      const body = (await req.json().catch(() => null)) as { type?: "category" | "flex" } | null;
+      if (!body?.type) return fail("Invalid input");
+      const result = await updateBudgetType(id, body.type);
+      return "error" in result ? fail(result.error) : ok(result);
+    }
+    if (id && segs[2] === "categories" && segs[3] && method === "PATCH") {
+      const body = (await req.json().catch(() => null)) as { limit?: number } | null;
+      if (typeof body?.limit !== "number" || !Number.isInteger(body.limit) || body.limit < 0) return fail("Invalid amount");
+      const result = await setBudgetCategory(id, segs[3], body.limit);
+      return "error" in result ? fail(result.error) : ok(result);
+    }
+    if (id && segs[2] === "categories" && segs[3] && method === "DELETE") {
+      const result = await removeBudgetCategory(id, segs[3]);
+      return "error" in result ? fail(result.error) : ok(result);
+    }
   }
 
   if (head === "accounts" && !id && method === "GET") {
@@ -110,7 +163,7 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
     return result.success ? ok(result) : fail(result.error, 502);
   }
 
-  if (head === "accounts" && id && (await ctx.params).path[2] === "history" && method === "GET") {
+  if (head === "accounts" && id && segs[2] === "history" && method === "GET") {
     const days = Math.min(Math.max(Number(q.get("days")) || 90, 7), 1825);
     const from = iso(new Date(Date.now() - days * 86_400_000));
     const rows = await withHousehold(householdId, async (tx) => {
