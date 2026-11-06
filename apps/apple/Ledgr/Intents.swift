@@ -174,6 +174,26 @@ struct CategorizeTransactionIntent: AppIntent {
     }
 }
 
+struct PortfolioIntent: AppIntent {
+    static let title: LocalizedStringResource = "Portfolio"
+    static let description = IntentDescription("Your investment portfolio value and today's change.")
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let api = try await readyAPI()
+        let o: InvestmentsOverview = try await api.get("api/native/investments/overview", query: ["range": "1M"])
+        let s = o.summary
+        var text = "Your portfolio is worth \(Fmt.moneyWhole(s.totalValue))."
+        if let day = s.dayChange {
+            text += day >= 0 ? " Up \(Fmt.moneyWhole(day)) today." : " Down \(Fmt.moneyWhole(-day)) today."
+        }
+        if s.totalCostBasis > 0 {
+            text += s.totalGainLoss >= 0 ? " Gain of \(Fmt.moneyWhole(s.totalGainLoss)) overall." : " Loss of \(Fmt.moneyWhole(-s.totalGainLoss)) overall."
+        }
+        return .result(dialog: IntentDialog(stringLiteral: text))
+    }
+}
+
 struct FindTransactionsIntent: AppIntent {
     static let title: LocalizedStringResource = "Find Transactions"
     static let description = IntentDescription("Search your transactions by merchant or name.")
@@ -254,6 +274,10 @@ struct LedgrShortcuts: AppShortcutsProvider {
             intent: CategorizeTransactionIntent(),
             phrases: ["Categorize a transaction in \(.applicationName)"],
             shortTitle: "Categorize", systemImageName: "tag")
+        AppShortcut(
+            intent: PortfolioIntent(),
+            phrases: ["How are my investments in \(.applicationName)", "\(.applicationName) portfolio"],
+            shortTitle: "Portfolio", systemImageName: "chart.line.uptrend.xyaxis")
         AppShortcut(
             intent: ReviewQueueIntent(),
             phrases: ["What needs review in \(.applicationName)", "\(.applicationName) review queue"],

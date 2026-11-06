@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum AppSection: Hashable {
-    case dashboard, transactions, accounts, budgets, recurring, categories, rules, receipts, items, more
+    case dashboard, transactions, accounts, budgets, recurring, investments, categories, rules, receipts, items, more
     case web(WebPage)
 }
 
@@ -14,7 +14,6 @@ struct WebPage: Identifiable, Hashable {
 
     static let all: [WebPage] = [
         WebPage(title: "Reports", path: "/reports", symbol: "chart.bar.xaxis"),
-        WebPage(title: "Investments", path: "/investments", symbol: "chart.line.uptrend.xyaxis"),
         WebPage(title: "Import", path: "/import", symbol: "square.and.arrow.down"),
         WebPage(title: "Web settings", path: "/settings", symbol: "gearshape"),
     ]
@@ -48,6 +47,7 @@ struct MoreView: View {
             Section("Native") {
                 NavigationLink { BudgetsView() } label: { Label("Budgets", systemImage: "chart.pie") }
                 NavigationLink { RecurringView() } label: { Label("Recurring", systemImage: "repeat") }
+                NavigationLink { InvestmentsView() } label: { Label("Investments", systemImage: "chart.line.uptrend.xyaxis") }
                 NavigationLink { CategoriesView() } label: { Label("Categories", systemImage: "tag") }
                 NavigationLink { RulesView() } label: { Label("Rules", systemImage: "wand.and.stars") }
                 NavigationLink { ItemsView() } label: { Label("Items", systemImage: "cart") }
@@ -106,6 +106,7 @@ struct MainView: View {
                     Label("Accounts", systemImage: "building.columns").tag(AppSection.accounts)
                     Label("Budgets", systemImage: "chart.pie").tag(AppSection.budgets)
                     Label("Recurring", systemImage: "repeat").tag(AppSection.recurring)
+                    Label("Investments", systemImage: "chart.line.uptrend.xyaxis").tag(AppSection.investments)
                     Label("Receipts", systemImage: "receipt").tag(AppSection.receipts)
                     Label("Items", systemImage: "cart").tag(AppSection.items)
                 }
@@ -114,7 +115,7 @@ struct MainView: View {
                     Label("Rules", systemImage: "wand.and.stars").tag(AppSection.rules)
                 }
                 Section("Manage") {
-                    ForEach(WebPage.all.filter { ["/reports", "/investments", "/import"].contains($0.path) }) { page in
+                    ForEach(WebPage.all.filter { ["/reports", "/import"].contains($0.path) }) { page in
                         Label(page.title, systemImage: page.symbol).tag(AppSection.web(page))
                     }
                 }
@@ -150,6 +151,7 @@ struct MainView: View {
                 case .accounts: AccountsView()
                 case .budgets: BudgetsView()
                 case .recurring: RecurringView()
+                case .investments: InvestmentsView()
                 case .categories: CategoriesView()
                 case .rules: RulesView()
                 case .receipts: ReceiptsView()

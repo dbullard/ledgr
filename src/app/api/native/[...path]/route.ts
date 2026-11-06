@@ -7,6 +7,17 @@ import {
   getNetWorthHistory,
   getRecentTransactions,
 } from "@/queries/dashboard";
+import {
+  getAccountReconciliation,
+  getAssetAllocation,
+  getBalanceGrowth,
+  getHoldings,
+  getInvestmentAccountIds,
+  getInvestmentTransactions,
+  getPortfolioHistory,
+  getPortfolioSummary,
+} from "@/queries/investments";
+import { rangeToDateBounds } from "@/lib/date-utils";
 import { getCategoryRules } from "@/queries/category-rules";
 import {
   createCategoryRule,
@@ -61,6 +72,9 @@ export const dynamic = "force-dynamic";
  *   GET    /api/native/items?from&to
  *   GET    /api/native/accounts                      (grouped by institution + totals)
  *   GET    /api/native/accounts/:id/history?days=90
+ *   GET    /api/native/investments/overview?range=1M|3M|6M|1Y|all
+ *   GET    /api/native/investments/holdings?view=consolidated|by-account&accountId
+ *   GET    /api/native/investments/transactions?type&accountId&cursor
  *   POST   /api/native/categories        { name, groupId, isIncome? }
  *   PATCH  /api/native/categories/:id    { name }       DELETE /api/native/categories/:id
  *   POST   /api/native/category-groups   { name }
@@ -113,6 +127,41 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
       withHousehold(householdId, (tx) => getRecentTransactions(householdId, 8, tx)),
     ]);
     return ok({ summary, history, spending, recent });
+  }
+
+  if (head === "investments" && method === "GET") {
+    const accIds = await getInvestmentAccountIds(householdId);
+    if (id === "overview") {
+      const asked = q.get("range") as Range | null;
+      const range: Range = asked && RANGES.includes(asked) ? asked : "1Y";
+      const { from, to } = rangeToDateBounds(range);
+      const dateFrom = from ?? "1970-01-01";
+      const [summary, history, allocation, reconciliation, growth] = await Promise.all([
+        getPortfolioSummary(householdId, undefined, undefined, accIds),
+        getPortfolioHistory(householdId, { dateFrom, dateTo: to }, undefined, accIds),
+        getAssetAllocation(householdId, undefined, accIds),
+        getAccountReconciliation(householdId, undefined, accIds),
+        withHousehold(householdId, (tx) => getBalanceGrowth(householdId, { dateFrom, dateTo: to }, tx, accIds)),
+      ]);
+      return ok({ summary, history, allocation, reconciliation, growth });
+    }
+    if (id === "holdings") {
+      const view = q.get("view") === "by-account" ? "by-account" : "consolidated";
+      const rows = await getHoldings(householdId, view, q.get("accountId") ?? undefined, undefined, accIds);
+      return ok(rows);
+    }
+    if (id === "transactions") {
+      const limit = Math.min(Math.max(Number(q.get("limit")) || 40, 1), 100);
+      const page = await getInvestmentTransactions(
+        householdId,
+        { type: q.get("type") ?? undefined, accountId: q.get("accountId") ?? undefined },
+        limit,
+        q.get("cursor"),
+        undefined,
+        accIds,
+      );
+      return ok(page);
+    }
   }
 
   const fin = (r: { success: true } | { error: string } | { success: true; id: string }) =>
