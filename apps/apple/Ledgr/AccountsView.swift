@@ -29,12 +29,13 @@ struct AccountRowModel: Codable, Identifiable, Hashable {
 
 struct InstitutionGroupModel: Codable, Identifiable {
     let institutionName: String
+    let connectionId: String?
     let provider: String?
     let status: String?
     let errorMessage: String?
     let lastDataAt: String?
     let accounts: [AccountRowModel]
-    var id: String { institutionName }
+    var id: String { connectionId ?? institutionName }
     var subtotal: Int { accounts.filter { !$0.isHidden }.reduce(0) { $0 + ($1.currentBalance ?? 0) } }
 }
 
@@ -61,6 +62,8 @@ struct AccountsView: View {
     @State private var data: AccountsResponse?
     @State private var error: String?
     @State private var showHidden = false
+    @State private var syncing: Set<String> = []
+    @State private var syncNotes: [String: String] = [:]
 
     var body: some View {
         ScrollView {
@@ -82,6 +85,13 @@ struct AccountsView: View {
         .navigationTitle("Accounts")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
+                Button { Task { await refreshAll() } } label: {
+                    if syncing.isEmpty { Image(systemName: "arrow.triangle.2.circlepath") } else { ProgressView().controlSize(.small) }
+                }
+                .disabled(!syncing.isEmpty || (data?.groups.allSatisfy { $0.connectionId == nil } ?? true))
+                .help("Refresh all connected accounts")
+            }
+            ToolbarItem(placement: .primaryAction) {
                 Toggle(isOn: $showHidden) { Image(systemName: showHidden ? "eye" : "eye.slash") }
                     .toggleStyle(.button)
                     .help("Show hidden accounts")
@@ -99,6 +109,25 @@ struct AccountsView: View {
         } catch {
             if data == nil { self.error = error.localizedDescription }
         }
+    }
+
+    private func refresh(_ group: InstitutionGroupModel) async {
+        guard let cid = group.connectionId, !syncing.contains(cid) else { return }
+        syncing.insert(cid)
+        syncNotes[cid] = nil
+        do {
+            try await api.post("api/native/accounts/sync", body: ["connectionId": cid])
+            syncNotes[cid] = "Refreshed just now"
+        } catch APIError.unauthorized {
+        } catch {
+            syncNotes[cid] = error.localizedDescription
+        }
+        syncing.remove(cid)
+        await load()
+    }
+
+    private func refreshAll() async {
+        for group in data?.groups ?? [] where group.connectionId != nil { await refresh(group) }
     }
 
     private func totals(_ s: AccountTotals) -> some View {
@@ -125,11 +154,27 @@ struct AccountsView: View {
         let rows = group.accounts.filter { showHidden || !$0.isHidden }
         return Group {
             if !rows.isEmpty {
-                Card(group.institutionName, trailing: AnyView(Text(Fmt.money(group.subtotal)).font(.subheadline.weight(.semibold).monospacedDigit()))) {
+                Card(group.institutionName, trailing: AnyView(
+                    HStack(spacing: 10) {
+                        Text(Fmt.money(group.subtotal)).font(.subheadline.weight(.semibold).monospacedDigit())
+                        if let cid = group.connectionId {
+                            Button { Task { await refresh(group) } } label: {
+                                if syncing.contains(cid) { ProgressView().controlSize(.small) }
+                                else { Image(systemName: "arrow.clockwise") }
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(syncing.contains(cid))
+                            .accessibilityLabel("Refresh \(group.institutionName)")
+                        }
+                    }
+                )) {
                     VStack(alignment: .leading, spacing: 2) {
                         if group.status == "error" || group.status == "login_required" {
                             Label(group.errorMessage ?? "Needs attention", systemImage: "exclamationmark.triangle.fill")
                                 .font(.caption).foregroundStyle(Color.alert)
+                        } else if let cid = group.connectionId, let note = syncNotes[cid] {
+                            Text(note).font(.caption)
+                                .foregroundStyle(note.hasPrefix("Refreshed") ? Color.income : Color.alert)
                         } else if let when = group.lastDataAt {
                             Text("Updated \(Fmt.relative(when))").font(.caption).foregroundStyle(.secondary)
                         }

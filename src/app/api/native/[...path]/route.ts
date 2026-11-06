@@ -7,6 +7,7 @@ import {
   getNetWorthHistory,
   getRecentTransactions,
 } from "@/queries/dashboard";
+import { triggerSync } from "@/actions/sync";
 import { getAccountsByInstitution, getAccountSummary } from "@/queries/accounts";
 import { balanceHistory } from "@/db/schema";
 import { and, eq, gte } from "drizzle-orm";
@@ -35,6 +36,7 @@ export const dynamic = "force-dynamic";
  *   GET    /api/native/items?from&to
  *   GET    /api/native/accounts                      (grouped by institution + totals)
  *   GET    /api/native/accounts/:id/history?days=90
+ *   POST   /api/native/accounts/sync     { connectionId }   (refresh one bank connection)
  */
 
 const RANGES = ["1M", "3M", "6M", "1Y", "all"] as const;
@@ -79,6 +81,7 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
       summary,
       groups: groups.map((g) => ({
         institutionName: g.institutionName,
+        connectionId: g.connectionId,
         provider: g.provider,
         status: g.status,
         errorMessage: g.errorMessage,
@@ -98,6 +101,13 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
         })),
       })),
     });
+  }
+
+  if (head === "accounts" && id === "sync" && method === "POST") {
+    const body = (await req.json().catch(() => null)) as { connectionId?: string } | null;
+    if (!body?.connectionId) return fail("Invalid input");
+    const result = await triggerSync(body.connectionId);
+    return result.success ? ok(result) : fail(result.error, 502);
   }
 
   if (head === "accounts" && id && (await ctx.params).path[2] === "history" && method === "GET") {
