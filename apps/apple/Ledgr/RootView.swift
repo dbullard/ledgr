@@ -9,6 +9,7 @@ struct RootView: View {
     @EnvironmentObject var actions: AppActions
     @EnvironmentObject var api: API
 
+    @Environment(\.scenePhase) private var scenePhase
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var dropTargeted = false
 
@@ -55,6 +56,8 @@ struct RootView: View {
             .onChange(of: connection.mode) { _, _ in flush() }
             .onChange(of: actions.reloadTick) { _, _ in web.reload() }
             .onOpenURL { queue.addFile(at: $0) }
+            .onAppear { queue.importSharedInbox() }
+            .onChange(of: scenePhase) { _, phase in if phase == .active { queue.importSharedInbox() } }
             .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
                 for p in providers {
                     _ = p.loadObject(ofClass: URL.self) { url, _ in

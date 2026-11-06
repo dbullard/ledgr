@@ -71,6 +71,27 @@ final class UploadQueue: ObservableObject {
         }
     }
 
+    /// Files dropped into the shared App Group inbox by the share extension.
+    func importSharedInbox() {
+        guard let root = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.dbullard.ledgr") else { return }
+        let inbox = root.appendingPathComponent("Inbox", isDirectory: true)
+        guard let files = try? FileManager.default.contentsOfDirectory(at: inbox, includingPropertiesForKeys: nil) else { return }
+        for url in files {
+            // Names are "<8-char id>-<original name>"; show the original name.
+            var name = url.lastPathComponent
+            if name.count > 9, name[name.index(name.startIndex, offsetBy: 8)] == "-" { name = String(name.dropFirst(9)) }
+            if let data = try? Data(contentsOf: url) {
+                let ext = (name as NSString).pathExtension.lowercased()
+                if ["heic", "heif"].contains(ext), let jpeg = ImageTools.jpegData(fromImageData: data) {
+                    add(data: jpeg, filename: (name as NSString).deletingPathExtension + ".jpg")
+                } else {
+                    add(data: data, filename: name)
+                }
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+    }
+
     func addImageData(_ data: Data, name: String = "photo") {
         let jpeg = ImageTools.jpegData(fromImageData: data) ?? data
         add(data: jpeg, filename: "\(name)-\(Self.stamp()).jpg")
