@@ -23,6 +23,7 @@ import {
 import { titleCase } from "@/lib/text-utils";
 import { cleanTransactionName } from "@/lib/import/clean-name";
 import { withHousehold } from "@/lib/household-context";
+import { rematchWaitingReceipts } from "@/lib/receipts/rematch";
 import type { LedgrDb } from "@/db";
 import {
   bankConnections,
@@ -592,7 +593,9 @@ export async function syncInstitution(
   activeSyncs.set(itemId, promise);
 
   try {
-    return await promise;
+    const result = await promise;
+    if (result.success) await rematchWaitingReceipts(householdId, db);
+    return result;
   } finally {
     activeSyncs.delete(itemId);
   }

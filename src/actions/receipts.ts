@@ -20,6 +20,7 @@ import { deleteReceiptFile, sha256Hex, writeReceipt } from "@/lib/receipts/stora
 import { ingestReceipt } from "@/lib/receipts/ingest";
 import { attachReceiptToTransaction, listUnmatchedReceipts, replaceReceiptItems } from "@/lib/receipts/service";
 import { parseClientReceipt } from "@/lib/receipts/items";
+import { rematchWaitingReceipts } from "@/lib/receipts/rematch";
 
 const idSchema = z.string().min(1);
 
@@ -253,6 +254,8 @@ export async function fetchUnmatchedReceipts(
   db: LedgrDb = defaultDb,
 ): Promise<{ data: UnmatchedReceipt[] } | { error: string }> {
   const householdId = await getHouseholdId();
+  // Transactions may have synced since the receipt arrived: attach any that now clearly match.
+  await rematchWaitingReceipts(householdId, db);
   const rows = await withHousehold(householdId, (tx) => listUnmatchedReceipts(tx, householdId), db);
   return { data: rows.map((r) => ({ ...toSummary(r), hintTotalCents: r.hintTotalCents, hintDate: r.hintDate, hintMerchant: r.hintMerchant, suggestions: r.suggestions })) };
 }

@@ -96,9 +96,24 @@ extension View {
 
 struct MainView: View {
     @State private var section: AppSection? = .dashboard
+    @State private var waiting = 0
     @EnvironmentObject var queue: UploadQueue
+    @EnvironmentObject var api: API
+    @EnvironmentObject var connection: Connection
+
+    /// Receipts on the server still waiting for a transaction (re-matched on the way).
+    private func refreshWaiting() async {
+        if let list: [UnmatchedReceipt] = try? await api.get("api/native/receipts") { waiting = list.count }
+    }
 
     var body: some View {
+        content
+            .task(id: "\(connection.active?.absoluteString ?? "")|\(queue.items.count)|\(queue.uploading)|\(section == .receipts)") {
+                await refreshWaiting()
+            }
+    }
+
+    @ViewBuilder private var content: some View {
         #if os(macOS)
         NavigationSplitView {
             List(selection: $section) {
@@ -110,7 +125,7 @@ struct MainView: View {
                     Label("Recurring", systemImage: "repeat").tag(AppSection.recurring)
                     Label("Investments", systemImage: "chart.line.uptrend.xyaxis").tag(AppSection.investments)
                     Label("Reports", systemImage: "chart.bar.xaxis").tag(AppSection.reports)
-                    Label("Receipts", systemImage: "receipt").tag(AppSection.receipts)
+                    Label("Receipts", systemImage: "receipt").badge(waiting).tag(AppSection.receipts)
                     Label("Items", systemImage: "cart").tag(AppSection.items)
                 }
                 Section("Organize") {
@@ -136,7 +151,7 @@ struct MainView: View {
             detail(for: .transactions).tabItem { Label("Transactions", systemImage: "list.bullet") }.tag(AppSection.transactions)
             detail(for: .accounts).tabItem { Label("Accounts", systemImage: "building.columns") }.tag(AppSection.accounts)
             detail(for: .receipts).tabItem { Label("Receipts", systemImage: "receipt") }
-                .badge(queue.items.count).tag(AppSection.receipts)
+                .badge(queue.items.count + waiting).tag(AppSection.receipts)
             detail(for: .more).tabItem { Label("More", systemImage: "ellipsis.circle") }.tag(AppSection.more)
         }
         #endif

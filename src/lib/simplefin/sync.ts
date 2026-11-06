@@ -1,4 +1,5 @@
 import { v4 as uuid } from "uuid";
+import { rematchWaitingReceipts } from "@/lib/receipts/rematch";
 import { eq, and, isNull, inArray, desc, sql } from "drizzle-orm";
 import type { LedgrDb } from "@/db";
 import { bankConnections, syncLog, transactions, accounts, investmentHoldings, holdingsHistory, institutionLogos } from "@/db/schema";
@@ -418,7 +419,9 @@ export async function syncConnection(
   activeSyncs.set(connectionId, promise);
 
   try {
-    return await promise;
+    const result = await promise;
+    if (result.success) await rematchWaitingReceipts(householdId, db);
+    return result;
   } finally {
     activeSyncs.delete(connectionId);
   }
