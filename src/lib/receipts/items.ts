@@ -28,6 +28,21 @@ export const parsedReceiptSchema = z.object({
 });
 export type ParsedReceipt = z.infer<typeof parsedReceiptSchema>;
 
+/**
+ * A receipt already read on the user's own device (Apple's on-device model).
+ * Untrusted input: size-capped, validated, and null when it isn't usable.
+ */
+export function parseClientReceipt(raw: unknown): ParsedReceipt | null {
+  if (typeof raw !== "string" || raw.length === 0 || raw.length > 200_000) return null;
+  try {
+    const out = parsedReceiptSchema.safeParse(JSON.parse(raw));
+    if (!out.success) return null;
+    return { ...out.data, items: out.data.items.slice(0, 300) };
+  } catch {
+    return null;
+  }
+}
+
 export interface CategoryOption {
   id: string;
   name: string;

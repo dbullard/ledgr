@@ -308,7 +308,9 @@ struct TransactionDetailView: View {
         attaching = true
         defer { attaching = false }
         do {
-            _ = try await api.upload("api/native/transactions/\(initial.id)/receipts", fields: [:], file: data, filename: filename)
+            var fields: [String: String] = [:]
+            if let parsed = await ReceiptReader.parsedJSON(data: data, filename: filename) { fields["parsed"] = parsed }
+            _ = try await api.upload("api/native/transactions/\(initial.id)/receipts", fields: fields, file: data, filename: filename)
             error = nil
             await load()
         } catch APIError.unauthorized {

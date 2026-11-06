@@ -143,7 +143,11 @@ final class UploadQueue: ObservableObject {
         var body = Data()
         body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"\(item.filename)\"\r\nContent-Type: \(Self.mime(item.filename))\r\n\r\n".data(using: .utf8)!)
         body.append(file)
-        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        body.append("\r\n".data(using: .utf8)!)
+        if let parsed = await ReceiptReader.parsedJSON(data: file, filename: item.filename) {
+            body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"parsed\"\r\n\r\n\(parsed)\r\n".data(using: .utf8)!)
+        }
+        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
         var req = URLRequest(url: base.appendingPathComponent("api/receipts/upload"))
         req.httpMethod = "POST"
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")

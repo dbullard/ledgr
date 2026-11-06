@@ -18,7 +18,8 @@ import {
 } from "@/lib/receipts/paths";
 import { deleteReceiptFile, sha256Hex, writeReceipt } from "@/lib/receipts/storage";
 import { ingestReceipt } from "@/lib/receipts/ingest";
-import { attachReceiptToTransaction, listUnmatchedReceipts } from "@/lib/receipts/service";
+import { attachReceiptToTransaction, listUnmatchedReceipts, replaceReceiptItems } from "@/lib/receipts/service";
+import { parseClientReceipt } from "@/lib/receipts/items";
 
 const idSchema = z.string().min(1);
 
@@ -141,6 +142,14 @@ export async function uploadReceipt(
             source: "upload",
           })
           .returning(summaryColumns);
+        const parsed = parseClientReceipt(formData.get("parsed"));
+        if (parsed && parsed.items.length > 0) {
+          try {
+            await replaceReceiptItems(tx, householdId, row.id, parsed.items);
+          } catch (e) {
+            console.error("[receipts] storing on-device items failed", e);
+          }
+        }
         return { data: toSummary(row) };
       } catch (e) {
         await deleteReceiptFile(rel, root);
@@ -228,6 +237,7 @@ export async function uploadUnmatchedReceipt(
         source: "upload",
         db: tx,
         root,
+        parsed: parseClientReceipt(formData.get("parsed")),
       }),
     db,
   );

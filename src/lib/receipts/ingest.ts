@@ -8,6 +8,8 @@ import { todayDateString } from "@/lib/date-utils";
 import { extractHints, findDate, readReceiptText, type ReceiptHints } from "./hints";
 import { renderPdfPages } from "./ocr";
 import { receiptModelBlocker, runReceiptModel } from "./parse-model";
+import type { ParsedReceipt } from "./items";
+import { replaceReceiptItems } from "./service";
 import { confidentMatch, suggestMatches, type Suggestion, type TxnCandidate } from "./match";
 import { MAX_RECEIPT_BYTES, RECEIPT_TYPES, receiptExtension, receiptsRoot } from "./paths";
 import { deleteReceiptFile, sha256Hex, writeReceipt } from "./storage";
@@ -112,6 +114,8 @@ export async function ingestReceipt(opts: {
   db: LedgrDb;
   root?: string;
   today?: string;
+  /** Already read on the user's device; fills in what OCR missed and stores the items. */
+  parsed?: ParsedReceipt | null;
 }): Promise<IngestResult> {
   const { householdId, data, filename, source, db } = opts;
   const root = opts.root ?? receiptsRoot();
@@ -133,6 +137,15 @@ export async function ingestReceipt(opts: {
 
   const text = await readReceiptText(ext, data);
   let hints = extractHints(filename, text);
+  const onDevice = opts.parsed ?? null;
+  if (onDevice) {
+    const total = onDevice.totalCents && onDevice.totalCents > 0 ? Math.round(onDevice.totalCents) : null;
+    hints = {
+      totalCents: hints.totalCents ?? total,
+      date: hints.date ?? (onDevice.date ? findDate(onDevice.date) : null),
+      merchant: hints.merchant ?? (onDevice.merchant?.trim().slice(0, 80) || null),
+    };
+  }
   // Photos and scans only: a text file or text PDF with no total has nothing more to find.
   const needsEyes = ext !== "txt" && ext !== "eml" && (ext !== "pdf" || (text ?? "").length < 200);
   if (hints.totalCents === null && needsEyes) {
@@ -172,6 +185,13 @@ export async function ingestReceipt(opts: {
   } catch (e) {
     await deleteReceiptFile(rel, root);
     throw e;
+  }
+  if (onDevice && onDevice.items.length > 0) {
+    try {
+      await replaceReceiptItems(db, householdId, id, onDevice.items);
+    } catch (e) {
+      console.error("[receipts] storing on-device items failed", e);
+    }
   }
   return {
     status: "stored",
