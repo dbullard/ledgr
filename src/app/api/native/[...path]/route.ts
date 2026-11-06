@@ -8,6 +8,15 @@ import {
   getRecentTransactions,
 } from "@/queries/dashboard";
 import {
+  getCategoryTrends,
+  getIncomeExpenseByCategory,
+  getIncomeVsExpense,
+  getReportNetWorthHistory,
+  getSafeToSpend,
+  getSpendingByCategory,
+} from "@/queries/reports";
+import { comparisonLabel, shiftDateRange } from "@/lib/date-utils";
+import {
   getAccountReconciliation,
   getAssetAllocation,
   getBalanceGrowth,
@@ -72,6 +81,7 @@ export const dynamic = "force-dynamic";
  *   GET    /api/native/items?from&to
  *   GET    /api/native/accounts                      (grouped by institution + totals)
  *   GET    /api/native/accounts/:id/history?days=90
+ *   GET    /api/native/reports/spending|income-expense|cash-flow|trends|net-worth?range=1M|3M|6M|1Y|all  (or from&to)
  *   GET    /api/native/investments/overview?range=1M|3M|6M|1Y|all
  *   GET    /api/native/investments/holdings?view=consolidated|by-account&accountId
  *   GET    /api/native/investments/transactions?type&accountId&cursor
@@ -127,6 +137,64 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
       withHousehold(householdId, (tx) => getRecentTransactions(householdId, 8, tx)),
     ]);
     return ok({ summary, history, spending, recent });
+  }
+
+  if (head === "reports" && method === "GET") {
+    const tab = id ?? "";
+    const from = q.get("from");
+    const to = q.get("to");
+    const asked = q.get("range") as Range | null;
+    const range: Range = asked && RANGES.includes(asked) ? asked : "3M";
+    let dateFrom: string;
+    let dateTo: string;
+    if (from && to && /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      dateFrom = from;
+      dateTo = to;
+    } else {
+      const bounds = rangeToDateBounds(range);
+      dateFrom = bounds.from ?? "2000-01-01";
+      dateTo = bounds.to;
+    }
+    const filters = { dateFrom, dateTo };
+    const allTime = dateFrom === "2000-01-01";
+    if (tab === "spending") {
+      const shifted = allTime ? null : shiftDateRange(dateFrom, dateTo, "back", true);
+      const comp = shifted ? { dateFrom: shifted.from, dateTo: shifted.to } : undefined;
+      const [rows, monthly] = await Promise.all([
+        withHousehold(householdId, (tx) => getSpendingByCategory(householdId, filters, tx, comp)),
+        withHousehold(householdId, (tx) => getIncomeVsExpense(householdId, filters, tx)),
+      ]);
+      return ok({
+        dateFrom,
+        dateTo,
+        comparisonLabel: shifted ? comparisonLabel(shifted.from, shifted.to) : null,
+        rows,
+        totalIncome: monthly.reduce((a, r) => a + r.income, 0),
+      });
+    }
+    if (tab === "income-expense") {
+      const [monthly, byCategory] = await Promise.all([
+        withHousehold(householdId, (tx) => getIncomeVsExpense(householdId, filters, tx)),
+        withHousehold(householdId, (tx) => getIncomeExpenseByCategory(householdId, filters, tx)),
+      ]);
+      return ok({ dateFrom, dateTo, monthly, byCategory });
+    }
+    if (tab === "cash-flow") {
+      const [safeToSpend, monthly] = await Promise.all([
+        withHousehold(householdId, (tx) => getSafeToSpend(householdId, tx)),
+        withHousehold(householdId, (tx) => getIncomeVsExpense(householdId, filters, tx)),
+      ]);
+      return ok({ dateFrom, dateTo, safeToSpend, monthly });
+    }
+    if (tab === "trends") {
+      const rows = await withHousehold(householdId, (tx) => getCategoryTrends(householdId, filters, tx));
+      return ok({ dateFrom, dateTo, rows });
+    }
+    if (tab === "net-worth") {
+      const rows = await getReportNetWorthHistory(householdId, filters);
+      return ok({ dateFrom, dateTo, rows });
+    }
+    return fail("Unknown report", 404);
   }
 
   if (head === "investments" && method === "GET") {
