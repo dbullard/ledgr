@@ -41,6 +41,7 @@ export function getAiConfig(): ProviderConfig | null {
     aiBaseUrl: process.env.AI_BASE_URL || undefined,
     confidenceThreshold,
     toolCalling,
+    structuredOutputs: process.env.AI_STRUCTURED_OUTPUTS === "true",
   };
 }
 

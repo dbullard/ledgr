@@ -35,6 +35,9 @@ interface InstitutionHeaderProps {
   accountCount: number;
   connectionId: string | null;
   lastSyncedAt: Date | string | null;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  lastDataAt?: Date | string | null;
   syncStatus: SyncStatus;
   syncError?: string;
   onSync: () => void;
@@ -51,6 +54,9 @@ export function InstitutionHeader({
   accountCount,
   connectionId,
   lastSyncedAt,
+  errorCode,
+  errorMessage,
+  lastDataAt,
   syncStatus,
   syncError,
   onSync,
@@ -80,7 +86,15 @@ export function InstitutionHeader({
                 <>
                   <span className="text-xs text-muted-foreground">·</span>
                   <p className="text-xs text-muted-foreground">
-                    Synced {formatRelativeTime(lastSyncedAt)}
+                    Checked {formatRelativeTime(lastSyncedAt)}
+                  </p>
+                </>
+              )}
+              {connectionId && lastDataAt && syncStatus === "idle" && (
+                <>
+                  <span className="text-xs text-muted-foreground">·</span>
+                  <p className="text-xs text-muted-foreground">
+                    Bank data {formatRelativeTime(lastDataAt)}
                   </p>
                 </>
               )}
@@ -89,7 +103,7 @@ export function InstitutionHeader({
         </div>
         <div className="flex items-center gap-2">
           <SyncStatusBadge status={syncStatus} errorMessage={syncError} />
-          {status && syncStatus === "idle" && <StatusBadge status={status} />}
+          {status && syncStatus === "idle" && <StatusBadge status={status} errorCode={errorCode} errorMessage={errorMessage} />}
           {reconnectButton ?? (connectionId ? (
             <DropdownMenu>
               <DropdownMenuTrigger

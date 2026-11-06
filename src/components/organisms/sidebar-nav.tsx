@@ -16,6 +16,7 @@ import {
   LogOut,
   Upload,
   Settings,
+  FileText,
 } from "lucide-react";
 import { authClient } from "@/lib/auth/client";
 import { CommandPaletteTrigger } from "@/components/molecules/command-palette-trigger";
@@ -53,6 +54,7 @@ const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
     items: [
       { href: "/accounts", label: "Accounts", icon: Building2 },
       { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
+      { href: "/receipts", label: "Receipts", icon: FileText },
       { href: "/rules", label: "Rules", icon: Tags },
       { href: "/categories", label: "Categories", icon: Shapes },
       { href: "/investments", label: "Investments", icon: TrendingUp },

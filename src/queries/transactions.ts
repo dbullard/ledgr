@@ -298,6 +298,17 @@ export interface TransactionSummary {
   totalExpense: number;
   totalIncome: number;
   net: number;
+  /** Earliest/latest transaction date (YYYY-MM-DD) in the result; null when empty. */
+  firstDate: string | null;
+  lastDate: string | null;
+  /** Largest single counted expense, in cents (positive). */
+  largestExpense: number;
+  /** Pending rows are left out of the totals above; surfaced so they aren't invisible. */
+  pendingCount: number;
+  pendingAmount: number;
+  /** Transfer legs are left out of expense/income; money moved between accounts. */
+  transferCount: number;
+  transferAmount: number;
 }
 
 export async function getTransactionSummary(
@@ -315,6 +326,13 @@ export async function getTransactionSummary(
         count: countRows(),
         totalExpense: sql<number>`coalesce(sum(CASE WHEN ${transactions.normalizedAmount} < 0 AND ${spendingIncluded} AND ${transactions.pending} = false THEN abs(${transactions.normalizedAmount}) ELSE 0 END), 0)`.mapWith(Number),
         totalIncome: sql<number>`coalesce(sum(CASE WHEN ${transactions.normalizedAmount} > 0 AND ${transactions.isTransfer} = false AND ${transactions.pending} = false THEN ${transactions.normalizedAmount} ELSE 0 END), 0)`.mapWith(Number),
+        firstDate: sql<string | null>`min(${transactions.date})`,
+        lastDate: sql<string | null>`max(${transactions.date})`,
+        largestExpense: sql<number>`coalesce(max(CASE WHEN ${transactions.normalizedAmount} < 0 AND ${spendingIncluded} AND ${transactions.pending} = false THEN abs(${transactions.normalizedAmount}) END), 0)`.mapWith(Number),
+        pendingCount: sql<number>`count(*) FILTER (WHERE ${transactions.pending} = true)`.mapWith(Number),
+        pendingAmount: sql<number>`coalesce(sum(CASE WHEN ${transactions.pending} = true THEN abs(${transactions.normalizedAmount}) ELSE 0 END), 0)`.mapWith(Number),
+        transferCount: sql<number>`count(*) FILTER (WHERE ${transactions.isTransfer} = true)`.mapWith(Number),
+        transferAmount: sql<number>`coalesce(sum(CASE WHEN ${transactions.isTransfer} = true AND ${transactions.normalizedAmount} < 0 THEN abs(${transactions.normalizedAmount}) ELSE 0 END), 0)`.mapWith(Number),
       })
       .from(transactions)
   )
@@ -330,7 +348,63 @@ export async function getTransactionSummary(
     totalExpense,
     totalIncome,
     net: totalIncome - totalExpense,
+    firstDate: result?.firstDate ?? null,
+    lastDate: result?.lastDate ?? null,
+    largestExpense: result?.largestExpense ?? 0,
+    pendingCount: result?.pendingCount ?? 0,
+    pendingAmount: result?.pendingAmount ?? 0,
+    transferCount: result?.transferCount ?? 0,
+    transferAmount: result?.transferAmount ?? 0,
   };
+}
+
+export type TrendGranularity = "week" | "month" | "year" | "5y";
+
+export interface TrendBucket {
+  /** Bucket start: YYYY-MM-DD (week), YYYY-MM (month), YYYY (year / 5-year). */
+  period: string;
+  expenses: number;
+  income: number;
+}
+
+/**
+ * Spending and credits bucketed over time, under the same filters and the same
+ * counting rules as getTransactionSummary so the chart always adds up to the
+ * strip above it.
+ */
+export async function getTransactionTrend(
+  householdId: string,
+  filters: TransactionFilters,
+  granularity: TrendGranularity,
+  db: LedgrDb = defaultDb,
+): Promise<TrendBucket[]> {
+  const spendingIncluded = await includedInSpending(householdId, db);
+  const conditions = buildTransactionConditions(filters, spendingIncluded);
+  const base = baseTransactionQuery(db, householdId);
+
+  const periodExpr =
+    granularity === "week"
+      ? sql<string>`to_char(date_trunc('week', ${transactions.date}::date), 'YYYY-MM-DD')`
+      : granularity === "month"
+        ? sql<string>`substring(${transactions.date}, 1, 7)`
+        : granularity === "year"
+          ? sql<string>`substring(${transactions.date}, 1, 4)`
+          : sql<string>`(substring(${transactions.date}, 1, 4)::int / 5 * 5)::text`;
+
+  const rows = await base.joins(
+    db
+      .select({
+        period: periodExpr,
+        expenses: sql<number>`coalesce(sum(CASE WHEN ${transactions.normalizedAmount} < 0 AND ${spendingIncluded} AND ${transactions.pending} = false THEN abs(${transactions.normalizedAmount}) ELSE 0 END), 0)`.mapWith(Number),
+        income: sql<number>`coalesce(sum(CASE WHEN ${transactions.normalizedAmount} > 0 AND ${transactions.isTransfer} = false AND ${transactions.pending} = false THEN ${transactions.normalizedAmount} ELSE 0 END), 0)`.mapWith(Number),
+      })
+      .from(transactions)
+  )
+    .where(base.scoped.where(transactions, ...conditions))
+    .groupBy(periodExpr)
+    .orderBy(periodExpr);
+
+  return rows;
 }
 
 /**

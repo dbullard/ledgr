@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { groupByDate } from "./transactions";
+import { groupByDate, isPanelDocked } from "./transactions";
 
 describe("groupByDate", () => {
   it("returns empty array for empty input", () => {
@@ -51,5 +51,23 @@ describe("groupByDate", () => {
     const rows = [{ date: "2026-05-09", id: "a" }];
     const groups = groupByDate(rows);
     expect(groups).toEqual([{ date: "2026-05-09", rows: [{ date: "2026-05-09", id: "a" }] }]);
+  });
+});
+
+describe("isPanelDocked", () => {
+  const base = { panelOpen: true, isMobile: false, reviewMode: false, wideEnough: true };
+
+  it("docks the ledger beside an open panel on a wide desktop", () => {
+    expect(isPanelDocked(base)).toBe(true);
+  });
+
+  it("leaves the ledger alone when the panel is closed", () => {
+    expect(isPanelDocked({ ...base, panelOpen: false })).toBe(false);
+  });
+
+  it("does not dock on mobile, in review mode, or on a window too narrow for the columns", () => {
+    expect(isPanelDocked({ ...base, isMobile: true })).toBe(false);
+    expect(isPanelDocked({ ...base, reviewMode: true })).toBe(false);
+    expect(isPanelDocked({ ...base, wideEnough: false })).toBe(false);
   });
 });

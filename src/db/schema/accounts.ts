@@ -48,6 +48,12 @@ export const accounts = pgTable(
     currency: text("currency").default("USD"),
     isManual: boolean("is_manual").default(false),
     isHidden: boolean("is_hidden").default(false),
+    // For an investment account whose connector reports a balance but no
+    // holdings: the user says the whole account is one fund. Investments then
+    // shows it as a single mutual-fund position worth the account balance.
+    // Ignored whenever the connector does itemize holdings.
+    fundTicker: text("fund_ticker"),
+    fundName: text("fund_name"),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),

@@ -1,6 +1,6 @@
 "use server";
 
-import { desc, eq, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { v4 as uuid } from "uuid";
 import { z } from "zod";
@@ -29,6 +29,7 @@ const categoryInputSchema = z.object({
   name: nameSchema,
   isIncome: z.boolean().default(false),
   includeTransferInSpending: z.boolean().default(false),
+  excludeFromSpending: z.boolean().default(false),
 });
 
 function revalidateCategoryConsumers() {
@@ -176,6 +177,7 @@ export async function createCategoryScoped(
     isIncome: parsed.data.isIncome,
     // An income category has no spending side for a transfer to join.
     includeTransferInSpending: parsed.data.isIncome ? false : parsed.data.includeTransferInSpending,
+    excludeFromSpending: parsed.data.isIncome ? false : parsed.data.excludeFromSpending,
     isSystem: false,
     sortOrder: (last?.sortOrder ?? -1) + 1,
   });
@@ -211,16 +213,10 @@ export async function renameCategoryGroupScoped(
   const updated = await db
     .update(categoryGroups)
     .set({ name: parsedName.data })
-    .where(
-      scoped.where(
-        categoryGroups,
-        eq(categoryGroups.id, parsedId.data),
-        eq(categoryGroups.isSystem, false),
-      ),
-    )
+    .where(scoped.where(categoryGroups, eq(categoryGroups.id, parsedId.data)))
     .returning({ id: categoryGroups.id });
 
-  if (updated.length === 0) return { error: "Only custom category groups can be renamed." };
+  if (updated.length === 0) return { error: "Category group not found." };
   revalidateCategoryConsumers();
   return { success: true };
 }
@@ -253,16 +249,10 @@ export async function renameCategoryScoped(
   const updated = await db
     .update(categories)
     .set({ name: parsedName.data })
-    .where(
-      scoped.where(
-        categories,
-        eq(categories.id, parsedId.data),
-        eq(categories.isSystem, false),
-      ),
-    )
+    .where(scoped.where(categories, eq(categories.id, parsedId.data)))
     .returning({ id: categories.id });
 
-  if (updated.length === 0) return { error: "Only custom categories can be renamed." };
+  if (updated.length === 0) return { error: "Category not found." };
   revalidateCategoryConsumers();
   return { success: true };
 }
@@ -315,6 +305,345 @@ export async function updateCategoryReporting(
     includeTransferInSpending,
     db,
   );
+}
+
+export async function updateCategoryExclusionScoped(
+  householdId: string,
+  categoryId: string,
+  excludeFromSpending: boolean,
+  db: LedgrDb = defaultDb,
+): Promise<ActionResult> {
+  const parsedId = idSchema.safeParse(categoryId);
+  if (!parsedId.success) return { error: "Invalid input." };
+  const scoped = scopedQuery(householdId, db);
+  const updated = await db
+    .update(categories)
+    .set({ excludeFromSpending })
+    .where(
+      scoped.where(
+        categories,
+        eq(categories.id, parsedId.data),
+        eq(categories.isSystem, false),
+        eq(categories.isIncome, false),
+      ),
+    )
+    .returning({ id: categories.id });
+  if (updated.length === 0) return { error: "Only custom, non-income categories can be changed." };
+  revalidateCategoryConsumers();
+  return { success: true };
+}
+
+export async function updateCategoryExclusion(
+  categoryId: string,
+  excludeFromSpending: boolean,
+  db: LedgrDb = defaultDb,
+): Promise<ActionResult> {
+  const auth = await authorizeAction();
+  if ("error" in auth) return auth;
+  return updateCategoryExclusionScoped(auth.householdId, categoryId, excludeFromSpending, db);
+}
+
+const iconSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/)
+  .max(40)
+  .nullable();
+
+export async function updateCategoryIconScoped(
+  householdId: string,
+  categoryId: string,
+  icon: string | null,
+  db: LedgrDb = defaultDb,
+): Promise<ActionResult> {
+  const parsedId = idSchema.safeParse(categoryId);
+  const parsedIcon = iconSchema.safeParse(icon);
+  if (!parsedId.success || !parsedIcon.success) return { error: "Invalid input." };
+  const scoped = scopedQuery(householdId, db);
+  const updated = await db
+    .update(categories)
+    .set({ icon: parsedIcon.data })
+    .where(scoped.where(categories, eq(categories.id, parsedId.data)))
+    .returning({ id: categories.id });
+  if (updated.length === 0) return { error: "Category not found." };
+  revalidateCategoryConsumers();
+  return { success: true };
+}
+
+export async function updateCategoryIcon(
+  categoryId: string,
+  icon: string | null,
+  db: LedgrDb = defaultDb,
+): Promise<ActionResult> {
+  const auth = await authorizeAction();
+  if ("error" in auth) return auth;
+  return updateCategoryIconScoped(auth.householdId, categoryId, icon, db);
+}
+
+export async function updateCategoryGroupIconScoped(
+  householdId: string,
+  groupId: string,
+  icon: string | null,
+  db: LedgrDb = defaultDb,
+): Promise<ActionResult> {
+  const parsedId = idSchema.safeParse(groupId);
+  const parsedIcon = iconSchema.safeParse(icon);
+  if (!parsedId.success || !parsedIcon.success) return { error: "Invalid input." };
+  const scoped = scopedQuery(householdId, db);
+  const updated = await db
+    .update(categoryGroups)
+    .set({ icon: parsedIcon.data })
+    .where(scoped.where(categoryGroups, eq(categoryGroups.id, parsedId.data)))
+    .returning({ id: categoryGroups.id });
+  if (updated.length === 0) return { error: "Category group not found." };
+  revalidateCategoryConsumers();
+  return { success: true };
+}
+
+export async function updateCategoryGroupIcon(
+  groupId: string,
+  icon: string | null,
+  db: LedgrDb = defaultDb,
+): Promise<ActionResult> {
+  const auth = await authorizeAction();
+  if ("error" in auth) return auth;
+  return updateCategoryGroupIconScoped(auth.householdId, groupId, icon, db);
+}
+
+export async function moveCategoryToGroupScoped(
+  householdId: string,
+  categoryId: string,
+  groupId: string,
+  db: LedgrDb = defaultDb,
+): Promise<ActionResult> {
+  const parsedId = idSchema.safeParse(categoryId);
+  const parsedGroup = idSchema.safeParse(groupId);
+  if (!parsedId.success || !parsedGroup.success) return { error: "Invalid input." };
+  const group = await getOwnedGroup(householdId, parsedGroup.data, db);
+  if (!group) return { error: "Category group not found." };
+
+  const scoped = scopedQuery(householdId, db);
+  const [last] = await db
+    .select({ sortOrder: categories.sortOrder })
+    .from(categories)
+    .where(scoped.where(categories, eq(categories.groupId, parsedGroup.data)))
+    .orderBy(desc(categories.sortOrder))
+    .limit(1);
+  const updated = await db
+    .update(categories)
+    .set({ groupId: parsedGroup.data, sortOrder: (last?.sortOrder ?? -1) + 1 })
+    .where(scoped.where(categories, eq(categories.id, parsedId.data)))
+    .returning({ id: categories.id });
+  if (updated.length === 0) return { error: "Category not found." };
+  revalidateCategoryConsumers();
+  return { success: true };
+}
+
+export async function moveCategoryToGroup(
+  categoryId: string,
+  groupId: string,
+  db: LedgrDb = defaultDb,
+): Promise<ActionResult> {
+  const auth = await authorizeAction();
+  if ("error" in auth) return auth;
+  return moveCategoryToGroupScoped(auth.householdId, categoryId, groupId, db);
+}
+
+type MergeResult = { success: true; moved: number } | { error: string };
+
+/** Seeded categories carry one or more original names, joined by "|", for the PFC map. */
+function joinSystemKeys(...keys: (string | null)[]): string | null {
+  const all = keys.flatMap((key) => (key ? key.split("|") : []));
+  return all.length > 0 ? [...new Set(all)].join("|") : null;
+}
+
+/**
+ * Folds `sourceId` into `targetId`: every transaction, split, rule, merchant
+ * default, recurring item and budget line that pointed at the source now points
+ * at the target, then the source is deleted. Budget lines for the same budget
+ * are summed. The target keeps its own name, icon and reporting flags; if the
+ * source was a seeded category, the target inherits its Plaid PFC mapping.
+ */
+export async function mergeCategoriesScoped(
+  householdId: string,
+  sourceId: string,
+  targetId: string,
+  db: LedgrDb = defaultDb,
+): Promise<MergeResult> {
+  const parsedSource = idSchema.safeParse(sourceId);
+  const parsedTarget = idSchema.safeParse(targetId);
+  if (!parsedSource.success || !parsedTarget.success) return { error: "Invalid input." };
+  if (parsedSource.data === parsedTarget.data) {
+    return { error: "Choose two different categories to merge." };
+  }
+
+  const scoped = scopedQuery(householdId, db);
+  const owned = await db
+    .select({
+      id: categories.id,
+      isIncome: categories.isIncome,
+      systemKey: categories.systemKey,
+    })
+    .from(categories)
+    .where(scoped.where(categories));
+  const source = owned.find((row) => row.id === parsedSource.data);
+  const target = owned.find((row) => row.id === parsedTarget.data);
+  if (!source || !target) return { error: "Category not found." };
+  if (Boolean(source.isIncome) !== Boolean(target.isIncome)) {
+    return { error: "Income and expense categories cannot be merged together." };
+  }
+
+  const moved = await db.transaction(async (tx) => {
+    const txScoped = scopedQuery(householdId, tx as unknown as LedgrDb);
+
+    const movedTxns = await tx
+      .update(transactions)
+      .set({ categoryId: target.id })
+      .where(txScoped.where(transactions, eq(transactions.categoryId, source.id)))
+      .returning({ id: transactions.id });
+
+    const splitIds = await tx
+      .select({ id: transactionSplits.id })
+      .from(transactionSplits)
+      .innerJoin(transactions, eq(transactionSplits.transactionId, transactions.id))
+      .where(txScoped.where(transactions, eq(transactionSplits.categoryId, source.id)));
+    if (splitIds.length > 0) {
+      await tx
+        .update(transactionSplits)
+        .set({ categoryId: target.id })
+        .where(inArray(transactionSplits.id, splitIds.map((row) => row.id)));
+    }
+
+    await tx
+      .update(categoryRules)
+      .set({ categoryId: target.id })
+      .where(txScoped.where(categoryRules, eq(categoryRules.categoryId, source.id)));
+    await tx
+      .update(merchants)
+      .set({ categoryId: target.id })
+      .where(txScoped.where(merchants, eq(merchants.categoryId, source.id)));
+    await tx
+      .update(recurringTransactions)
+      .set({ categoryId: target.id })
+      .where(
+        txScoped.where(recurringTransactions, eq(recurringTransactions.categoryId, source.id)),
+      );
+
+    // Budget lines: one row per (budget, category), so fold duplicates together.
+    const sourceLines = await tx
+      .select({
+        id: budgetCategories.id,
+        budgetId: budgetCategories.budgetId,
+        limitAmount: budgetCategories.limitAmount,
+      })
+      .from(budgetCategories)
+      .innerJoin(budgets, eq(budgetCategories.budgetId, budgets.id))
+      .where(txScoped.where(budgets, eq(budgetCategories.categoryId, source.id)));
+    for (const line of sourceLines) {
+      const [existing] = await tx
+        .select({ id: budgetCategories.id, limitAmount: budgetCategories.limitAmount })
+        .from(budgetCategories)
+        .where(
+          and(
+            eq(budgetCategories.budgetId, line.budgetId),
+            eq(budgetCategories.categoryId, target.id),
+          ),
+        )
+        .limit(1);
+      if (existing) {
+        await tx
+          .update(budgetCategories)
+          .set({ limitAmount: existing.limitAmount + line.limitAmount })
+          .where(eq(budgetCategories.id, existing.id));
+        await tx.delete(budgetCategories).where(eq(budgetCategories.id, line.id));
+      } else {
+        await tx
+          .update(budgetCategories)
+          .set({ categoryId: target.id })
+          .where(eq(budgetCategories.id, line.id));
+      }
+    }
+
+    await tx
+      .update(categories)
+      .set({ systemKey: joinSystemKeys(target.systemKey, source.systemKey) })
+      .where(txScoped.where(categories, eq(categories.id, target.id)));
+    await tx
+      .delete(categories)
+      .where(txScoped.where(categories, eq(categories.id, source.id)));
+
+    return movedTxns.length;
+  });
+
+  revalidateCategoryConsumers();
+  return { success: true, moved };
+}
+
+export async function mergeCategories(
+  sourceId: string,
+  targetId: string,
+  db: LedgrDb = defaultDb,
+): Promise<MergeResult> {
+  const auth = await authorizeAction();
+  if ("error" in auth) return auth;
+  return mergeCategoriesScoped(auth.householdId, sourceId, targetId, db);
+}
+
+/** Moves every category in `sourceId` into `targetId`, then deletes the emptied group. */
+export async function mergeCategoryGroupsScoped(
+  householdId: string,
+  sourceId: string,
+  targetId: string,
+  db: LedgrDb = defaultDb,
+): Promise<MergeResult> {
+  const parsedSource = idSchema.safeParse(sourceId);
+  const parsedTarget = idSchema.safeParse(targetId);
+  if (!parsedSource.success || !parsedTarget.success) return { error: "Invalid input." };
+  if (parsedSource.data === parsedTarget.data) {
+    return { error: "Choose two different groups to merge." };
+  }
+  const source = await getOwnedGroup(householdId, parsedSource.data, db);
+  const target = await getOwnedGroup(householdId, parsedTarget.data, db);
+  if (!source || !target) return { error: "Category group not found." };
+
+  const moved = await db.transaction(async (tx) => {
+    const txScoped = scopedQuery(householdId, tx as unknown as LedgrDb);
+    const [last] = await tx
+      .select({ sortOrder: categories.sortOrder })
+      .from(categories)
+      .where(txScoped.where(categories, eq(categories.groupId, target.id)))
+      .orderBy(desc(categories.sortOrder))
+      .limit(1);
+    const children = await tx
+      .select({ id: categories.id })
+      .from(categories)
+      .where(txScoped.where(categories, eq(categories.groupId, source.id)))
+      .orderBy(categories.sortOrder);
+    let next = (last?.sortOrder ?? -1) + 1;
+    for (const child of children) {
+      await tx
+        .update(categories)
+        .set({ groupId: target.id, sortOrder: next++ })
+        .where(eq(categories.id, child.id));
+    }
+    await tx
+      .delete(categoryGroups)
+      .where(txScoped.where(categoryGroups, eq(categoryGroups.id, source.id)));
+    return children.length;
+  });
+
+  revalidateCategoryConsumers();
+  return { success: true, moved };
+}
+
+export async function mergeCategoryGroups(
+  sourceId: string,
+  targetId: string,
+  db: LedgrDb = defaultDb,
+): Promise<MergeResult> {
+  const auth = await authorizeAction();
+  if ("error" in auth) return auth;
+  return mergeCategoryGroupsScoped(auth.householdId, sourceId, targetId, db);
 }
 
 async function categoryHasDependencies(

@@ -14,8 +14,10 @@ import type { LedgrDb } from "../../src/db";
  * are only trustworthy if they agree, so these tests pin the definition of
  * spending itself rather than any one tab's arithmetic.
  *
- * The canonical rule lives in `spendingBaseConditions`: a negative, settled,
- * non-transfer, non-income transaction, summed by magnitude.
+ * The canonical rule lives in `spendingBaseConditions`: a settled, non-transfer,
+ * non-income transaction, net of refunds. A refund is a credit filed under a
+ * non-income category; it offsets spending in that category, and a category
+ * whose refunds outweigh its charges contributes nothing (never negative).
  */
 
 let db: LedgrDb;
@@ -62,11 +64,12 @@ afterEach(async () => {
   await close();
 });
 
-/** Food 8000 + uncategorized 7000. Rent and the refund are not spending. */
-const EXPECTED_SPENDING = 15000;
+/** Food 8000 net of its 2000 refund = 6000, plus uncategorized 7000. Rent only
+ *  received a credit, so it contributes nothing rather than -2500. */
+const EXPECTED_SPENDING = 13000;
 
 describe("spending is defined once across every Reports tab", () => {
-  test("the Spending tab totals only negative, non-income transactions", async () => {
+  test("the Spending tab totals non-income transactions net of refunds", async () => {
     const { getSpendingByCategory } = await import("../../src/queries/reports");
     const rows = await getSpendingByCategory(householdId, RANGE, db);
 
@@ -81,15 +84,15 @@ describe("spending is defined once across every Reports tab", () => {
     expect(rows.reduce((s, r) => s + r.expenses, 0)).toBe(EXPECTED_SPENDING);
   });
 
-  test("a refund is not counted as spending", async () => {
+  test("a refund offsets spending in its category", async () => {
     const { getIncomeVsExpense, getIncomeExpenseByCategory } = await import("../../src/queries/reports");
 
     const totals = await getIncomeVsExpense(householdId, RANGE, db);
     const byCategory = await getIncomeExpenseByCategory(householdId, RANGE, db);
     const food = byCategory.find((r) => r.categoryName === "Food");
 
-    // 8000 of charges, not 8000 + 2000 of absolute movement.
-    expect(food?.total).toBe(8000);
+    // 8000 of charges less the 2000 refund.
+    expect(food?.total).toBe(6000);
     expect(totals.reduce((s, r) => s + r.expenses, 0)).toBe(EXPECTED_SPENDING);
   });
 
@@ -153,7 +156,7 @@ describe("the Income vs Expense category table reads correctly", () => {
     const expenses = (await getIncomeExpenseByCategory(householdId, RANGE, db)).filter((r) => !r.isIncome);
 
     expect(expenses.every((r) => r.total > 0)).toBe(true);
-    expect(expenses.map((r) => r.total)).toEqual([8000, 7000]);
+    expect(expenses.map((r) => r.total)).toEqual([7000, 6000]);
   });
 
   test("percentages are positive and sum to 100 within each pool", async () => {

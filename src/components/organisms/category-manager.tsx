@@ -8,12 +8,19 @@ import {
   createCategoryGroup,
   deleteCategory,
   deleteCategoryGroup,
+  mergeCategories,
+  mergeCategoryGroups,
+  moveCategoryToGroup,
   renameCategory,
   renameCategoryGroup,
+  updateCategoryGroupIcon,
+  updateCategoryIcon,
   updateCategoryReporting,
+  updateCategoryExclusion,
 } from "@/actions/categories";
-import { CategoryIcon } from "@/components/atoms/category-icon";
+import { CategoryIconPicker } from "@/components/molecules/category-icon-picker";
 import { EditableText } from "@/components/molecules/editable-text";
+import { MergeDialog } from "@/components/molecules/merge-dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -40,6 +47,11 @@ import {
 import type { CategoryGroup } from "@/queries/categories";
 
 type ActionResult = { success: true } | { error: string };
+
+const EXCLUDE_SPENDING_HELP =
+  "Use \"Exclude from spending\" for money that isn't household spending, such as a spouse's " +
+  "business expenses. Those transactions stay on the Transactions page but are left out of " +
+  "reports, the dashboard and budgets.";
 
 const TRANSFER_SPENDING_HELP =
   "Use \"Count transfers as spending\" for transfers that are really spending, such as rent or " +
@@ -121,6 +133,7 @@ export function CategoryManager({ groups }: CategoryManagerProps) {
   const [groupId, setGroupId] = useState(groups[0]?.id ?? "");
   const [isIncome, setIsIncome] = useState(false);
   const [includeTransferInSpending, setIncludeTransferInSpending] = useState(false);
+  const [excludeFromSpending, setExcludeFromSpending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -161,6 +174,7 @@ export function CategoryManager({ groups }: CategoryManagerProps) {
         name: categoryName,
         isIncome,
         includeTransferInSpending,
+        excludeFromSpending,
       });
       if ("error" in result) {
         setError(result.error);
@@ -169,6 +183,7 @@ export function CategoryManager({ groups }: CategoryManagerProps) {
       setCategoryName("");
       setIsIncome(false);
       setIncludeTransferInSpending(false);
+      setExcludeFromSpending(false);
       refresh();
     });
   }
@@ -185,6 +200,36 @@ export function CategoryManager({ groups }: CategoryManagerProps) {
     if ("error" in result) setError(result.error);
     else refresh();
     return result;
+  }
+
+  async function handleIcon(
+    action: () => Promise<ActionResult>,
+  ): Promise<void> {
+    const result = await action();
+    if ("error" in result) setError(result.error);
+    else refresh();
+  }
+
+  function handleMoveCategory(id: string, targetGroupId: string) {
+    startTransition(async () => {
+      const result = await moveCategoryToGroup(id, targetGroupId);
+      if ("error" in result) {
+        setError(result.error);
+        return;
+      }
+      refresh();
+    });
+  }
+
+  function handleExclusionChange(id: string, excluded: boolean) {
+    startTransition(async () => {
+      const result = await updateCategoryExclusion(id, excluded);
+      if ("error" in result) {
+        setError(result.error);
+        return;
+      }
+      refresh();
+    });
   }
 
   function handleReportingChange(id: string, spending: boolean) {
@@ -282,6 +327,15 @@ export function CategoryManager({ groups }: CategoryManagerProps) {
                     />
                     Count transfers as spending
                   </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={excludeFromSpending}
+                      onCheckedChange={setExcludeFromSpending}
+                      disabled={isIncome}
+                      aria-label="Exclude from spending"
+                    />
+                    Exclude from spending
+                  </label>
                 </div>
                 <Button type="submit" size="sm" disabled={pending || groups.length === 0}>
                   <Plus className="size-4" />
@@ -289,6 +343,7 @@ export function CategoryManager({ groups }: CategoryManagerProps) {
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">{TRANSFER_SPENDING_HELP}</p>
+              <p className="text-xs text-muted-foreground">{EXCLUDE_SPENDING_HELP}</p>
             </form>
           </CardContent>
         </Card>
@@ -299,21 +354,35 @@ export function CategoryManager({ groups }: CategoryManagerProps) {
           <Card key={group.id} size="sm">
             <CardHeader className="border-b">
               <div className="flex min-w-0 items-center gap-2">
+                <CategoryIconPicker
+                  value={group.icon}
+                  label={`Change icon for group ${group.name}`}
+                  disabled={pending}
+                  onSelect={(icon) => handleIcon(() => updateCategoryGroupIcon(group.id, icon))}
+                />
                 <div className="min-w-0 flex-1">
-                  {group.isSystem ? (
-                    <CardTitle>{group.name}</CardTitle>
-                  ) : (
-                    <EditableText
-                      value={group.name}
-                      onSave={(name) => handleRenameGroup(group.id, name)}
-                      editLabel={`Rename group ${group.name}`}
-                      className="font-heading text-sm font-medium"
-                    />
-                  )}
+                  <EditableText
+                    value={group.name}
+                    onSave={(name) => handleRenameGroup(group.id, name)}
+                    editLabel={`Rename group ${group.name}`}
+                    className="font-heading text-sm font-medium"
+                  />
                 </div>
                 <Badge variant={group.isSystem ? "secondary" : "outline"}>
                   {group.isSystem ? "System" : "Custom"}
                 </Badge>
+                <MergeDialog
+                  triggerLabel={`Merge ${group.name} into another group`}
+                  title={`Merge ${group.name}`}
+                  description="Moves every category in this group into the group you pick, then removes this group. Transactions are not changed."
+                  options={groups
+                    .filter((other) => other.id !== group.id)
+                    .map((other) => ({ id: other.id, label: other.name }))}
+                  disabled={pending}
+                  onMerge={(targetId) => mergeCategoryGroups(group.id, targetId)}
+                  onError={setError}
+                  onMerged={refresh}
+                />
                 {!group.isSystem && (
                   <DeleteButton
                     label={`Delete ${group.name}`}
@@ -332,19 +401,38 @@ export function CategoryManager({ groups }: CategoryManagerProps) {
               ) : (
                 group.categories.map((category) => (
                   <div key={category.id} className="flex min-h-11 items-center gap-3 px-4 py-2">
-                    <CategoryIcon name={category.icon} size={16} className="text-muted-foreground" />
+                    <CategoryIconPicker
+                      value={category.icon}
+                      label={`Change icon for ${category.name}`}
+                      disabled={pending}
+                      onSelect={(icon) => handleIcon(() => updateCategoryIcon(category.id, icon))}
+                    />
                     <div className="min-w-0 flex-1">
-                      {category.isSystem ? (
-                        <span className="text-sm font-medium">{category.name}</span>
-                      ) : (
-                        <EditableText
-                          value={category.name}
-                          onSave={(name) => handleRenameCategory(category.id, name)}
-                          editLabel={`Rename category ${category.name}`}
-                          className="text-sm font-medium"
-                        />
-                      )}
+                      <EditableText
+                        value={category.name}
+                        onSave={(name) => handleRenameCategory(category.id, name)}
+                        editLabel={`Rename category ${category.name}`}
+                        className="text-sm font-medium"
+                      />
                     </div>
+                    <Select
+                      value={group.id}
+                      onValueChange={(value) => {
+                        if (value !== null && value !== group.id) handleMoveCategory(category.id, value);
+                      }}
+                      disabled={pending}
+                    >
+                      <SelectTrigger size="sm" className="w-36" aria-label={`Group for ${category.name}`}>
+                        <SelectValue>{group.name}</SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {groups.map((option) => (
+                          <SelectItem key={option.id} value={option.id}>
+                            {option.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     {!category.isSystem && !category.isIncome && (
                       <label className="flex items-center gap-2 text-xs text-muted-foreground">
                         <Checkbox
@@ -356,10 +444,35 @@ export function CategoryManager({ groups }: CategoryManagerProps) {
                         Count transfers as spending
                       </label>
                     )}
+                    {!category.isSystem && !category.isIncome && (
+                      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Checkbox
+                          checked={category.excludeFromSpending}
+                          onCheckedChange={(checked) => handleExclusionChange(category.id, checked)}
+                          aria-label={`Exclude ${category.name} from spending`}
+                          disabled={pending}
+                        />
+                        Exclude from spending
+                      </label>
+                    )}
                     {category.isIncome && <Badge variant="secondary">Income</Badge>}
                     <Badge variant={category.isSystem ? "secondary" : "outline"}>
                       {category.isSystem ? "System" : "Custom"}
                     </Badge>
+                    <MergeDialog
+                      triggerLabel={`Merge ${category.name} into another category`}
+                      title={`Merge ${category.name}`}
+                      description={`Moves every transaction, rule, budget, merchant default and recurring item from ${category.name} into the category you pick, then deletes ${category.name}. This can't be undone.`}
+                      options={groups.flatMap((g) =>
+                        g.categories
+                          .filter((c) => c.id !== category.id && c.isIncome === category.isIncome)
+                          .map((c) => ({ id: c.id, label: `${g.name} › ${c.name}` })),
+                      )}
+                      disabled={pending}
+                      onMerge={(targetId) => mergeCategories(category.id, targetId)}
+                      onError={setError}
+                      onMerged={refresh}
+                    />
                     {!category.isSystem && (
                       <DeleteButton
                         label={`Delete ${category.name}`}
@@ -379,8 +492,9 @@ export function CategoryManager({ groups }: CategoryManagerProps) {
       </div>
 
       <p className="text-xs text-muted-foreground">
-        System categories are read-only. Custom categories remain available everywhere categories
-        are used, including transactions, rules, budgets, reports, merchants, and recurring items.
+        Every category and group can be renamed, re-iconed and merged. Merging moves all
+        transactions, rules, budgets, merchant defaults and recurring items into the category you
+        pick. Reporting options (transfers, exclusion) can only be changed on custom categories.
       </p>
     </div>
   );

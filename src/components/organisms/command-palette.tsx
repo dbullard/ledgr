@@ -118,9 +118,30 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     ? PAGES.filter((p) => p.label.toLowerCase().includes(needle))
     : PAGES;
 
-  // If a query matches nothing anywhere, offer every page rather than an empty
-  // dialog — the palette should never be a dead end you have to escape out of.
-  const pages = !hasResults && matchingPages.length === 0 ? PAGES : matchingPages;
+  // Only pages that match the query are offered. Falling back to *every* page
+  // when nothing matched put Dashboard first, so pressing Enter on a search that
+  // had not returned yet (or matched nothing) silently navigated to the
+  // Dashboard instead of doing nothing.
+  const pages = matchingPages;
+
+  // The highlighted row is controlled rather than left to cmdk. With cmdk's own
+  // filtering off it keeps the previously highlighted row when the results
+  // change, so a Dashboard highlighted before the search returned stayed
+  // highlighted underneath the new Transactions group. Results are shown in
+  // order, so the first one is the default; arrow keys and hover override it
+  // until the list changes.
+  const firstValue = visible.transactions[0]
+    ? `txn-${visible.transactions[0].id}`
+    : visible.accounts[0]
+      ? `acct-${visible.accounts[0].id}`
+      : (pages[0]?.label ?? "");
+  const listKey = [
+    needle,
+    visible.transactions.map((t) => t.id).join(),
+    visible.accounts.map((a) => a.id).join(),
+  ].join("|");
+  const [pick, setPick] = useState<{ key: string; value: string } | null>(null);
+  const selected = pick && pick.key === listKey ? pick.value : firstValue;
 
   return (
     <CommandDialog
@@ -136,7 +157,11 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
         field the label does not show. Pages are filtered explicitly below
         instead, so the behaviour is the same for every group.
       */}
-      <Command shouldFilter={false}>
+      <Command
+        shouldFilter={false}
+        value={selected}
+        onValueChange={(value) => setPick({ key: listKey, value })}
+      >
         <CommandInput
           placeholder="Search transactions and accounts, or jump to a page…"
           value={query}

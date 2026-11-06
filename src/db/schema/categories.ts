@@ -33,7 +33,16 @@ export const categories = pgTable(
     includeTransferInSpending: boolean("include_transfer_in_spending")
       .default(false)
       .notNull(),
+    // Rows in this category are left out of every spending figure and budget
+    // (e.g. a spouse's business expenses). The category stays visible on the
+    // Transactions page and in its own totals.
+    excludeFromSpending: boolean("exclude_from_spending").default(false).notNull(),
     isSystem: boolean("is_system").default(false),
+    // Stable identity for seeded categories (their original name). Plaid PFC
+    // mapping resolves through this, so a system category can be renamed
+    // without breaking auto-categorization. After a merge it holds several
+    // original names joined by "|".
+    systemKey: text("system_key"),
     sortOrder: integer("sort_order").default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },

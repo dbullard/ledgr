@@ -83,6 +83,37 @@ describe("categorizeSyncedTransactions — PFC tier integration", () => {
     expect(txn?.categorySource).toBe("pfc");
   });
 
+  it("keeps mapping PFC codes to a seeded category after it is renamed", async () => {
+    await db
+      .update(categories)
+      .set({ name: "Food Shopping" })
+      .where(and(eq(categories.householdId, "hh-1"), eq(categories.name, "Groceries")));
+    await db.insert(transactions).values({
+      id: "txn-renamed",
+      accountId: "acc-1",
+      householdId: "hh-1",
+      date: "2026-01-15",
+      originalName: "WHOLE FOODS MKT",
+      name: "Whole Foods",
+      amount: 5000,
+      normalizedAmount: -5000,
+      pfcPrimary: "FOOD_AND_DRINK",
+      pfcDetailed: "FOOD_AND_DRINK_GROCERIES",
+    });
+
+    await categorizeSyncedTransactions("item-1", "hh-1", db);
+
+    const [txn] = await db
+      .select({ categoryId: transactions.categoryId })
+      .from(transactions)
+      .where(eq(transactions.id, "txn-renamed"));
+    const [renamed] = await db
+      .select({ id: categories.id })
+      .from(categories)
+      .where(and(eq(categories.householdId, "hh-1"), eq(categories.name, "Food Shopping")));
+    expect(txn?.categoryId).toBe(renamed?.id);
+  });
+
   it("transactions with null pfcDetailed pass through without error", async () => {
     await db.insert(transactions).values({
       id: "txn-null",

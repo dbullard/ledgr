@@ -27,6 +27,10 @@ export interface InstitutionGroup {
   provider: BankProvider | null;
   status: ConnectionStatus | null;
   lastSyncedAt: Date | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  /** When the bank last actually refreshed (provider-reported), vs lastSyncedAt = last poll. */
+  lastDataAt: Date | null;
   logoBase64: string | null;
   primaryColor: string | null;
   accounts: AccountRow[];
@@ -67,6 +71,9 @@ export async function getAccountsByInstitution(
           provider: (item?.provider as InstitutionGroup["provider"]) ?? null,
           status: (item?.status as InstitutionGroup["status"]) ?? null,
           lastSyncedAt: item?.updatedAt ?? null,
+          errorCode: item?.errorCode ?? null,
+          errorMessage: item?.errorMessage ?? null,
+          lastDataAt: item?.lastDataAt ?? null,
           logoBase64: logoMap.get(account.bankConnectionId!) ?? null,
           primaryColor: item?.primaryColor ?? null,
           accounts: [],
@@ -82,6 +89,9 @@ export async function getAccountsByInstitution(
           provider: null,
           status: null,
           lastSyncedAt: null,
+          errorCode: null,
+          errorMessage: null,
+          lastDataAt: null,
           logoBase64: null,
           primaryColor: null,
           accounts: [],

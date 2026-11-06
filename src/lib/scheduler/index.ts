@@ -4,6 +4,7 @@ import { runTask } from "./runner";
 import { runNightlySnapshot } from "./tasks/nightly-snapshot";
 import { runDailySafetySync } from "./tasks/daily-safety-sync";
 import { runDailySimplefinSync } from "./tasks/daily-simplefin-sync";
+import { scanReceiptInbox } from "@/lib/receipts/inbox";
 import { checkBalanceHistoryGap } from "./tasks/startup-backfill-check";
 
 let started = false;
@@ -47,6 +48,15 @@ export function startScheduler(): void {
   jobs.push(
     cron.schedule(config.simplefinSyncCron, () =>
       runTask("daily-simplefin-sync", runDailySimplefinSync),
+    ),
+  );
+
+  jobs.push(
+    cron.schedule(config.receiptInboxCron, () =>
+      runTask("receipt-inbox", async () => {
+        const r = await scanReceiptInbox();
+        if (r.stored + r.duplicates + r.skipped > 0) console.log("[receipts] inbox scan", r);
+      }),
     ),
   );
 

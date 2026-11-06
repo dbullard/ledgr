@@ -634,7 +634,9 @@ export const SIMPLEFIN_TEST_ACCOUNTS_RESPONSE = {
       currency: "USD",
       balance: "1250.75",
       "available-balance": "1200.00",
-      "balance-date": 1735689600,
+      // Relative to now: a fixed date ages past the stale-data threshold and
+      // flips the connection to NO_RECENT_DATA.
+      "balance-date": Math.floor(Date.now() / 1000),
       transactions: [
         {
           id: "sf-txn-1",

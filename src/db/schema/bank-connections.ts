@@ -26,6 +26,13 @@ export const bankConnections = pgTable("bank_connections", {
     enum: ["active", "error", "reauth_required", "revoked", "pending_classification"],
   }).default("active"),
   errorCode: text("error_code"),
+  // Human-readable detail behind errorCode (e.g. the message SimpleFIN
+  // reported for the institution), shown in the UI tooltip.
+  errorMessage: text("error_message"),
+  // Newest balance-date the provider reported across this connection's
+  // accounts: when the bank last actually refreshed, as opposed to updatedAt,
+  // which moves on every poll.
+  lastDataAt: timestamp("last_data_at", { withTimezone: true }),
   primaryColor: text("primary_color"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),

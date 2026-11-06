@@ -166,9 +166,20 @@ export function useTransactionDetail(
     );
   }, [transactionId, txn, optimistic]);
 
+  // Re-reads the transaction and its splits after something outside the panel
+  // (receipt items) rewrote them.
+  const refreshDetail = useCallback(async () => {
+    const result = await fetchTransactionDetail(transactionId);
+    if ("error" in result) return;
+    const { splits: detailSplits, ...detail } = result.data;
+    setTxn(detail);
+    resetSplits(detailSplits);
+  }, [transactionId, resetSplits]);
+
   return {
     txn,
     splits,
+    refreshDetail,
     reviewPending,
     transferPending,
     hiddenPending,

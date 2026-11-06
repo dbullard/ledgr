@@ -75,7 +75,8 @@ describe("a spending drill-down explains the figure that opened it", () => {
       db,
     );
 
-    expect(row?.total).toBe(8000);
+    // 8000 of charges less the 2000 refund.
+    expect(row?.total).toBe(6000);
     expect(drill.total).toBe(row?.total);
   });
 
@@ -90,7 +91,7 @@ describe("a spending drill-down explains the figure that opened it", () => {
       db,
     );
 
-    expect(drill.rows.map((r) => r.name).sort()).toEqual(["Grocery", "Restaurant"]);
+    expect(drill.rows.map((r) => r.name).sort()).toEqual(["Grocery", "Grocery refund", "Restaurant"]);
   });
 
   test("the total covers every match, not just the page that was fetched", async () => {

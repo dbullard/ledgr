@@ -5,6 +5,7 @@ export type SchedulerConfig = {
   snapshotCron: string;
   safetySyncCron: string;
   simplefinSyncCron: string;
+  receiptInboxCron: string;
 };
 
 const DEFAULTS = {
@@ -12,6 +13,7 @@ const DEFAULTS = {
   safetySyncCron: "30 4 * * *",
   // Staggered 15 minutes after the Plaid safety-sync default.
   simplefinSyncCron: "45 4 * * *",
+  receiptInboxCron: "*/10 * * * *",
 } as const;
 
 function readBool(value: string | undefined, fallback: boolean): boolean {
@@ -44,6 +46,10 @@ export function getSchedulerConfig(): SchedulerConfig {
     simplefinSyncCron: validateCron(
       "SCHEDULER_SIMPLEFIN_SYNC_CRON",
       process.env.SCHEDULER_SIMPLEFIN_SYNC_CRON ?? DEFAULTS.simplefinSyncCron,
+    ),
+    receiptInboxCron: validateCron(
+      "SCHEDULER_RECEIPT_INBOX_CRON",
+      process.env.SCHEDULER_RECEIPT_INBOX_CRON ?? DEFAULTS.receiptInboxCron,
     ),
   };
 }

@@ -1,6 +1,6 @@
 import { eq, and, sql, desc, gte, lte, isNull, inArray } from "drizzle-orm";
 import { db as defaultDb, type LedgrDb } from "@/db";
-import { investmentHoldings, holdingsHistory, investmentTransactions, accounts } from "@/db/schema";
+import { investmentHoldings, holdingsHistory, investmentTransactions, accounts, balanceHistory, transactions } from "@/db/schema";
 import { scopedQuery } from "@/lib/scoped-query";
 import { encodeCursor, decodeCursor, sumCol, countRows } from "@/lib/query-helpers";
 import { todayDateString, previousDateString } from "@/lib/date-utils";
@@ -31,6 +31,31 @@ export interface AccountReconciliationRow {
   cashValue: number;
   /** False when the connector returned a balance but itemized nothing. */
   hasHoldings: boolean;
+  /** True when the connector itself sent holdings (as opposed to a user-set single fund). */
+  hasSyncedHoldings: boolean;
+  /** Set when the user itemized the whole account as one fund. */
+  fundTicker: string | null;
+  fundName: string | null;
+}
+
+/** An investment account the user says is a single fund, and that the connector did not itemize. */
+interface FundAccount {
+  id: string;
+  name: string;
+  balance: number;
+  ticker: string;
+  fundName: string;
+}
+
+export interface BalanceGrowth {
+  /** First balance snapshot in the window. */
+  since: string;
+  startValue: number;
+  endValue: number;
+  /** Net money moved into the accounts in the window (contributions less withdrawals and fees). */
+  netContributions: number;
+  /** What the value rose by beyond those contributions -- an estimate, not a return. */
+  growth: number;
 }
 
 export interface PortfolioPoint {
@@ -128,6 +153,61 @@ async function resolveAccIds(householdId: string, db: LedgrDb, accIds?: string[]
   return accIds ?? getInvestmentAccountIds(householdId, db);
 }
 
+/** Accounts (among `ids`) that have holdings synced from their connector. */
+async function getSyncedHoldingAccountIds(db: LedgrDb, ids: string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const rows = await db
+    .selectDistinct({ accountId: investmentHoldings.accountId })
+    .from(investmentHoldings)
+    .where(inArray(investmentHoldings.accountId, ids));
+  return new Set(rows.map((r) => r.accountId));
+}
+
+/**
+ * Accounts the user itemized as one fund. Their position is the account
+ * balance, so it tracks the balance every sync with no price feed. A connector
+ * that does send holdings always wins, so a later real sync supersedes this.
+ */
+async function getFundAccounts(db: LedgrDb, ids: string[]): Promise<FundAccount[]> {
+  if (ids.length === 0) return [];
+  const rows = await db
+    .select({
+      id: accounts.id,
+      name: accounts.name,
+      balance: accounts.currentBalance,
+      ticker: accounts.fundTicker,
+      fundName: accounts.fundName,
+    })
+    .from(accounts)
+    .where(and(inArray(accounts.id, ids), sql`${accounts.fundTicker} IS NOT NULL`));
+  if (rows.length === 0) return [];
+  const synced = await getSyncedHoldingAccountIds(db, rows.map((r) => r.id));
+  return rows
+    .filter((r) => !synced.has(r.id) && r.balance !== null && r.ticker)
+    .map((r) => ({
+      id: r.id,
+      name: r.name,
+      balance: r.balance ?? 0,
+      ticker: r.ticker as string,
+      fundName: r.fundName?.trim() || (r.ticker as string),
+    }));
+}
+
+/** Sums per-account series by date, carrying each account's last value forward. */
+function mergeSeries(series: Map<string, number>[]): PortfolioPoint[] {
+  const dates = [...new Set(series.flatMap((s) => [...s.keys()]))].sort();
+  const last = series.map(() => null as number | null);
+  return dates.map((date) => {
+    let value = 0;
+    series.forEach((s, i) => {
+      const v = s.get(date);
+      if (v !== undefined) last[i] = v;
+      value += last[i] ?? 0;
+    });
+    return { date, value };
+  });
+}
+
 // ─── Queries ────────────────────────────────────────────────────────────────
 
 export async function getPortfolioSummary(
@@ -157,7 +237,8 @@ export async function getPortfolioSummary(
     .from(investmentHoldings)
     .where(inArray(investmentHoldings.accountId, ids));
 
-  let holdingsValue = 0;
+  const fundAccounts = await getFundAccounts(db, ids);
+  let holdingsValue = fundAccounts.reduce((sum, f) => sum + f.balance, 0);
   let totalCostBasis = 0;
   // Gain/loss must span the same set on both sides. Adding every holding to
   // the value side while skipping null-basis ones on the cost side reports a
@@ -218,6 +299,23 @@ export async function getPortfolioSummary(
     dayChange = (todayTotal?.total ?? 0) - (yesterdayTotal?.total ?? 0);
   }
 
+  // A single-fund account has no holdings history; its day change is the
+  // change in its balance snapshots.
+  if (fundAccounts.length > 0) {
+    const fundIds = fundAccounts.map((f) => f.id);
+    const balanceOn = async (date: string) => {
+      const rows = await db
+        .select({ accountId: balanceHistory.accountId, balance: balanceHistory.balance })
+        .from(balanceHistory)
+        .where(and(inArray(balanceHistory.accountId, fundIds), eq(balanceHistory.date, date)));
+      return rows.length === fundIds.length ? rows.reduce((s, r) => s + r.balance, 0) : null;
+    };
+    const [fundToday, fundYesterday] = await Promise.all([balanceOn(todayStr), balanceOn(yesterdayStr)]);
+    if (fundToday !== null && fundYesterday !== null) {
+      dayChange = (dayChange ?? 0) + (fundToday - fundYesterday);
+    }
+  }
+
   return {
     totalValue,
     holdingsValue,
@@ -262,19 +360,31 @@ export async function getAccountReconciliation(
     .groupBy(investmentHoldings.accountId);
 
   const byAccount = new Map(holdingRows.map((r) => [r.accountId, r]));
+  const fundRows = await db
+    .select({ id: accounts.id, ticker: accounts.fundTicker, fundName: accounts.fundName })
+    .from(accounts)
+    .where(inArray(accounts.id, ids));
+  const fundById = new Map(fundRows.map((r) => [r.id, r]));
+  const activeFunds = new Map((await getFundAccounts(db, ids)).map((f) => [f.id, f]));
 
   return accountRows
     .map((a) => {
       const h = byAccount.get(a.id);
-      const holdingsValue = h?.value ?? 0;
+      const fund = activeFunds.get(a.id);
+      // A user-set single fund is worth the balance by definition.
+      const holdingsValue = fund ? fund.balance : (h?.value ?? 0);
       const balance = a.currentBalance ?? holdingsValue;
+      const setFund = fundById.get(a.id);
       return {
         accountId: a.id,
         accountName: a.name,
         balance,
         holdingsValue,
         cashValue: Math.max(0, balance - holdingsValue),
-        hasHoldings: (h?.count ?? 0) > 0,
+        hasHoldings: (h?.count ?? 0) > 0 || !!fund,
+        hasSyncedHoldings: (h?.count ?? 0) > 0,
+        fundTicker: setFund?.ticker ?? null,
+        fundName: setFund?.fundName ?? null,
       };
     })
     .sort((x, y) => y.balance - x.balance);
@@ -289,8 +399,9 @@ export async function getPortfolioHistory(
   const ids = await resolveAccIds(householdId, db, accIds);
   if (ids.length === 0) return [];
 
-  return db
+  const holdingsSeries = await db
     .select({
+      accountId: holdingsHistory.accountId,
       date: holdingsHistory.date,
       value: sumCol(holdingsHistory.value),
     })
@@ -300,8 +411,146 @@ export async function getPortfolioHistory(
       gte(holdingsHistory.date, dateRange.dateFrom),
       lte(holdingsHistory.date, dateRange.dateTo),
     ))
-    .groupBy(holdingsHistory.date)
-    .orderBy(holdingsHistory.date);
+    .groupBy(holdingsHistory.accountId, holdingsHistory.date);
+
+  // Accounts with no holdings history (a balance-only connector) are charted
+  // from their daily balance snapshots instead, so they are not missing from
+  // the portfolio line altogether.
+  const withHoldings = new Set(holdingsSeries.map((r) => r.accountId));
+  const balanceOnlyIds = ids.filter((id) => !withHoldings.has(id));
+  const balanceSeries = balanceOnlyIds.length === 0
+    ? []
+    : await db
+        .select({
+          accountId: balanceHistory.accountId,
+          date: balanceHistory.date,
+          value: balanceHistory.balance,
+        })
+        .from(balanceHistory)
+        .where(and(
+          inArray(balanceHistory.accountId, balanceOnlyIds),
+          gte(balanceHistory.date, dateRange.dateFrom),
+          lte(balanceHistory.date, dateRange.dateTo),
+        ));
+
+  const byAccount = new Map<string, Map<string, number>>();
+  for (const r of [...holdingsSeries, ...balanceSeries]) {
+    const series = byAccount.get(r.accountId) ?? new Map<string, number>();
+    series.set(r.date, r.value);
+    byAccount.set(r.accountId, series);
+  }
+
+  // Holdings-only households keep the plain per-date sum. Carrying values
+  // forward is only needed once accounts with different snapshot dates are
+  // combined into one line.
+  if (balanceSeries.length === 0) {
+    const sums = new Map<string, number>();
+    for (const r of holdingsSeries) sums.set(r.date, (sums.get(r.date) ?? 0) + r.value);
+    return [...sums.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, value]) => ({ date, value }));
+  }
+  return mergeSeries([...byAccount.values()]);
+}
+
+/**
+ * How much the balance-only accounts grew beyond what was put in. Only an
+ * estimate: it is the change in balance over the window, less net money moved
+ * into the accounts in that time (the contribution rows Ledgr has recorded).
+ * The window never starts before the first recorded transaction. Null until
+ * there are at least two balance snapshots to compare.
+ *
+ * Reads `transactions`, which has row-level security: call it inside
+ * `withHousehold`, or it sees no contributions at all.
+ */
+export async function getBalanceGrowth(
+  householdId: string,
+  dateRange: { dateFrom: string; dateTo: string },
+  db: LedgrDb = defaultDb,
+  accIds?: string[],
+): Promise<BalanceGrowth | null> {
+  const ids = await resolveAccIds(householdId, db, accIds);
+  if (ids.length === 0) return null;
+
+  const synced = await getSyncedHoldingAccountIds(db, ids);
+  const balanceOnlyIds = ids.filter((id) => !synced.has(id));
+  if (balanceOnlyIds.length === 0) return null;
+
+  const rows = await db
+    .select({ accountId: balanceHistory.accountId, date: balanceHistory.date, balance: balanceHistory.balance })
+    .from(balanceHistory)
+    .where(and(
+      inArray(balanceHistory.accountId, balanceOnlyIds),
+      gte(balanceHistory.date, dateRange.dateFrom),
+      lte(balanceHistory.date, dateRange.dateTo),
+    ))
+    .orderBy(balanceHistory.date);
+
+  const perAccount = new Map<string, { date: string; balance: number }[]>();
+  for (const r of rows) {
+    const list = perAccount.get(r.accountId) ?? [];
+    list.push({ date: r.date, balance: r.balance });
+    perAccount.set(r.accountId, list);
+  }
+
+  let since: string | null = null;
+  let startValue = 0;
+  let endValue = 0;
+  let netContributions = 0;
+  let usable = 0;
+  const scoped = scopedQuery(householdId, db);
+  for (const [accountId, points] of perAccount) {
+    if (points.length < 2) continue;
+    const last = points[points.length - 1];
+
+    // Growth is only meaningful where the money moved in is known. Balance
+    // history can reach back further than Ledgr's transactions do (a backfill,
+    // or a connector that only sent recent rows), and every contribution from
+    // before the first recorded transaction would be miscounted as growth. So
+    // the window starts at the last snapshot before the first recorded
+    // transaction, when one exists.
+    const [firstTx] = await db
+      .select({ date: sql<string | null>`MIN(${transactions.date})` })
+      .from(transactions)
+      .where(scoped.where(transactions, eq(transactions.accountId, accountId), isNull(transactions.deletedAt)));
+    const earliestTx = firstTx?.date ?? null;
+
+    let start = points[0];
+    let flowsFrom = (d: string) => sql`${transactions.date} > ${d}`;
+    if (earliestTx && earliestTx > points[0].date) {
+      const before = points.filter((p) => p.date < earliestTx);
+      start = before[before.length - 1];
+      // The snapshot is from before the first transaction, so that day's own
+      // transactions are not in it.
+      flowsFrom = () => sql`${transactions.date} >= ${earliestTx}`;
+    }
+    if (start.date >= last.date) continue;
+    usable++;
+    startValue += start.balance;
+    endValue += last.balance;
+    if (since === null || start.date < since) since = start.date;
+
+    const [flows] = await db
+      .select({ total: sumCol(transactions.normalizedAmount) })
+      .from(transactions)
+      .where(scoped.where(
+        transactions,
+        eq(transactions.accountId, accountId),
+        isNull(transactions.deletedAt),
+        flowsFrom(start.date),
+        lte(transactions.date, last.date),
+      ));
+    netContributions += flows?.total ?? 0;
+  }
+
+  if (usable === 0 || since === null) return null;
+  return {
+    since,
+    startValue,
+    endValue,
+    netContributions,
+    growth: endValue - startValue - netContributions,
+  };
 }
 
 export async function getAssetAllocation(
@@ -321,12 +570,19 @@ export async function getAssetAllocation(
     .where(inArray(investmentHoldings.accountId, ids))
     .groupBy(investmentHoldings.type);
 
-  const total = rows.reduce((sum, r) => sum + (r.value ?? 0), 0);
+  const byType = new Map<string, number>();
+  for (const r of rows) byType.set(r.type ?? "other", (byType.get(r.type ?? "other") ?? 0) + (r.value ?? 0));
+  // A single-fund account is a mutual fund, worth its balance.
+  for (const f of await getFundAccounts(db, ids)) {
+    byType.set("mutual_fund", (byType.get("mutual_fund") ?? 0) + f.balance);
+  }
 
-  return rows.map((r) => ({
-    type: r.type ?? "other",
-    value: r.value ?? 0,
-    percentage: total > 0 ? ((r.value ?? 0) / total) * 100 : 0,
+  const total = [...byType.values()].reduce((sum, v) => sum + v, 0);
+
+  return [...byType.entries()].map(([type, value]) => ({
+    type,
+    value,
+    percentage: total > 0 ? (value / total) * 100 : 0,
   }));
 }
 
@@ -340,6 +596,9 @@ export async function getHoldings(
   const allAccIds = await resolveAccIds(householdId, db, accIds);
   const filteredAccIds = accountId ? allAccIds.filter((id) => id === accountId) : allAccIds;
   if (filteredAccIds.length === 0) return [];
+
+  // Single-fund accounts add one position each, worth the account balance.
+  const fundAccounts = await getFundAccounts(db, filteredAccIds);
 
   if (view === "consolidated") {
     const rows = await db
@@ -357,7 +616,7 @@ export async function getHoldings(
       .groupBy(investmentHoldings.ticker, investmentHoldings.securityName)
       .orderBy(sql`SUM(${investmentHoldings.currentValue}) DESC`);
 
-    return rows.map((r) => ({
+    const result: InvestmentHoldingRow[] = rows.map((r) => ({
       ticker: r.ticker,
       securityName: r.securityName,
       type: r.type,
@@ -367,6 +626,25 @@ export async function getHoldings(
       costBasis: r.costBasis,
       ...computeGainLoss(r.currentValue, r.costBasis),
     }));
+    for (const f of fundAccounts) {
+      const existing = result.find((h) => h.ticker === f.ticker && h.securityName === f.fundName);
+      if (existing) {
+        existing.currentValue += f.balance;
+      } else {
+        result.push({
+          ticker: f.ticker,
+          securityName: f.fundName,
+          type: "mutual_fund",
+          sector: null,
+          quantity: 0,
+          currentValue: f.balance,
+          costBasis: null,
+          gainLoss: null,
+          gainLossPercent: null,
+        });
+      }
+    }
+    return result.sort((a, b) => b.currentValue - a.currentValue);
   }
 
   const rows = await db
@@ -386,7 +664,7 @@ export async function getHoldings(
     .where(inArray(investmentHoldings.accountId, filteredAccIds))
     .orderBy(sql`${investmentHoldings.currentValue} DESC`);
 
-  return rows.map((r) => ({
+  const result: InvestmentHoldingRow[] = rows.map((r) => ({
     ticker: r.ticker,
     securityName: r.securityName,
     type: r.type,
@@ -398,6 +676,22 @@ export async function getHoldings(
     accountName: r.accountName,
     accountId: r.accountId,
   }));
+  for (const f of fundAccounts) {
+    result.push({
+      ticker: f.ticker,
+      securityName: f.fundName,
+      type: "mutual_fund",
+      sector: null,
+      quantity: 0,
+      currentValue: f.balance,
+      costBasis: null,
+      gainLoss: null,
+      gainLossPercent: null,
+      accountName: f.name,
+      accountId: f.id,
+    });
+  }
+  return result.sort((a, b) => b.currentValue - a.currentValue);
 }
 
 export async function getInvestmentTransactions(

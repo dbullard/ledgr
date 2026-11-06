@@ -1,10 +1,10 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { v4 as uuid } from "uuid";
 import { db as defaultDb, type LedgrDb } from "@/db";
-import { transactions, transactionSplits } from "@/db/schema";
+import { transactions, transactionSplits, categories } from "@/db/schema";
 import { scopedQuery } from "@/lib/scoped-query";
 import { notDeleted, countRows } from "@/lib/query-helpers";
 import { authorizeAction } from "@/lib/auth/authorize-action";
@@ -260,10 +260,26 @@ export async function upsertSplit(
   const maxAmount = Math.abs(txn.normalizedAmount);
 
   return db.transaction(async (tx) => {
+    // The category must belong to this household; a foreign id would file the
+    // split under another tenant's category.
+    const [category] = await tx
+      .select({ id: categories.id })
+      .from(categories)
+      .where(scopedQuery(householdId, tx).where(categories, eq(categories.id, fields.categoryId)))
+      .limit(1);
+    if (!category) return { error: "Category not found" };
+
     const existingSplits = await tx
       .select({ id: transactionSplits.id, amount: transactionSplits.amount })
       .from(transactionSplits)
       .where(eq(transactionSplits.transactionId, txn.id));
+
+    // An edit may only touch a split that belongs to this transaction. The
+    // update below is keyed on the split id alone, so without this a caller
+    // could rewrite any household's split by id.
+    if (splitId && !existingSplits.some((s) => s.id === splitId)) {
+      return { error: "Split not found" };
+    }
 
     const otherSplitsTotal = existingSplits
       .filter((s) => s.id !== splitId)
@@ -282,7 +298,7 @@ export async function upsertSplit(
           amount: fields.amount,
           notes: fields.notes,
         })
-        .where(eq(transactionSplits.id, splitId));
+        .where(and(eq(transactionSplits.id, splitId), eq(transactionSplits.transactionId, txn.id)));
       savedId = splitId;
     } else {
       savedId = uuid();

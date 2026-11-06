@@ -119,14 +119,19 @@ describe("getRecurringSummary", () => {
 });
 
 describe("getRecurrings", () => {
+  // The app buckets by the local calendar date, so the fixtures must too.
+  function formatLocalDate(d: Date): string {
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
   function shift(days: number): string {
     const d = new Date();
-    d.setUTCDate(d.getUTCDate() + days);
-    return d.toISOString().slice(0, 10);
+    d.setDate(d.getDate() + days);
+    return formatLocalDate(d);
   }
   function nextMonthStart(): string {
     const d = new Date();
-    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1)).toISOString().slice(0, 10);
+    return formatLocalDate(new Date(d.getFullYear(), d.getMonth() + 1, 1));
   }
 
   it("groups by lifecycle and date, expenses only", async () => {

@@ -192,6 +192,49 @@ describe("parseToCents", () => {
   it("parses a leading plus sign", () => {
     expect(parseToCents("+123.45")).toBe(12345);
   });
+  it("reads a single comma before exactly three digits as US grouping", () => {
+    expect(parseToCents("1,234")).toBe(123400);
+    expect(parseToCents("1,000")).toBe(100000);
+    expect(parseToCents("$12,500")).toBe(1250000);
+  });
+  it("reads repeated separators as grouping", () => {
+    expect(parseToCents("1,234,567")).toBe(123456700);
+    expect(parseToCents("1.234.567")).toBe(123456700);
+  });
+  it("still reads a short single comma as a decimal", () => {
+    expect(parseToCents("12,5")).toBe(1250);
+  });
+  it("rounds half a cent up on the decimal value", () => {
+    expect(parseToCents("1.005")).toBe(101);
+  });
+  it("never returns -0", () => {
+    expect(Object.is(parseToCents("-0"), 0)).toBe(true);
+    expect(Object.is(parseToCents("(0.00)"), 0)).toBe(true);
+  });
+});
+
+describe("decimal-to-cents rounding", () => {
+  it("does not lose a cent to binary floating point", () => {
+    expect(plaidAmountToCents(1.005)).toBe(101);
+    expect(simplefinAmountToCents("1.005")).toBe(101);
+    expect(displayToCents(1.005)).toBe(101);
+    expect(plaidAmountToCents(-1.005)).toBe(-101);
+  });
+  it("keeps ordinary amounts exact and avoids -0", () => {
+    expect(plaidAmountToCents(33.33)).toBe(3333);
+    expect(Object.is(plaidAmountToCents(-0.001), 0)).toBe(true);
+  });
+});
+
+describe("whole and compact display edges", () => {
+  it("does not print a negative zero", () => {
+    expect(centsToWholeDisplay(-30)).toBe("$0");
+    expect(centsToCompact(-30)).toBe("$0");
+  });
+  it("promotes to the next unit at the rounding edge", () => {
+    expect(centsToCompact(99995000)).toBe("$1M");
+    expect(centsToCompact(99950)).toBe("$1K");
+  });
 });
 
 describe("money property-based tests", () => {

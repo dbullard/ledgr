@@ -1,4 +1,4 @@
-import { and, eq, lt, gte, lte, inArray, notInArray, isNull, sql } from "drizzle-orm";
+import { and, eq, lt, gte, lte, inArray, notInArray, isNull, isNotNull, or, sql } from "drizzle-orm";
 import { db as defaultDb, type LedgrDb } from "@/db";
 import {
   transactions,
@@ -7,9 +7,9 @@ import {
   categoryGroups,
 } from "@/db/schema";
 import { scopedQuery } from "@/lib/scoped-query";
-import { notDeleted, sumAbs, sumCol, isVisibleTransaction } from "@/lib/query-helpers";
+import { notDeleted, sumCol, isVisibleTransaction } from "@/lib/query-helpers";
 import { UNCATEGORIZED, resolvedCategoryLabel } from "@/lib/labels";
-import { getIncomeCategoryIds, includedInSpending, notIncome } from "@/queries/shared-conditions";
+import { getExcludedCategoryIds, getIncomeCategoryIds, includedInSpending, notIncome } from "@/queries/shared-conditions";
 import type { ReportFilters } from "@/queries/reports";
 
 export interface SpendingChartItem {
@@ -25,14 +25,17 @@ export interface SpendingChartItem {
 /**
  * The one definition of spending. Every Reports tab that answers "how much did
  * I spend?" builds on this, and so does the drill-down that explains any of
- * those figures: a settled negative charge outside an income category. Transfer
- * rows count only when their category explicitly opts into spending reports.
+ * those figures: a settled charge outside an income category, net of refunds.
+ * A refund is a credit filed under a (non-income) category; it offsets spending
+ * in that category. An uncategorized credit is never a refund (it may be a
+ * deposit or a paycheck), so it stays out. Transfer rows count only when their
+ * category explicitly opts into spending reports.
  */
 export async function spendingBaseConditions(householdId: string, filters: ReportFilters, db: LedgrDb) {
   const conditions = [
     notDeleted(transactions),
     isVisibleTransaction(transactions),
-    lt(transactions.normalizedAmount, 0),
+    or(lt(transactions.normalizedAmount, 0), isNotNull(transactions.categoryId))!,
     eq(transactions.pending, false),
     await includedInSpending(householdId, db),
     gte(transactions.date, filters.dateFrom),
@@ -82,8 +85,12 @@ async function findSplitParentIds(
     .select({ transactionId: transactionSplits.transactionId })
     .from(transactionSplits)
     .innerJoin(transactions, eq(transactionSplits.transactionId, transactions.id))
-    .where(scoped.where(transactions, ...conditions))
-    .groupBy(transactionSplits.transactionId);
+    .where(scoped.where(transactions, ...conditions, lt(transactions.normalizedAmount, 0)))
+    .groupBy(transactionSplits.transactionId, transactions.normalizedAmount)
+    // Only a fully allocated charge is represented by its splits. A partial
+    // split would otherwise drop the unallocated remainder from every total, so
+    // until the splits add up the charge counts whole under its own category.
+    .having(sql`SUM(${transactionSplits.amount}) >= ABS(${transactions.normalizedAmount})`);
   return rows.map((r) => r.transactionId);
 }
 
@@ -113,7 +120,9 @@ export async function aggregateSpending(
   const nonSplitRows = await db
     .select({
       categoryId: transactions.categoryId,
-      total: sumAbs(transactions.normalizedAmount),
+      // Signed: charges are negative, refunds positive, so the negated sum is
+      // spending net of refunds.
+      total: sql<number>`COALESCE(-SUM(${transactions.normalizedAmount}), 0)`.mapWith(Number),
     })
     .from(transactions)
     .where(scoped.where(transactions, ...nonSplitConditions))
@@ -143,9 +152,20 @@ export async function aggregateSpending(
       )
       .groupBy(transactionSplits.categoryId);
 
+    const excluded = new Set(await getExcludedCategoryIds(householdId, db));
+    // A split filed under an income category is not spending, same as an
+    // unsplit charge there (see notIncome).
+    const incomeIds = await getIncomeCategoryIds(householdId, db);
     for (const row of splitRows) {
+      if (excluded.has(row.categoryId) || incomeIds.has(row.categoryId)) continue;
       spending.set(row.categoryId, (spending.get(row.categoryId) ?? 0) + row.total);
     }
+  }
+
+  // Refunds offset spending within their own category; a category whose refunds
+  // outweigh its charges is not spending, so it is dropped rather than negative.
+  for (const [key, value] of spending) {
+    if (value <= 0) spending.delete(key);
   }
 
   return spending;

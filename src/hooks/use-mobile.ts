@@ -17,3 +17,16 @@ export function useIsMobile() {
     () => false,
   )
 }
+
+/** True once the viewport is at least `px` wide. Same SSR approach as above. */
+export function useMinWidth(px: number) {
+  return React.useSyncExternalStore(
+    (onChange) => {
+      const mql = window.matchMedia(`(min-width: ${px}px)`)
+      mql.addEventListener("change", onChange)
+      return () => mql.removeEventListener("change", onChange)
+    },
+    () => window.innerWidth >= px,
+    () => true,
+  )
+}

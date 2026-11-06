@@ -126,6 +126,7 @@ export async function seedDefaultCategories(
         icon: cat.icon,
         isIncome: cat.isIncome,
         isSystem: true,
+        systemKey: cat.name,
         sortOrder: ci,
       });
     }

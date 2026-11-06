@@ -312,17 +312,17 @@ describe("getCashFlowSankey", () => {
     expect(savingsLink?.value).toBe(Math.round(392000 * share));
   });
 
-  test("positive-amount non-income txns (refunds) are not counted as expenses", async () => {
-    // A positive normalizedAmount on an expense category is a refund/credit and
-    // must not inflate (or create) an expense node.
+  test("positive-amount non-income txns (refunds) offset the category's expense", async () => {
+    // A positive normalizedAmount on an expense category is a refund: it
+    // reduces that category's expense node, never inflates it.
     await insertTransaction(db, householdId, accountId, { date: "2026-03-06", normalizedAmount: 2000, amount: -2000, categoryId: foodCatId, name: "Food refund" });
 
     const { getCashFlowSankey } = await import("../../src/queries/reports");
     const { links } = await getCashFlowSankey(householdId, { dateFrom: "2026-03-01", dateTo: "2026-03-31" }, db);
 
-    // Food expense stays 8000 (the +2000 refund is ignored).
+    // Food expense is 8000 of charges less the +2000 refund.
     const foodLink = links.find((l) => l.target === `expense-${foodCatId}`);
-    expect(foodLink?.value).toBe(8000);
+    expect(foodLink?.value).toBe(6000);
   });
 
   test("income category sums by signed amount, matching the Total Income tile", async () => {

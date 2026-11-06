@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { RefreshCw } from "lucide-react";
+import { Loader2, RefreshCw } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -14,6 +14,8 @@ import { AccountCard } from "@/components/molecules/account-card";
 import { InstitutionHeader } from "@/components/molecules/institution-header";
 import { PlaidLinkFlow } from "./plaid-link-flow";
 import { SimplefinReconnectFlow } from "./simplefin-reconnect-flow";
+import { ConnectionAlertsBanner, SimplefinBridgeLink } from "./connection-alerts-banner";
+import { getConnectionAlerts, type ConnectionAlert } from "@/lib/connection-alerts";
 import { EditAccountDialog } from "./edit-account-dialog";
 import { triggerSync } from "@/actions/sync";
 import { disconnectPlaidItem } from "@/actions/plaid";
@@ -40,9 +42,12 @@ export function AccountList({ groups }: AccountListProps) {
   const [reAuthError, setReAuthError] = useState<string | null>(null);
   const router = useRouter();
 
-  const connectionIds = groups
-    .map((g) => g.connectionId)
-    .filter((id): id is string => id !== null);
+  const connectionIds = useMemo(
+    () => groups.map((g) => g.connectionId).filter((id): id is string => id !== null),
+    [groups],
+  );
+
+  const alerts = useMemo(() => getConnectionAlerts(groups, syncStates), [groups, syncStates]);
 
   // Flattened once, carrying the institution down so a type-grouped row can
   // still say which bank an account sits at.
@@ -73,42 +78,62 @@ export function AccountList({ groups }: AccountListProps) {
     if (next === "type" || next === "institution") setGroupBy(next);
   }, []);
 
-  const handleSync = useCallback(async (connectionId: string) => {
+  const setSyncState = useCallback((connectionId: string, state: SyncState | null) => {
     setSyncStates((prev) => {
       const next = new Map(prev);
-      next.set(connectionId, { status: "syncing" });
+      if (state) next.set(connectionId, state);
+      else next.delete(connectionId);
       return next;
     });
+  }, []);
 
-    const result = await triggerSync(connectionId);
-
-    const newStatus: SyncStatus = result.success ? "success" : "error";
-
-    setSyncStates((prev) => {
-      const next = new Map(prev);
-      next.set(connectionId, {
-        status: newStatus,
-        error: result.success ? undefined : result.error,
-      });
-      return next;
-    });
-
-    router.refresh();
-
-    if (newStatus === "success") {
-      setTimeout(() => {
-        setSyncStates((prev) => {
-          const next = new Map(prev);
-          next.delete(connectionId);
-          return next;
-        });
-      }, 3000);
+  // Runs one sync and records its outcome. It never refreshes the page: the
+  // caller does that once everything it started has settled, so a batch can't
+  // refresh against half-finished syncs and leave stale figures on screen.
+  const runSync = useCallback(async (connectionId: string): Promise<SyncStatus> => {
+    setSyncState(connectionId, { status: "syncing" });
+    let state: SyncState;
+    try {
+      const result = await triggerSync(connectionId);
+      state = result.success
+        ? { status: "success" }
+        : { status: "error", error: result.error };
+    } catch (err) {
+      // A thrown action would otherwise leave the row stuck on "Syncing...".
+      state = { status: "error", error: err instanceof Error ? err.message : "Sync failed" };
     }
-  }, [router]);
+    setSyncState(connectionId, state);
+    return state.status;
+  }, [setSyncState]);
+
+  // Successes confirm themselves briefly; errors stay until the next sync.
+  const clearSuccessLater = useCallback((ids: string[]) => {
+    setTimeout(() => {
+      setSyncStates((prev) => {
+        const next = new Map(prev);
+        for (const id of ids) {
+          if (next.get(id)?.status === "success") next.delete(id);
+        }
+        return next;
+      });
+    }, 3000);
+  }, []);
+
+  const handleSync = useCallback(async (connectionId: string) => {
+    await runSync(connectionId);
+    router.refresh();
+    clearSuccessLater([connectionId]);
+  }, [runSync, router, clearSuccessLater]);
 
   const handleSyncAll = useCallback(async () => {
-    await Promise.allSettled(connectionIds.map((id) => handleSync(id)));
-  }, [connectionIds, handleSync]);
+    // Mark every row up front so the whole batch reads as in progress, then run
+    // them one at a time: server actions are queued per client anyway, and
+    // sequencing keeps each result attributed to its own connection.
+    for (const id of connectionIds) setSyncState(id, { status: "syncing" });
+    for (const id of connectionIds) await runSync(id);
+    router.refresh();
+    clearSuccessLater(connectionIds);
+  }, [connectionIds, runSync, setSyncState, router, clearSuccessLater]);
 
   const getSyncState = (connectionId: string | null): SyncState =>
     (connectionId ? syncStates.get(connectionId) : undefined) ?? { status: "idle" };
@@ -132,6 +157,37 @@ export function AccountList({ groups }: AccountListProps) {
     }
     router.refresh();
   }, [router]);
+
+  // The provider-specific way out of a connection problem. Plaid re-runs Link,
+  // a revoked SimpleFIN token needs a fresh Setup Token, and a SimpleFIN bank
+  // whose own login lapsed is fixed on the Bridge, not in Ledgr.
+  const renderFix = (c: Pick<ConnectionAlert, "connectionId" | "institutionName" | "provider" | "status">) => {
+    if (c.provider === "plaid" && c.status === "reauth_required") {
+      return (
+        <PlaidLinkFlow
+          mode="update"
+          variant="reconnect-inline"
+          plaidItemId={c.connectionId}
+          onReAuthSuccess={handleReAuthSuccess}
+          onError={(err) => handleReAuthError(c.connectionId, err)}
+        />
+      );
+    }
+    if (c.provider === "simplefin" && c.status === "revoked") {
+      return (
+        <SimplefinReconnectFlow
+          connectionId={c.connectionId}
+          institutionName={c.institutionName}
+          onReconnectSuccess={handleReAuthSuccess}
+          onError={(err) => handleReAuthError(c.connectionId, err)}
+        />
+      );
+    }
+    if (c.provider === "simplefin" && c.status === "reauth_required") {
+      return <SimplefinBridgeLink />;
+    }
+    return undefined;
+  };
 
   const isSyncing = connectionIds.some((id) => getSyncState(id).status === "syncing");
 
@@ -169,9 +225,13 @@ export function AccountList({ groups }: AccountListProps) {
             onClick={handleSyncAll}
             disabled={isSyncing || reAuthingConnectionId !== null}
           >
-            <RefreshCw className="size-3.5 mr-1" />
-            Sync all
-            {freshestSync && (
+            {isSyncing ? (
+              <Loader2 className="size-3.5 mr-1 animate-spin" />
+            ) : (
+              <RefreshCw className="size-3.5 mr-1" />
+            )}
+            {isSyncing ? "Syncing..." : "Sync all"}
+            {!isSyncing && freshestSync && (
               <span className="ml-1 font-normal text-muted-foreground">
                 · {formatRelativeTime(freshestSync)}
               </span>
@@ -179,6 +239,10 @@ export function AccountList({ groups }: AccountListProps) {
           </Button>
         )}
       </div>
+
+      {groupBy === "type" && (
+        <ConnectionAlertsBanner alerts={alerts} renderAction={renderFix} />
+      )}
 
       {groupBy === "type" && (
         <div className="space-y-4">
@@ -218,6 +282,9 @@ export function AccountList({ groups }: AccountListProps) {
                 accountCount={group.accounts.length}
                 connectionId={group.connectionId}
                 lastSyncedAt={group.lastSyncedAt}
+                errorCode={group.errorCode}
+                errorMessage={group.errorMessage}
+                lastDataAt={group.lastDataAt}
                 syncStatus={state.status}
                 syncError={state.error}
                 onSync={() => group.connectionId && handleSync(group.connectionId)}
@@ -227,22 +294,14 @@ export function AccountList({ groups }: AccountListProps) {
                     : undefined
                 }
                 reconnectButton={
-                  group.provider === "plaid" && group.status === "reauth_required" && group.connectionId ? (
-                    <PlaidLinkFlow
-                      mode="update"
-                      variant="reconnect-inline"
-                      plaidItemId={group.connectionId}
-                      onReAuthSuccess={handleReAuthSuccess}
-                      onError={(err) => handleReAuthError(group.connectionId!, err)}
-                    />
-                  ) : group.provider === "simplefin" && group.status === "revoked" && group.connectionId ? (
-                    <SimplefinReconnectFlow
-                      connectionId={group.connectionId}
-                      institutionName={group.institutionName}
-                      onReconnectSuccess={handleReAuthSuccess}
-                      onError={(err) => handleReAuthError(group.connectionId!, err)}
-                    />
-                  ) : undefined
+                  group.connectionId
+                    ? renderFix({
+                        connectionId: group.connectionId,
+                        institutionName: group.institutionName,
+                        provider: group.provider,
+                        status: group.status,
+                      })
+                    : undefined
                 }
                 reAuthError={group.connectionId === reAuthingConnectionId ? reAuthError : null}
               />

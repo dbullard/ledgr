@@ -113,10 +113,17 @@ async function doCategorizeSyncedTransactions(
     .where(scoped.where(categoryRules)) as CategoryRule[];
 
   const allCategories = await db
-    .select({ id: categories.id, name: categories.name })
+    .select({ id: categories.id, name: categories.name, systemKey: categories.systemKey })
     .from(categories)
     .where(eq(categories.householdId, householdId));
-  const catNameToId = new Map(allCategories.map((c) => [c.name, c.id]));
+  // Seeded categories resolve by their stable systemKey so renaming one does
+  // not detach it from the PFC map; custom categories still match by name.
+  const catNameToId = new Map<string, string>();
+  for (const c of allCategories) if (!c.systemKey) catNameToId.set(c.name, c.id);
+  for (const c of allCategories) {
+    // A merged seeded category carries several original names, joined by "|".
+    for (const key of c.systemKey?.split("|") ?? []) catNameToId.set(key, c.id);
+  }
   const pfcCategoryMap = new Map<string, string>();
   for (const [pfcCode, catName] of Object.entries(PFC_DETAILED_TO_CATEGORY)) {
     const catId = catNameToId.get(catName);

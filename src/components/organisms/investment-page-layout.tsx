@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TrendingUp } from "lucide-react";
 import { PortfolioSummaryHeader } from "@/components/organisms/portfolio-summary-header";
 import { PortfolioReconciliation } from "@/components/organisms/portfolio-reconciliation";
+import { BalanceGrowthStrip } from "@/components/organisms/balance-growth-strip";
 import { HoldingsTable } from "@/components/organisms/holdings-table";
 import { InvestmentTransactionList } from "@/components/organisms/investment-transaction-list";
 import type { SpendingChartItem } from "@/components/atoms/spending-chart";
@@ -28,6 +29,7 @@ import type {
   PortfolioPoint,
   AllocationSlice,
   AccountReconciliationRow,
+  BalanceGrowth,
   InvestmentHoldingRow,
   InvTxnRow,
   InvestmentFilters as IFilters,
@@ -38,6 +40,7 @@ interface InvestmentPageLayoutProps {
   history: PortfolioPoint[];
   allocation: AllocationSlice[];
   reconciliation: AccountReconciliationRow[];
+  balanceGrowth: BalanceGrowth | null;
   holdings: InvestmentHoldingRow[] | null;
   transactions: { rows: InvTxnRow[]; nextCursor: string | null } | null;
   activeTab: string;
@@ -53,7 +56,7 @@ function formatAllocationTypeLabel(type: string): string {
   return type.charAt(0).toUpperCase() + type.slice(1).replace("_", " ");
 }
 
-export function InvestmentPageLayout({ summary, history, allocation, reconciliation, holdings, transactions, activeTab, view, filters, accounts }: InvestmentPageLayoutProps) {
+export function InvestmentPageLayout({ summary, history, allocation, reconciliation, balanceGrowth, holdings, transactions, activeTab, view, filters, accounts }: InvestmentPageLayoutProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -82,6 +85,7 @@ export function InvestmentPageLayout({ summary, history, allocation, reconciliat
   return (
     <div className="space-y-6">
       <PortfolioSummaryHeader summary={summary} />
+      {balanceGrowth && <BalanceGrowthStrip growth={balanceGrowth} />}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="border rounded-lg p-4 h-[280px]">
           <h3 className="text-sm font-medium mb-2">Portfolio Value</h3>

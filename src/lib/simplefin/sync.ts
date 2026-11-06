@@ -7,8 +7,8 @@ import { simplefinAmountToCents } from "@/lib/money";
 import { cleanTransactionName } from "@/lib/import/clean-name";
 import { todayDateString } from "@/lib/date-utils";
 import { simplefinRequest } from "./client";
-import { SimplefinAccountsResponseSchema, resolveInstitution, type SimplefinAccount, type SimplefinConnection, type SimplefinHolding } from "./schemas";
-import { classifyPollError } from "./utils";
+import { SimplefinAccountsResponseSchema, resolveInstitution, type SimplefinAccountsResponse, type SimplefinAccount, type SimplefinConnection, type SimplefinHolding } from "./schemas";
+import { classifyPollError, assessConnectionHealth } from "./utils";
 import { fetchFaviconDataUri } from "@/lib/favicon";
 import { categorizeSyncedTransactions } from "@/lib/categorization/engine";
 import { applyTransferDetection } from "@/lib/transfer-detection";
@@ -215,6 +215,7 @@ async function applyToDb(
   processed: ProcessedBatch,
   balances: AccountBalanceInfo[],
   holdings: HoldingRow[],
+  response: SimplefinAccountsResponse,
   connectionId: string,
   householdId: string,
 ): Promise<{ addedCount: number; modifiedCount: number }> {
@@ -370,6 +371,10 @@ async function applyToDb(
       ).onConflictDoNothing();
     }
 
+    // A 200 from SimpleFIN doesn't mean the bank link is healthy: record any
+    // reported error or stale data as a specific issue instead of "active".
+    const health = assessConnectionHealth(response, new Set(externalToInternal.keys()), now);
+
     await tx.insert(syncLog)
       .values({
         id: uuid(),
@@ -378,10 +383,17 @@ async function applyToDb(
         modifiedCount,
         removedCount: 0,
         syncedAt: now,
+        error: health.issue ? `${health.issue.errorCode}: ${health.issue.message}` : null,
       });
 
     await tx.update(bankConnections)
-      .set({ status: "active", errorCode: null, updatedAt: now })
+      .set({
+        status: health.issue?.status ?? "active",
+        errorCode: health.issue?.errorCode ?? null,
+        errorMessage: health.issue?.message ?? null,
+        lastDataAt: health.lastDataAt,
+        updatedAt: now,
+      })
       .where(eq(bankConnections.id, connectionId));
 
     return { addedCount, modifiedCount };
@@ -515,7 +527,7 @@ async function doSync(
     const processed = processBatch(parsed.accounts);
     const balances = balancesFromAccounts(parsed.accounts);
     const holdings = processHoldings(parsed.accounts);
-    const counts = await applyToDb(db, processed, balances, holdings, connectionId, householdId);
+    const counts = await applyToDb(db, processed, balances, holdings, parsed, connectionId, householdId);
 
     // Backfill (non-fatal): connections created before icon caching existed,
     // or whose initial favicon fetch failed, pick up an icon lazily here —
@@ -582,7 +594,7 @@ async function doSync(
 
     await withHousehold(householdId, async (tx) => {
       await tx.update(bankConnections)
-        .set({ status, errorCode, updatedAt: now })
+        .set({ status, errorCode, errorMessage: message, updatedAt: now })
         .where(eq(bankConnections.id, connectionId));
 
       await tx.insert(syncLog)

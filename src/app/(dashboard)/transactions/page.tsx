@@ -4,11 +4,16 @@ import {
   getTransactions,
   getTransactionSummary,
   getSuggestedTransfers,
+  getTransactionTrend,
+  type TrendGranularity,
 } from "@/queries/transactions";
 import { getCategories } from "@/queries/categories";
 import { getAccounts } from "@/queries/accounts";
 import { parseTransactionFilters } from "@/lib/parse-transaction-filters";
+import { trendBucketBounds, trendBucketLabel } from "@/lib/trend-bucket";
+import { BucketFilterChip } from "@/components/molecules/bucket-filter-chip";
 import { TransactionFilters as FilterBar } from "@/components/organisms/transaction-filters";
+import { TransactionTrendChart } from "@/components/organisms/transaction-trend-chart";
 import { FilterSummaryBar } from "@/components/molecules/filter-summary-bar";
 import { ReviewEntryButton } from "@/components/molecules/review-entry-button";
 import { TransactionList } from "@/components/organisms/transaction-list";
@@ -24,19 +29,29 @@ export default async function TransactionsPage({
   const householdId = await getHouseholdId();
   const params = await searchParams;
   const { filters } = parseTransactionFilters(params);
+  const by: TrendGranularity =
+    params.by === "week" || params.by === "year" || params.by === "5y" ? params.by : "month";
 
-  const hasAnyFilters = Object.entries(filters)
+  // A bar clicked on the trend chart narrows the list and summary to that
+  // bucket, but not the chart itself, which keeps showing every bucket so the
+  // clicked one stays highlighted among its neighbours.
+  const bucketKey = typeof params.bucket === "string" ? params.bucket : undefined;
+  const bucket = bucketKey ? trendBucketBounds(bucketKey, by) : null;
+  const listFilters = bucket ? { ...filters, dateFrom: bucket.from, dateTo: bucket.to } : filters;
+
+  const hasAnyFilters = Object.entries(listFilters)
     .filter(([k]) => k !== "reviewed" && k !== "hidden")
     .some(([, v]) => v !== undefined);
 
-  const [page, allCategories, allAccounts, summary, unreviewedSummary, suggestedTransfers] = await Promise.all([
-    withHousehold(householdId, (tx) => getTransactions(householdId, filters, undefined, undefined, tx)),
+  const [page, allCategories, allAccounts, summary, trend, unreviewedSummary, suggestedTransfers] = await Promise.all([
+    withHousehold(householdId, (tx) => getTransactions(householdId, listFilters, undefined, undefined, tx)),
     getCategories(householdId),
     getAccounts(householdId),
     // Always summarised, not only when a filter is applied. The unfiltered view
     // is the one people land on, and it was the only view of the ledger with no
     // arithmetic on it at all — per-day subtotals, and nothing for the whole.
-    withHousehold(householdId, (tx) => getTransactionSummary(householdId, filters, tx)),
+    withHousehold(householdId, (tx) => getTransactionSummary(householdId, listFilters, tx)),
+    withHousehold(householdId, (tx) => getTransactionTrend(householdId, filters, by, tx)),
     withHousehold(householdId, (tx) => getTransactionSummary(householdId, { needsReview: true }, tx)),
     withHousehold(householdId, (tx) => getSuggestedTransfers(householdId, tx)),
   ]);
@@ -70,18 +85,29 @@ export default async function TransactionsPage({
           totalExpense={summary.totalExpense}
           totalIncome={summary.totalIncome}
           net={summary.net}
+          firstDate={summary.firstDate}
+          lastDate={summary.lastDate}
+          largestExpense={summary.largestExpense}
+          pendingCount={summary.pendingCount}
+          pendingAmount={summary.pendingAmount}
+          transferCount={summary.transferCount}
+          transferAmount={summary.transferAmount}
         />
       )}
+
+      <TransactionTrendChart data={trend} granularity={by} selected={bucket ? bucketKey : undefined} />
+
+      {bucket && bucketKey && <BucketFilterChip label={trendBucketLabel(bucketKey, by, true)} />}
 
       {page.rows.length === 0 && suggestedTransfers.length === 0 ? (
         <TransactionEmptyState hasFilters={hasAnyFilters} />
       ) : (
         <TransactionList
-          key={JSON.stringify(filters)}
+          key={JSON.stringify(listFilters)}
           initialRows={page.rows}
           nextCursor={page.nextCursor}
           categories={allCategories}
-          filters={filters}
+          filters={listFilters}
           suggestedTransfers={suggestedTransfers}
         />
       )}

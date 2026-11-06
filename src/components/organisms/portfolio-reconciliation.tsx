@@ -8,6 +8,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { AccountFundControl } from "@/components/organisms/account-fund-control";
 import type { AccountReconciliationRow } from "@/queries/investments";
 
 interface PortfolioReconciliationProps {
@@ -22,8 +23,11 @@ interface PortfolioReconciliationProps {
  * explain it (#88). This table is where that difference becomes visible.
  */
 export function PortfolioReconciliation({ rows }: PortfolioReconciliationProps) {
-  // Nothing to reconcile when every account's holdings account for its balance.
-  if (rows.length === 0 || rows.every((r) => r.cashValue === 0)) return null;
+  // Nothing to show when every account's holdings account for its balance and
+  // no account is waiting to be itemized or already itemized as one fund.
+  const needsAttention = (r: AccountReconciliationRow) =>
+    r.cashValue > 0 || (!r.hasSyncedHoldings && r.balance > 0) || r.fundTicker !== null;
+  if (rows.length === 0 || !rows.some(needsAttention)) return null;
 
   const totals = rows.reduce(
     (acc, r) => ({
@@ -44,13 +48,14 @@ export function PortfolioReconciliation({ rows }: PortfolioReconciliationProps) 
       </div>
       {/* Wide content scrolls inside Table's own container so the page never
           scrolls sideways on a phone. */}
-      <Table className="min-w-[560px]">
+      <Table className="min-w-[640px]">
         <TableHeader>
           <TableRow className="text-xs uppercase tracking-wide text-muted-foreground hover:bg-transparent">
             <TableHead className="px-4 text-left font-medium">Account</TableHead>
             <TableHead className="px-4 text-right font-medium">Balance</TableHead>
             <TableHead className="px-4 text-right font-medium">Holdings</TableHead>
             <TableHead className="px-4 text-right font-medium">Cash / unallocated</TableHead>
+            <TableHead className="px-4 text-right font-medium"><span className="sr-only">Actions</span></TableHead>
           </TableRow>
         </TableHeader>
           <TableBody>
@@ -66,6 +71,11 @@ export function PortfolioReconciliation({ rows }: PortfolioReconciliationProps) 
                       not itemized
                     </span>
                   )}
+                  {!row.hasSyncedHoldings && row.fundTicker && (
+                    <span className="ml-2 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                      100% {row.fundTicker}
+                    </span>
+                  )}
                 </TableCell>
                 <TableCell className="px-4 text-right tabular-nums">{centsToDisplay(row.balance)}</TableCell>
                 <TableCell className="px-4 text-right tabular-nums">
@@ -76,6 +86,16 @@ export function PortfolioReconciliation({ rows }: PortfolioReconciliationProps) 
                     centsToDisplay(row.cashValue)
                   ) : (
                     <span className="text-muted-foreground">&mdash;</span>
+                  )}
+                </TableCell>
+                <TableCell className="px-4 text-right">
+                  {!row.hasSyncedHoldings && (
+                    <AccountFundControl
+                      accountId={row.accountId}
+                      accountName={row.accountName}
+                      fundTicker={row.fundTicker}
+                      fundName={row.fundName}
+                    />
                   )}
                 </TableCell>
               </TableRow>
@@ -93,6 +113,7 @@ export function PortfolioReconciliation({ rows }: PortfolioReconciliationProps) 
               <TableCell className="px-4 text-right tabular-nums">
                 {centsToDisplay(totals.cashValue)}
               </TableCell>
+              <TableCell />
             </TableRow>
           </TableFooter>
       </Table>

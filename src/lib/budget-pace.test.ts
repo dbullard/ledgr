@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { budgetPace } from "./budget-pace";
 
 describe("budgetPace", () => {
-  const asOf = new Date("2026-08-21T12:00:00Z");
+  const asOf = new Date(2026, 7, 21, 12);
 
   it("reports what is left, not just what was spent", () => {
     expect(budgetPace({ totalBudgeted: 930000, totalSpent: 539387, month: "2026-08", asOf })).toEqual({
@@ -89,7 +89,7 @@ describe("budgetPace", () => {
         totalBudgeted: 1,
         totalSpent: 0,
         month: "2028-02",
-        asOf: new Date("2028-02-10T12:00:00Z"),
+        asOf: new Date(2028, 1, 10, 12),
       })!;
       expect(pace).toMatchObject({ daysElapsed: 10, daysInMonth: 29 });
     });
@@ -99,7 +99,7 @@ describe("budgetPace", () => {
         totalBudgeted: 1,
         totalSpent: 0,
         month: "2026-02",
-        asOf: new Date("2026-02-10T12:00:00Z"),
+        asOf: new Date(2026, 1, 10, 12),
       })!;
       expect(pace).toMatchObject({ daysElapsed: 10, daysInMonth: 28 });
     });
@@ -135,5 +135,12 @@ describe("budgetPace", () => {
       "remaining",
       "spent",
     ]);
+  });
+
+  it("counts the day on the local calendar, not UTC", () => {
+    // 11pm local on the last day of August: still August 31 here, whatever UTC says.
+    const lateEvening = new Date(2026, 7, 31, 23, 0);
+    const pace = budgetPace({ totalBudgeted: 1, totalSpent: 0, month: "2026-08", asOf: lateEvening })!;
+    expect(pace.daysElapsed).toBe(31);
   });
 });

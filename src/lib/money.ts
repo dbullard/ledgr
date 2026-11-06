@@ -1,5 +1,17 @@
 import { classifyAccountType } from "./account-utils";
 
+// Dollars -> whole cents, rounding half away from zero on the *decimal* value.
+// `Math.round(x * 100)` is wrong for values like 1.005, whose binary product is
+// 100.49999999999999 and so loses a cent. Shifting the decimal point in the
+// string form (the "e2" exponent) rounds what the user or provider wrote.
+function dollarsToCents(dollars: number): number {
+  const abs = Math.abs(dollars);
+  const text = String(abs);
+  const cents = text.includes("e") ? Math.round(abs * 100) : Math.round(Number(`${text}e2`));
+  // No -0: it breaks strict equality downstream.
+  return dollars < 0 && cents !== 0 ? -cents : cents;
+}
+
 export function centsToDisplay(cents: number, currency = "USD"): string {
   return currencyFormat(currency).format(cents / 100);
 }
@@ -30,7 +42,7 @@ export function centsToSignedDisplay(cents: number, currency = "USD"): string {
 }
 
 export function displayToCents(display: number): number {
-  return Math.round(display * 100);
+  return dollarsToCents(display);
 }
 
 // Whole-dollar display with thousands separators and no cents: "$4,874",
@@ -39,8 +51,10 @@ export function displayToCents(display: number): number {
 // abbreviated "$4.9K" of centsToCompact loses too much precision to compare
 // two nearby categories.
 export function centsToWholeDisplay(cents: number): string {
-  const sign = cents < 0 ? "-" : "";
-  return `${sign}$${Math.round(Math.abs(cents) / 100).toLocaleString("en-US")}`;
+  const dollars = Math.round(Math.abs(cents) / 100);
+  // Under 50 cents rounds to zero; "-$0" would read as a negative amount.
+  const sign = cents < 0 && dollars > 0 ? "-" : "";
+  return `${sign}$${dollars.toLocaleString("en-US")}`;
 }
 
 // Compact axis-label form: $128.3K, $1.2M, $840. Sign is preserved.
@@ -48,9 +62,12 @@ export function centsToCompact(cents: number): string {
   const dollars = cents / 100;
   const abs = Math.abs(dollars);
   const sign = dollars < 0 ? "-" : "";
-  if (abs >= 1_000_000) return `${sign}$${trimZero((abs / 1_000_000).toFixed(1))}M`;
-  if (abs >= 1_000) return `${sign}$${trimZero((abs / 1_000).toFixed(1))}K`;
-  return `${sign}$${Math.round(abs)}`;
+  // Thresholds sit at the rounding edge, not the unit: 999,950 rounds to one
+  // decimal as "1000.0K", which should read "$1M".
+  if (abs >= 999_950) return `${sign}$${trimZero((abs / 1_000_000).toFixed(1))}M`;
+  if (abs >= 999.5) return `${sign}$${trimZero((abs / 1_000).toFixed(1))}K`;
+  const whole = Math.round(abs);
+  return `${whole === 0 ? "" : sign}$${whole}`;
 }
 
 /**
@@ -88,7 +105,7 @@ export function normalizeAmount(amountCents: number): number {
 
 export function plaidAmountToCents(plaidAmount: number | null | undefined): number | null {
   if (plaidAmount === null || plaidAmount === undefined) return null;
-  return Math.round(plaidAmount * 100);
+  return dollarsToCents(plaidAmount);
 }
 
 // Account *balance* normalization — distinct from plaidAmountToCents, which is
@@ -117,7 +134,7 @@ export function simplefinAmountToCents(amountStr: string): number | null {
   if (amountStr.trim() === "") return null;
   const n = Number(amountStr);
   if (Number.isNaN(n)) return null;
-  return Math.round(n * 100);
+  return dollarsToCents(n);
 }
 
 export function centsToInputDisplay(cents: number): string {
@@ -144,16 +161,29 @@ export function parseToCents(input: string): number | null {
   if (s === "") return null;
   const lastComma = s.lastIndexOf(",");
   const lastDot = s.lastIndexOf(".");
-  // The rightmost of . or , is the decimal separator; the other is a grouping sep.
+  // With both present, the rightmost of . or , is the decimal separator and the
+  // other is grouping. A lone separator kind is ambiguous, so: repeated commas
+  // or dots are grouping, and a single comma followed by exactly three digits
+  // is US grouping ("1,234" is $1,234, not $1.23). Any other single comma is a
+  // decimal ("1234,56", "12,5").
+  const commas = (s.match(/,/g) ?? []).length;
+  const dots = (s.match(/\./g) ?? []).length;
   let normalized: string;
-  if (lastComma > lastDot) {
-    normalized = s.replace(/\./g, "").replace(",", ".");
-  } else if (lastDot > lastComma) {
-    normalized = s.replace(/,/g, "");
+  if (lastComma >= 0 && lastDot >= 0) {
+    normalized =
+      lastComma > lastDot
+        ? s.replace(/\./g, "").replace(",", ".")
+        : s.replace(/,/g, "");
+  } else if (lastComma >= 0) {
+    const groupingOnly = commas > 1 || s.length - lastComma - 1 === 3;
+    normalized = groupingOnly ? s.replace(/,/g, "") : s.replace(",", ".");
+  } else if (dots > 1) {
+    normalized = s.replace(/\./g, ""); // "1.234.567" is grouping
   } else {
-    normalized = s.replace(/,/g, ""); // no decimal sep, only grouping
+    normalized = s;
   }
   const parsed = Number(normalized);
   if (Number.isNaN(parsed)) return null;
-  return sign * Math.round(parsed * 100);
+  const cents = dollarsToCents(parsed);
+  return cents === 0 ? 0 : sign * cents;
 }

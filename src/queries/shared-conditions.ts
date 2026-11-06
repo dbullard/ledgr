@@ -49,7 +49,32 @@ export const getTransferReportingCategoryIds = cache(
 );
 
 /**
+ * Categories the user keeps out of spending entirely (`excludeFromSpending`),
+ * e.g. a spouse's business expenses. Income categories can never be excluded:
+ * the action refuses, and this filter backstops a hand-edited row.
+ */
+export const getExcludedCategoryIds = cache(
+  async (householdId: string, db: LedgrDb): Promise<string[]> => {
+    const scoped = scopedQuery(householdId, db);
+    const rows = await db
+      .select({ id: categories.id })
+      .from(categories)
+      .where(
+        scoped.where(
+          categories,
+          eq(categories.excludeFromSpending, true),
+          eq(categories.isIncome, false),
+        ),
+      );
+    return rows.map((row) => row.id);
+  },
+);
+
+/**
  * Which rows count toward spending-side figures.
+ *
+ * Rows filed under a category marked `excludeFromSpending` never count, however
+ * they would otherwise qualify.
  *
  * Ordinary rows: not a transfer and not paired. On top of that, an *outgoing*
  * transfer row (negative normalizedAmount, i.e. money out under the Plaid
@@ -72,15 +97,23 @@ export const getTransferReportingCategoryIds = cache(
  * Income-side queries keep the plain transfer exclusion on purpose.
  */
 export async function includedInSpending(householdId: string, db: LedgrDb): Promise<SQL> {
-  const categoryIds = await getTransferReportingCategoryIds(householdId, db);
+  const [categoryIds, excludedIds] = await Promise.all([
+    getTransferReportingCategoryIds(householdId, db),
+    getExcludedCategoryIds(householdId, db),
+  ]);
   const ordinaryTransaction = and(
     eq(transactions.isTransfer, false),
     isNull(transactions.transferPairId),
   )!;
+  // `category_id NOT IN (...)` is NULL for an uncategorized row, so say so.
+  const notExcluded =
+    excludedIds.length === 0
+      ? undefined
+      : or(isNull(transactions.categoryId), notInArray(transactions.categoryId, excludedIds));
 
-  if (categoryIds.length === 0) return ordinaryTransaction;
+  if (categoryIds.length === 0) return and(ordinaryTransaction, notExcluded)!;
 
-  return or(
+  return and(or(
     ordinaryTransaction,
     and(
       eq(transactions.isTransfer, true),
@@ -88,5 +121,5 @@ export async function includedInSpending(householdId: string, db: LedgrDb): Prom
       sql`${transactions.transferSource} IS DISTINCT FROM 'investment_account'`,
       inArray(transactions.categoryId, categoryIds),
     ),
-  )!;
+  ), notExcluded)!;
 }

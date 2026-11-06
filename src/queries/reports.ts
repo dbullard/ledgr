@@ -1,4 +1,4 @@
-import { eq, gte, lt, lte, sql, and, desc, inArray, notInArray, isNull } from "drizzle-orm";
+import { eq, gte, lt, lte, sql, and, desc, inArray, notInArray, isNull, isNotNull, or } from "drizzle-orm";
 import { db as defaultDb, type LedgrDb } from "@/db";
 import {
   transactions,
@@ -10,7 +10,7 @@ import {
 } from "@/db/schema";
 import { scopedQuery } from "@/lib/scoped-query";
 import { notDeleted, sumAbs, sumCol, countRows, isVisibleTransaction } from "@/lib/query-helpers";
-import { getIncomeCategoryIds, includedInSpending, notIncome } from "@/queries/shared-conditions";
+import { getExcludedCategoryIds, getIncomeCategoryIds, includedInSpending, notIncome } from "@/queries/shared-conditions";
 import { classifyAccountType } from "@/lib/account-utils";
 import { resolvedCategoryLabel, UNCATEGORIZED } from "@/lib/labels";
 import {
@@ -130,20 +130,36 @@ export async function getIncomeVsExpense(
   // every refund and credit into spending, so this tile disagreed with the
   // Spending tab by exactly the sum of the period's credits.
   const isSpending = sql`(NOT (${isIncome}) AND ${transactions.normalizedAmount} < 0)`;
+  // A categorized credit outside income categories is a refund: it offsets
+  // spending rather than counting as income. (Uncategorized credits are income
+  // above, so they never reach this branch.)
+  const isRefund = sql`(NOT (${isIncome}) AND ${transactions.normalizedAmount} > 0)`;
   const monthExpr = sql<string>`substring(${transactions.date}, 1, 7)`;
 
   const rows = await db
     .select({
       period: monthExpr,
+      categoryId: transactions.categoryId,
       income: sql<number>`COALESCE(SUM(CASE WHEN ${isIncome} THEN ${transactions.normalizedAmount} ELSE 0 END), 0)`.mapWith(Number),
-      expenses: sql<number>`COALESCE(SUM(CASE WHEN ${isSpending} THEN ABS(${transactions.normalizedAmount}) ELSE 0 END), 0)`.mapWith(Number),
+      expenses: sql<number>`COALESCE(SUM(CASE WHEN ${isSpending} THEN ABS(${transactions.normalizedAmount}) WHEN ${isRefund} THEN -${transactions.normalizedAmount} ELSE 0 END), 0)`.mapWith(Number),
     })
     .from(transactions)
     .where(scoped.where(transactions, ...conditions))
-    .groupBy(monthExpr)
+    .groupBy(monthExpr, transactions.categoryId)
     .orderBy(monthExpr);
 
-  return rows.map(({ period, income, expenses }) => ({
+  // Refunds offset spending within their own category and month; a category
+  // whose refunds outweigh its charges contributes nothing, never negative
+  // spending. Folded here because that floor is per category.
+  const byPeriod = new Map<string, { income: number; expenses: number }>();
+  for (const row of rows) {
+    const acc = byPeriod.get(row.period) ?? { income: 0, expenses: 0 };
+    acc.income += row.income;
+    acc.expenses += Math.max(0, row.expenses);
+    byPeriod.set(row.period, acc);
+  }
+
+  return [...byPeriod.entries()].map(([period, { income, expenses }]) => ({
     period,
     income,
     expenses,
@@ -160,7 +176,7 @@ export async function getCategoryTrends(
   const conditions = [
     notDeleted(transactions),
     isVisibleTransaction(transactions),
-    lt(transactions.normalizedAmount, 0),
+    or(lt(transactions.normalizedAmount, 0), isNotNull(transactions.categoryId))!,
     eq(transactions.pending, false),
     await includedInSpending(householdId, db),
     gte(transactions.date, filters.dateFrom),
@@ -178,8 +194,10 @@ export async function getCategoryTrends(
     .select({ transactionId: transactionSplits.transactionId })
     .from(transactionSplits)
     .innerJoin(transactions, eq(transactionSplits.transactionId, transactions.id))
-    .where(scoped.where(transactions, ...conditions))
-    .groupBy(transactionSplits.transactionId);
+    .where(scoped.where(transactions, ...conditions, lt(transactions.normalizedAmount, 0)))
+    .groupBy(transactionSplits.transactionId, transactions.normalizedAmount)
+    // Fully allocated charges only; see findSplitParentIds in spending-helpers.
+    .having(sql`SUM(${transactionSplits.amount}) >= ABS(${transactions.normalizedAmount})`);
   const splitParentIds = splitParentRows.map((r) => r.transactionId);
 
   const nonSplitConditions =
@@ -191,7 +209,8 @@ export async function getCategoryTrends(
     .select({
       month: sql<string>`substring(${transactions.date} from 1 for 7)`,
       categoryId: transactions.categoryId,
-      total: sumAbs(transactions.normalizedAmount),
+      // Net of refunds: charges are negative, refunds positive.
+      total: sql<number>`COALESCE(-SUM(${transactions.normalizedAmount}), 0)`.mapWith(Number),
     })
     .from(transactions)
     .where(scoped.where(transactions, ...nonSplitConditions))
@@ -203,6 +222,8 @@ export async function getCategoryTrends(
   // made the Trends total read as spending-minus-uncategorized while the tile
   // above it was labelled simply "Total Spent".
   for (const row of nonSplitRows) {
+    // Refunds outweighing charges in a category-month is not spending.
+    if (row.total <= 0) continue;
     const key = `${row.month}|${row.categoryId ?? ""}`;
     trendMap.set(key, (trendMap.get(key) ?? 0) + row.total);
   }
@@ -225,9 +246,11 @@ export async function getCategoryTrends(
       .from(transactionSplits)
       .where(inArray(transactionSplits.transactionId, splitParentIds));
 
+    const excluded = new Set(await getExcludedCategoryIds(householdId, db));
+    const incomeIds = await getIncomeCategoryIds(householdId, db);
     for (const row of splitRows) {
       const month = dateMap.get(row.transactionId);
-      if (!month) continue;
+      if (!month || excluded.has(row.categoryId) || incomeIds.has(row.categoryId)) continue;
       if (filters.categoryIds?.length && !filters.categoryIds.includes(row.categoryId)) continue;
       const key = `${month}|${row.categoryId}`;
       trendMap.set(key, (trendMap.get(key) ?? 0) + row.amount);
@@ -344,8 +367,10 @@ export async function getIncomeExpenseByCategory(
           WHEN ${isIncome} THEN ${transactions.normalizedAmount}
           ELSE 0 END), 0)`.mapWith(Number),
       expenseTotal: sql<number>`COALESCE(SUM(CASE
-          WHEN NOT (${inIncomeCat}) AND ${transactions.normalizedAmount} < 0
+          WHEN NOT (${isIncome}) AND ${transactions.normalizedAmount} < 0
           THEN ABS(${transactions.normalizedAmount})
+          WHEN NOT (${isIncome}) AND ${transactions.normalizedAmount} > 0
+          THEN -${transactions.normalizedAmount}
           ELSE 0 END), 0)`.mapWith(Number),
     })
     .from(transactions)
@@ -644,7 +669,7 @@ export async function getCashFlowSankey(
   // period, which is precisely the flow a reader is looking for.
   const expenseConditions = [
     ...conditions,
-    sql`${transactions.normalizedAmount} < 0`,
+    sql`(${transactions.normalizedAmount} < 0 OR ${transactions.categoryId} IS NOT NULL)`,
   ];
   if (incomeCatIds.size > 0) {
     // `category_id NOT IN (...)` is NULL — not TRUE — for an uncategorized row,
@@ -657,7 +682,7 @@ export async function getCashFlowSankey(
     .select({
       categoryId: transactions.categoryId,
       categoryName: categories.name,
-      total: sumAbs(transactions.normalizedAmount),
+      total: sql<number>`COALESCE(-SUM(${transactions.normalizedAmount}), 0)`.mapWith(Number),
     })
     .from(transactions)
     .leftJoin(categories, eq(transactions.categoryId, categories.id))
@@ -665,6 +690,8 @@ export async function getCashFlowSankey(
     .groupBy(transactions.categoryId, categories.name);
 
   for (const row of expenseRows) {
+    // A category whose refunds outweigh its charges is not spending.
+    if (row.total <= 0) continue;
     expenseMap.set(row.categoryId ?? "uncategorized", {
       name: row.categoryId === null ? UNCATEGORIZED : resolvedCategoryLabel(row.categoryName),
       total: row.total,
@@ -912,10 +939,17 @@ export async function getDrillDownTransactions(
     conditions.push(eq(transactions.categoryId, filters.categoryId));
   }
 
+  // Spending nets refunds (charges negative, refunds positive); income stays a
+  // sum of magnitudes.
+  const totalExpr =
+    filters.type === "income"
+      ? sumAbs(transactions.normalizedAmount)
+      : sql<number>`COALESCE(-SUM(${transactions.normalizedAmount}), 0)`.mapWith(Number);
+
   const [page, [totals]] = await Promise.all([
     fetchTransactionPage(householdId, conditions, limit, null, db),
     db
-      .select({ total: sumAbs(transactions.normalizedAmount), matchCount: countRows() })
+      .select({ total: totalExpr, matchCount: countRows() })
       .from(transactions)
       .where(scoped.where(transactions, ...conditions)),
   ]);

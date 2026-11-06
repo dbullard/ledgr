@@ -318,6 +318,39 @@ describe("upsertSplit", () => {
     expect(result).toEqual({ error: "Splits exceed transaction amount" });
   });
 
+  it("refuses to edit a split that belongs to a different transaction", async () => {
+    // splitId1 lives on txnId, not splitTxnId.
+    const result = await upsertSplit(
+      splitTxnId,
+      splitId1,
+      { categoryId: catDining, amount: 1, notes: null },
+      db,
+    );
+    expect(result).toEqual({ error: "Split not found" });
+    const [untouched] = await db
+      .select({ amount: transactionSplits.amount, categoryId: transactionSplits.categoryId })
+      .from(transactionSplits)
+      .where(eq(transactionSplits.id, splitId1));
+    expect(untouched).toEqual({ amount: 3000, categoryId: catGroceries });
+  });
+
+  it("refuses a category from another household", async () => {
+    const otherHouseholdId = uuid();
+    const otherGroupId = uuid();
+    const foreignCat = uuid();
+    await db.insert(households).values({ id: otherHouseholdId, name: "Other" });
+    await db.insert(categoryGroups).values({ id: otherGroupId, householdId: otherHouseholdId, name: "X", sortOrder: 1 });
+    await db.insert(categories).values({ id: foreignCat, householdId: otherHouseholdId, groupId: otherGroupId, name: "Foreign", sortOrder: 1 });
+
+    const result = await upsertSplit(
+      splitTxnId,
+      null,
+      { categoryId: foreignCat, amount: 100, notes: null },
+      db,
+    );
+    expect(result).toEqual({ error: "Category not found" });
+  });
+
   it("updates an existing split", async () => {
     const [existing] = await db
       .select({ id: transactionSplits.id })

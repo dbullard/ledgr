@@ -1,8 +1,10 @@
 import { getHouseholdId } from "@/lib/auth/session";
+import { withHousehold } from "@/lib/household-context";
 import {
   getInvestmentAccountIds,
   getPortfolioSummary,
   getPortfolioHistory,
+  getBalanceGrowth,
   getAssetAllocation,
   getAccountReconciliation,
   getHoldings,
@@ -49,7 +51,7 @@ export default async function InvestmentsPage({
   const accountsPromise = getAccounts(householdId);
   const accIds = await getInvestmentAccountIds(householdId);
 
-  const [summary, history, allocation, reconciliation, holdings, transactions] = await Promise.all([
+  const [summary, history, allocation, reconciliation, holdings, transactions, balanceGrowth] = await Promise.all([
     getPortfolioSummary(householdId, undefined, undefined, accIds),
     getPortfolioHistory(householdId, { dateFrom: dateFrom ?? dateTo, dateTo }, undefined, accIds),
     getAssetAllocation(householdId, undefined, accIds),
@@ -60,6 +62,11 @@ export default async function InvestmentsPage({
     tab === "transactions"
       ? getInvestmentTransactions(householdId, filters, 50, null, undefined, accIds)
       : Promise.resolve(null),
+    // Reads transactions (the contributions), which row-level security hides
+    // from any query outside the household context.
+    withHousehold(householdId, (tx) =>
+      getBalanceGrowth(householdId, { dateFrom: dateFrom ?? dateTo, dateTo }, tx, accIds),
+    ),
   ]);
 
   const allAccounts = await accountsPromise;
@@ -75,6 +82,7 @@ export default async function InvestmentsPage({
         history={history}
         allocation={allocation}
         reconciliation={reconciliation}
+        balanceGrowth={balanceGrowth}
         holdings={holdings}
         transactions={
           transactions

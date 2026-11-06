@@ -4,9 +4,15 @@ import { createTestDb } from "./setup";
 import {
   insertAccount,
   insertCategory,
+  insertBudget,
+  insertBudgetCategory,
   insertCategoryGroup,
+  insertCategoryRule,
   insertHousehold,
+  insertMerchant,
+  insertRecurringTransaction,
   insertTransaction,
+  insertTransactionSplit,
 } from "./helpers";
 import {
   createCategoryGroupScoped,
@@ -15,9 +21,24 @@ import {
   deleteCategoryScoped,
   renameCategoryGroupScoped,
   renameCategoryScoped,
+  mergeCategoriesScoped,
+  mergeCategoryGroupsScoped,
+  moveCategoryToGroupScoped,
+  updateCategoryGroupIconScoped,
+  updateCategoryIconScoped,
   updateCategoryReportingScoped,
+  updateCategoryExclusionScoped,
 } from "../../src/actions/categories";
-import { categories, categoryGroups } from "../../src/db/schema";
+import {
+  budgetCategories,
+  categories,
+  categoryGroups,
+  categoryRules,
+  merchants,
+  recurringTransactions,
+  transactionSplits,
+  transactions,
+} from "../../src/db/schema";
 import type { LedgrDb } from "../../src/db";
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -84,7 +105,7 @@ describe("category actions", () => {
     expect(result).toEqual({ error: "Category group not found." });
   });
 
-  it("renames custom records but protects system and other-household records", async () => {
+  it("renames system and custom records but protects other-household records", async () => {
     const { groupId } = await insertCategoryGroup(db, householdId, { name: "Old Group" });
     const { categoryId } = await insertCategory(db, householdId, groupId, { name: "Old Category" });
     const { groupId: systemGroupId } = await insertCategoryGroup(db, householdId, {
@@ -105,12 +126,12 @@ describe("category actions", () => {
     expect(await renameCategoryScoped(householdId, categoryId, "New Category", db)).toEqual({
       success: true,
     });
-    expect(await renameCategoryGroupScoped(householdId, systemGroupId, "Changed", db)).toHaveProperty(
-      "error",
-    );
-    expect(
-      await renameCategoryScoped(householdId, systemCategoryId, "Changed", db),
-    ).toHaveProperty("error");
+    expect(await renameCategoryGroupScoped(householdId, systemGroupId, "Changed", db)).toEqual({
+      success: true,
+    });
+    expect(await renameCategoryScoped(householdId, systemCategoryId, "Changed", db)).toEqual({
+      success: true,
+    });
     expect(await renameCategoryGroupScoped(householdId, otherGroupId, "Changed", db)).toHaveProperty(
       "error",
     );
@@ -155,6 +176,39 @@ describe("category actions", () => {
       .from(categories)
       .where(eq(categories.id, categoryId));
     expect(cleared.flag).toBe(false);
+  });
+
+  it("updates the exclude-from-spending flag only for custom, non-income categories in the household", async () => {
+    const { groupId } = await insertCategoryGroup(db, householdId);
+    const { categoryId } = await insertCategory(db, householdId, groupId);
+    const { categoryId: systemCategoryId } = await insertCategory(db, householdId, groupId, {
+      isSystem: true,
+    });
+    const { categoryId: incomeCategoryId } = await insertCategory(db, householdId, groupId, {
+      isIncome: true,
+    });
+    const { groupId: otherGroupId } = await insertCategoryGroup(db, otherHouseholdId);
+    const { categoryId: otherCategoryId } = await insertCategory(db, otherHouseholdId, otherGroupId);
+
+    expect(await updateCategoryExclusionScoped(householdId, categoryId, true, db)).toEqual({
+      success: true,
+    });
+    for (const id of [systemCategoryId, incomeCategoryId, otherCategoryId]) {
+      expect(await updateCategoryExclusionScoped(householdId, id, true, db)).toHaveProperty("error");
+    }
+
+    const rows = await db
+      .select({ id: categories.id, flag: categories.excludeFromSpending })
+      .from(categories);
+    const flags = new Map(rows.map((row) => [row.id, row.flag]));
+    expect(flags.get(categoryId)).toBe(true);
+    expect(flags.get(systemCategoryId)).toBe(false);
+    expect(flags.get(incomeCategoryId)).toBe(false);
+    expect(flags.get(otherCategoryId)).toBe(false);
+
+    expect(await updateCategoryExclusionScoped(householdId, categoryId, false, db)).toEqual({
+      success: true,
+    });
   });
 
   it("never stores the flag on an income category", async () => {
@@ -247,6 +301,139 @@ describe("category actions", () => {
         db,
       );
       expect(result).toHaveProperty("id");
+    });
+  });
+  it("sets icons on system and custom categories and groups, and rejects bad names", async () => {
+    const { groupId } = await insertCategoryGroup(db, householdId, { isSystem: true });
+    const { categoryId } = await insertCategory(db, householdId, groupId, { isSystem: true });
+
+    expect(await updateCategoryIconScoped(householdId, categoryId, "baby", db)).toEqual({
+      success: true,
+    });
+    expect(await updateCategoryGroupIconScoped(householdId, groupId, "home", db)).toEqual({
+      success: true,
+    });
+    const [cat] = await db.select().from(categories).where(eq(categories.id, categoryId));
+    expect(cat.icon).toBe("baby");
+    expect(await updateCategoryIconScoped(householdId, categoryId, null, db)).toEqual({
+      success: true,
+    });
+    expect(await updateCategoryIconScoped(householdId, categoryId, "Bad Name!", db)).toHaveProperty(
+      "error",
+    );
+    expect(
+      await updateCategoryIconScoped(otherHouseholdId, categoryId, "baby", db),
+    ).toHaveProperty("error");
+  });
+
+  it("moves a category to another group", async () => {
+    const { groupId: from } = await insertCategoryGroup(db, householdId);
+    const { groupId: to } = await insertCategoryGroup(db, householdId);
+    const { categoryId } = await insertCategory(db, householdId, from);
+
+    expect(await moveCategoryToGroupScoped(householdId, categoryId, to, db)).toEqual({
+      success: true,
+    });
+    const [cat] = await db.select().from(categories).where(eq(categories.id, categoryId));
+    expect(cat.groupId).toBe(to);
+    expect(await moveCategoryToGroupScoped(householdId, categoryId, "missing", db)).toHaveProperty(
+      "error",
+    );
+  });
+
+  describe("merging", () => {
+    it("repoints every reference, sums budget lines, and carries the PFC key", async () => {
+      const { groupId } = await insertCategoryGroup(db, householdId);
+      const { categoryId: source } = await insertCategory(db, householdId, groupId, {
+        name: "Merge Source",
+        isSystem: true,
+        systemKey: "Restaurants",
+      });
+      const { categoryId: target } = await insertCategory(db, householdId, groupId, {
+        name: "Merge Target",
+        isSystem: true,
+        systemKey: "Dining",
+      });
+      const { transactionId } = await insertTransaction(db, householdId, accountId, {
+        categoryId: source,
+      });
+      const { transactionId: splitTxn } = await insertTransaction(db, householdId, accountId);
+      const { splitId } = await insertTransactionSplit(db, splitTxn, source, 500);
+      const { ruleId } = (await insertCategoryRule(db, householdId, source)) as { ruleId: string };
+      const { merchantId } = await insertMerchant(db, householdId, { categoryId: source });
+      const { recurringId } = await insertRecurringTransaction(db, householdId, {
+        categoryId: source,
+      });
+      const { budgetId } = await insertBudget(db, householdId, { month: "2026-06" });
+      await insertBudgetCategory(db, budgetId, source, { limitAmount: 4000 });
+      await insertBudgetCategory(db, budgetId, target, { limitAmount: 6000 });
+      const { budgetId: soloBudget } = await insertBudget(db, householdId, { month: "2026-07" });
+      await insertBudgetCategory(db, soloBudget, source, { limitAmount: 2500 });
+
+      const result = await mergeCategoriesScoped(householdId, source, target, db);
+      expect(result).toEqual({ success: true, moved: 1 });
+
+      const [txn] = await db.select().from(transactions).where(eq(transactions.id, transactionId));
+      expect(txn.categoryId).toBe(target);
+      const [split] = await db
+        .select()
+        .from(transactionSplits)
+        .where(eq(transactionSplits.id, splitId));
+      expect(split.categoryId).toBe(target);
+      const [rule] = await db.select().from(categoryRules).where(eq(categoryRules.id, ruleId));
+      expect(rule.categoryId).toBe(target);
+      const [merchant] = await db.select().from(merchants).where(eq(merchants.id, merchantId));
+      expect(merchant.categoryId).toBe(target);
+      const [recurring] = await db
+        .select()
+        .from(recurringTransactions)
+        .where(eq(recurringTransactions.id, recurringId));
+      expect(recurring.categoryId).toBe(target);
+
+      const lines = await db.select().from(budgetCategories);
+      const june = lines.filter((l) => l.budgetId === budgetId);
+      expect(june).toHaveLength(1);
+      expect(june[0]).toMatchObject({ categoryId: target, limitAmount: 10000 });
+      const july = lines.filter((l) => l.budgetId === soloBudget);
+      expect(july[0]).toMatchObject({ categoryId: target, limitAmount: 2500 });
+
+      const remaining = await db.select().from(categories).where(eq(categories.id, source));
+      expect(remaining).toHaveLength(0);
+      const [merged] = await db.select().from(categories).where(eq(categories.id, target));
+      expect(merged.systemKey).toBe("Dining|Restaurants");
+    });
+
+    it("refuses same, cross-household, and income/expense merges", async () => {
+      const { groupId } = await insertCategoryGroup(db, householdId);
+      const { categoryId: expense } = await insertCategory(db, householdId, groupId, {
+        isIncome: false,
+      });
+      const { categoryId: income } = await insertCategory(db, householdId, groupId, {
+        isIncome: true,
+      });
+      const { groupId: otherGroup } = await insertCategoryGroup(db, otherHouseholdId);
+      const { categoryId: foreign } = await insertCategory(db, otherHouseholdId, otherGroup);
+
+      expect(await mergeCategoriesScoped(householdId, expense, expense, db)).toHaveProperty("error");
+      expect(await mergeCategoriesScoped(householdId, expense, income, db)).toHaveProperty("error");
+      expect(await mergeCategoriesScoped(householdId, expense, foreign, db)).toHaveProperty("error");
+      expect(await mergeCategoriesScoped(householdId, foreign, expense, db)).toHaveProperty("error");
+    });
+
+    it("merges a group by moving its categories and deleting it", async () => {
+      const { groupId: source } = await insertCategoryGroup(db, householdId, { name: "Healthcare X" });
+      const { groupId: target } = await insertCategoryGroup(db, householdId, { name: "Health X" });
+      const { categoryId: kept } = await insertCategory(db, householdId, target, { sortOrder: 0 });
+      const { categoryId: moved } = await insertCategory(db, householdId, source, { sortOrder: 0 });
+
+      const result = await mergeCategoryGroupsScoped(householdId, source, target, db);
+      expect(result).toEqual({ success: true, moved: 1 });
+      const [movedRow] = await db.select().from(categories).where(eq(categories.id, moved));
+      const [keptRow] = await db.select().from(categories).where(eq(categories.id, kept));
+      expect(movedRow.groupId).toBe(target);
+      expect(movedRow.sortOrder).toBeGreaterThan(keptRow.sortOrder ?? 0);
+      expect(await db.select().from(categoryGroups).where(eq(categoryGroups.id, source))).toHaveLength(0);
+      expect(await mergeCategoryGroupsScoped(householdId, target, target, db)).toHaveProperty("error");
     });
   });
 });

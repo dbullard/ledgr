@@ -41,11 +41,18 @@ services:
       - "${PORT:-4200}:3000"
     volumes:
       - appdata:/data
+      # Receipt files (<year>/<month>/<date>_<merchant>_<amount>.<ext>). Point
+      # RECEIPTS_PATH at a NAS mount to keep them there; the default is a
+      # Docker volume.
+      - ${RECEIPTS_PATH:-receipts}:/data/receipts
     env_file:
       - path: .env
         required: false
     environment:
       PORT: 3000
+      # "Today" and the current month come from this clock. The container
+      # default is UTC, which rolls the month over mid-evening in the Americas.
+      TZ: ${TZ:-UTC}
       LEDGR_DATA_DIR: /data
       # Superuser/owner — migrations and app-role provisioning only. RLS
       # policies (docs/rls-pilot.md) never restrict this role.
@@ -73,3 +80,4 @@ services:
 volumes:
   pgdata:
   appdata:
+  receipts:

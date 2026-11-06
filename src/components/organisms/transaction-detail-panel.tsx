@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, ChevronLeft, Clock } from "lucide-react";
+import { ArrowDown, ArrowUp, Clock, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -13,6 +13,7 @@ import { CategoryPill } from "@/components/molecules/category-pill";
 import { DetailGroup, DetailRow } from "@/components/molecules/detail-group";
 import { SplitEditor } from "@/components/molecules/split-editor";
 import { TransactionNoteField } from "@/components/molecules/transaction-note-field";
+import { ReceiptsSection } from "@/components/molecules/receipts-section";
 import { MakeRecurringButton } from "@/components/molecules/make-recurring-button";
 import { useTransactionDetail } from "@/hooks/use-transaction-detail";
 import type { TransactionPatch } from "@/hooks/use-transaction-rows";
@@ -68,6 +69,7 @@ function TransactionDetail({
   const {
     txn,
     splits,
+    refreshDetail,
     reviewPending,
     transferPending,
     hiddenPending,
@@ -136,7 +138,7 @@ function TransactionDetail({
     >
       <div className="flex shrink-0 items-center gap-1 p-2 pl-1.5">
         <Button variant="ghost" size="icon" className="size-7" onClick={onClose} aria-label="Close details">
-          <ChevronLeft className="size-4" />
+          <X className="size-4" />
         </Button>
         <h2
           ref={headingRef}
@@ -287,6 +289,8 @@ function TransactionDetail({
             onSave={(v) => handleFieldSave("notes", v)}
           />
         </div>
+
+        <ReceiptsSection transactionId={txn.id} categories={categories} onSplitsChanged={refreshDetail} />
 
         <DetailGroup className="mt-3.5">
           <DetailRow label="Review status">

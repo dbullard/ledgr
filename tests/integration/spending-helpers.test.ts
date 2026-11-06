@@ -71,9 +71,10 @@ describe("aggregateSpending", () => {
   });
 
   test("excludes income, transfers, pending, deleted, paired, hidden, and out-of-range rows", async () => {
-    await expense({ categoryId: foodCatId, normalizedAmount: -1000 }); // the only one that counts
+    await expense({ categoryId: foodCatId, normalizedAmount: -1000 }); // counts
     await expense({ categoryId: incomeCatId, normalizedAmount: -9999 }); // income category
-    await expense({ categoryId: foodCatId, normalizedAmount: 5000 }); // positive → not spend
+    await expense({ categoryId: foodCatId, normalizedAmount: 400 }); // refund → offsets the charge
+    await expense({ categoryId: null, normalizedAmount: 5000 }); // uncategorized credit → not a refund
     await expense({ categoryId: foodCatId, normalizedAmount: -9999, isTransfer: true });
     await expense({ categoryId: foodCatId, normalizedAmount: -9999, pending: true });
     await expense({ categoryId: foodCatId, normalizedAmount: -9999, deletedAt: new Date() });
@@ -83,9 +84,18 @@ describe("aggregateSpending", () => {
 
     const result = await aggregateSpending(householdId, filters, db);
 
-    expect(result.get(foodCatId)).toBe(1000);
+    expect(result.get(foodCatId)).toBe(600);
     expect(result.has(incomeCatId)).toBe(false);
-    expect([...result.values()].reduce((a, b) => a + b, 0)).toBe(1000);
+    expect([...result.values()].reduce((a, b) => a + b, 0)).toBe(600);
+  });
+
+  test("a category whose refunds outweigh its charges is dropped, not negative", async () => {
+    await expense({ categoryId: foodCatId, normalizedAmount: -1000 });
+    await expense({ categoryId: foodCatId, normalizedAmount: 5000 });
+
+    const result = await aggregateSpending(householdId, filters, db);
+
+    expect(result.has(foodCatId)).toBe(false);
   });
 
   test("attributes split transactions to their split categories, not the parent", async () => {
@@ -98,6 +108,28 @@ describe("aggregateSpending", () => {
     // Parent's -3000 is NOT counted once; splits supply the breakdown.
     expect(result.get(foodCatId)).toBe(1000);
     expect(result.get(rentCatId)).toBe(2000);
+  });
+
+  test("a partly allocated split keeps the whole charge under its own category", async () => {
+    const { transactionId } = await expense({ categoryId: foodCatId, normalizedAmount: -3000 });
+    await insertTransactionSplit(db, transactionId, rentCatId, 1000);
+
+    const result = await aggregateSpending(householdId, filters, db);
+
+    // Counting only the $10 split would silently drop the other $20.
+    expect(result.get(foodCatId)).toBe(3000);
+    expect(result.has(rentCatId)).toBe(false);
+  });
+
+  test("a split filed under an income category is not spending", async () => {
+    const { transactionId } = await expense({ categoryId: foodCatId, normalizedAmount: -3000 });
+    await insertTransactionSplit(db, transactionId, foodCatId, 2000);
+    await insertTransactionSplit(db, transactionId, incomeCatId, 1000);
+
+    const result = await aggregateSpending(householdId, filters, db);
+
+    expect(result.get(foodCatId)).toBe(2000);
+    expect(result.has(incomeCatId)).toBe(false);
   });
 
   test("isolates spend by household", async () => {

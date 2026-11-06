@@ -6,16 +6,16 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ReviewCardDialog } from "@/components/organisms/review-card-dialog";
 import { TransferReviewDialog } from "@/components/organisms/transfer-review-dialog";
-import { TransactionRow, TRANSACTION_GRID_COLS } from "@/components/molecules/transaction-row";
+import { TransactionRow, TRANSACTION_GRID_COLS, COMPACT_GRID_COLS } from "@/components/molecules/transaction-row";
 import { TransactionDateHeader } from "@/components/molecules/transaction-date-header";
 import { BulkActionBar } from "@/components/molecules/bulk-action-bar";
 import { TransactionDetailPanel } from "@/components/organisms/transaction-detail-panel";
 import { loadMoreTransactions } from "@/actions/transactions";
-import { groupByDate } from "@/lib/transactions";
+import { groupByDate, isPanelDocked, DOCKED_PANEL_RESERVE_CLASS, DOCKED_PANEL_MIN_WIDTH } from "@/lib/transactions";
 import { summarizeDay } from "@/lib/transaction-day-summary";
 import { useSelectedTransaction } from "@/hooks/use-selected-transaction";
 import { useTransactionRows } from "@/hooks/use-transaction-rows";
-import { useIsMobile } from "@/hooks/use-mobile";
+import { useIsMobile, useMinWidth } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 import type { TransactionRow as TxnRow, TransactionFilters } from "@/queries/transactions";
 import type { CategoryGroup } from "@/queries/categories";
@@ -37,6 +37,7 @@ export function TransactionList({
 }: TransactionListProps) {
   const router = useRouter();
   const isMobile = useIsMobile();
+  const wideEnough = useMinWidth(DOCKED_PANEL_MIN_WIDTH);
   const { rows: allRows, setRows, patchRow, appendRows, setHidden } = useTransactionRows(initialRows);
   const [cursor, setCursor] = useState(nextCursor);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -170,17 +171,30 @@ export function TransactionList({
   const handleTransferReviewDone = handleReviewDone;
 
   const hasBulkSelection = selected.size > 0;
+  const panelDocked = isPanelDocked({
+    panelOpen: isPanelOpen,
+    isMobile,
+    reviewMode: isReviewMode || isTransferReviewMode,
+    wideEnough,
+  });
 
   return (
     <div
       className="group/list relative"
       data-bulk-active={hasBulkSelection ? "" : undefined}
     >
-      {/* The ledger keeps the full content width whether or not the panel is
-          open. It used to give up two fifths of it, which starved the `1fr`
-          description track — the account and category tracks are fixed, so the
-          description absorbed the whole loss and truncated to a few letters. */}
-      <div className="min-w-0">
+      {/* While the panel is open the ledger gives up its width (the panel's
+          column plus a gutter) and switches to compact rows, so the Category and
+          Amount columns stay visible beside the panel instead of sitting under
+          it. Compact rows drop the Account column (it becomes an inline suffix
+          on the description) and keep the other tracks fixed, so the `1fr`
+          description is the only thing that gives. */}
+      <div
+        className={cn(
+          "min-w-0 transition-[padding] duration-200 ease-out motion-reduce:transition-none",
+          panelDocked && DOCKED_PANEL_RESERVE_CLASS,
+        )}
+      >
         {hasBulkSelection && (
           <BulkActionBar
             selectedIds={Array.from(selected)}
@@ -189,7 +203,7 @@ export function TransactionList({
           />
         )}
 
-        <div className={cn("grid items-center h-8 px-2 border-b text-xs font-medium text-muted-foreground", TRANSACTION_GRID_COLS)}>
+        <div className={cn("grid items-center h-8 px-2 border-b text-xs font-medium text-muted-foreground", panelDocked ? COMPACT_GRID_COLS : TRANSACTION_GRID_COLS)}>
           <div />
           <div className="hidden sm:flex items-center justify-center">
             <Checkbox
@@ -199,7 +213,7 @@ export function TransactionList({
             />
           </div>
           <span>Description</span>
-          <span className="hidden lg:block">Account</span>
+          <span className={cn("hidden", !panelDocked && "lg:block")}>Account</span>
           <span>Category</span>
           <span className="text-right">Amount</span>
         </div>
@@ -216,6 +230,7 @@ export function TransactionList({
                   categories={categories}
                   isSelected={selected.has(txn.id)}
                   isActive={txn.id === selectedId}
+                  compact={panelDocked}
                   onSelect={handleSelect}
                   onOpen={select}
                   onHiddenChange={handleHiddenChange}
@@ -255,8 +270,12 @@ export function TransactionList({
           <div className="sr-only" aria-live="polite">
             Transaction details opened
           </div>
+          {/* Slides in from the right as it mounts (the panel is keyed by
+              transaction inside, so stepping between rows does not replay it).
+              Skipped for people who ask for reduced motion. */}
           <div
             className={cn(
+              "motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-right-8 motion-safe:duration-200",
               !isMobile &&
                 "pointer-events-auto sticky top-4 max-h-[calc(100vh-2rem)] overflow-hidden rounded-xl bg-card shadow-2xl ring-1 ring-foreground/10",
               isMobile && "h-full",

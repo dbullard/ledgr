@@ -77,6 +77,34 @@ describe("getDashboardSummary", () => {
     expect(result.monthlyNet).toBe(200000 - 3000);
   });
 
+  it("nets a categorized refund against expenses and keeps uncategorized credits as income", async () => {
+    const { householdId } = await insertHousehold(db);
+    const { accountId } = await insertAccount(db, householdId, { type: "checking", currentBalance: 0 });
+    const { groupId } = await insertCategoryGroup(db, householdId, { name: "Shopping" });
+    const { categoryId: shopsId } = await insertCategory(db, householdId, groupId, { name: "Shops" });
+    const { categoryId: otherId } = await insertCategory(db, householdId, groupId, { name: "Other" });
+
+    const thisMonth = new Date().toISOString().slice(0, 7);
+    const txn = (day: string, cents: number, categoryId: string | null) =>
+      insertTransaction(db, householdId, accountId, {
+        date: `${thisMonth}-${day}`,
+        normalizedAmount: cents,
+        amount: -cents,
+        categoryId,
+      });
+    await txn("05", -10000, shopsId); // charge
+    await txn("06", 2500, shopsId); // return: offsets the charge, not income
+    await txn("07", 40000, null); // uncategorized credit: still income
+    await txn("08", 30000, otherId); // credit that outweighs its category's charges
+    await txn("09", -1000, otherId);
+
+    const result = await getDashboardSummary(householdId, undefined, db);
+
+    // Shops 10000 - 2500 = 7500; Other is floored at 0 rather than going negative.
+    expect(result.monthlyExpenses).toBe(7500);
+    expect(result.monthlyIncome).toBe(40000);
+  });
+
   it("excludes transfer transactions from income and expenses", async () => {
     const { householdId } = await insertHousehold(db);
     const { accountId } = await insertAccount(db, householdId, {
@@ -357,8 +385,8 @@ describe("getMonthlySpending", () => {
     });
     await insertTransaction(db, householdId, accountId, {
       date: `${thisMonth}-15`,
-      normalizedAmount: 10000,
-      amount: -10000,
+      normalizedAmount: 2000,
+      amount: -2000,
       categoryId,
     });
     await insertTransaction(db, householdId, accountId, {
@@ -376,7 +404,8 @@ describe("getMonthlySpending", () => {
     expect(result[0].categoryName).toBe("Groceries");
     expect(result[0].categoryIcon).toBeNull();
     expect(result[0].groupName).toBe("Food");
-    expect(result[0].total).toBe(8000);
+    // 5000 + 3000 of charges less the 2000 refund; the pending charge is ignored.
+    expect(result[0].total).toBe(6000);
   });
 });
 

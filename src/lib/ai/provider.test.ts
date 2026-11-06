@@ -63,6 +63,20 @@ describe("createUserModel", () => {
     expect(model).toBeDefined();
   });
 
+  test("custom provider sends json_schema only when structuredOutputs is set", () => {
+    const base = {
+      aiProvider: "custom" as const,
+      aiModel: "qwen3.6:27b",
+      aiApiKey: "none",
+      aiBaseUrl: "http://localhost:11434/v1",
+      confidenceThreshold: 0.7,
+      toolCalling: true,
+    };
+    const flag = (m: unknown) => (m as { supportsStructuredOutputs: boolean }).supportsStructuredOutputs;
+    expect(flag(createUserModel(base))).toBe(false);
+    expect(flag(createUserModel({ ...base, structuredOutputs: true }))).toBe(true);
+  });
+
   test("throws on custom provider without baseUrl", () => {
     expect(() =>
       createUserModel({

@@ -15,7 +15,13 @@ vi.mock("@/actions/categories", () => ({
   deleteCategoryGroup: vi.fn(),
   renameCategory: vi.fn(),
   renameCategoryGroup: vi.fn(),
+  mergeCategories: vi.fn(),
+  mergeCategoryGroups: vi.fn(),
+  moveCategoryToGroup: vi.fn(),
+  updateCategoryGroupIcon: vi.fn(),
+  updateCategoryIcon: vi.fn(),
   updateCategoryReporting: vi.fn(),
+  updateCategoryExclusion: vi.fn(),
 }));
 
 const groups: CategoryGroup[] = [
@@ -32,6 +38,7 @@ const groups: CategoryGroup[] = [
         icon: null,
         isIncome: false,
         includeTransferInSpending: false,
+        excludeFromSpending: false,
         isSystem: true,
         sortOrder: 0,
       },
@@ -50,6 +57,7 @@ const groups: CategoryGroup[] = [
         icon: null,
         isIncome: false,
         includeTransferInSpending: false,
+        excludeFromSpending: false,
         isSystem: false,
         sortOrder: 0,
       },
@@ -83,7 +91,7 @@ describe("CategoryManager group selection", () => {
     expect(option.textContent).toContain("Family");
   });
 
-  it("shows explicit rename controls for custom records only", async () => {
+  it("shows explicit rename controls for system and custom records", async () => {
     const { CategoryManager } = await import("./category-manager");
     render(<CategoryManager groups={groups} />);
 
@@ -91,8 +99,10 @@ describe("CategoryManager group selection", () => {
     const renameCategory = screen.getByRole("button", { name: "Rename category Childcare" });
     expect(renameGroup.querySelector("svg")).not.toBeNull();
     expect(renameCategory.querySelector("svg")).not.toBeNull();
-    expect(screen.queryByRole("button", { name: "Rename group Everyday" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Rename category Groceries" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Rename group Everyday" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Rename category Groceries" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Change icon for Groceries" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Merge Groceries into another category" })).not.toBeNull();
 
     fireEvent.click(renameCategory);
     expect(await screen.findByDisplayValue("Childcare")).not.toBeNull();
@@ -106,5 +116,15 @@ describe("CategoryManager group selection", () => {
     expect(screen.getAllByRole("checkbox", { name: /^Count transfers as spending/ })).toHaveLength(2);
     expect(screen.queryByRole("checkbox", { name: /cash flow/i })).toBeNull();
     expect(screen.getByText(/credit card payments/i)).not.toBeNull();
+  });
+
+  it("shows the exclude-from-spending control for custom categories only", async () => {
+    const { CategoryManager } = await import("./category-manager");
+    render(<CategoryManager groups={groups} />);
+
+    // One in the create form, one on the custom Childcare row (none for the
+    // system Groceries row).
+    expect(screen.getAllByRole("checkbox", { name: /^Exclude .*from spending/ })).toHaveLength(2);
+    expect(screen.queryByRole("checkbox", { name: /Groceries/ })).toBeNull();
   });
 });

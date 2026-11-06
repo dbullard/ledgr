@@ -15,6 +15,9 @@ export interface ProviderConfig {
   aiBaseUrl?: string;
   confidenceThreshold: number;
   toolCalling: boolean;
+  /** `custom` only: send json_schema response formats. Off by default because
+   *  an arbitrary endpoint may not support them; Ollama and LM Studio do. */
+  structuredOutputs?: boolean;
 }
 
 export function createUserModel(config: ProviderConfig): LanguageModel {
@@ -52,6 +55,7 @@ export function createUserModel(config: ProviderConfig): LanguageModel {
         baseURL: config.aiBaseUrl,
         apiKey: config.aiApiKey || "none",
         name: "custom",
+        supportsStructuredOutputs: config.structuredOutputs ?? false,
       });
       return provider(config.aiModel);
     }

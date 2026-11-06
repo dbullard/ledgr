@@ -26,13 +26,13 @@ import { cn } from "@/lib/utils";
 // the 1fr description absorbs the difference, which left the account starting
 // at a different x on every line.
 export const TRANSACTION_GRID_COLS =
-  "grid-cols-[24px_minmax(0,1fr)_auto_80px] sm:grid-cols-[24px_32px_minmax(0,1fr)_auto_100px] lg:grid-cols-[24px_32px_minmax(0,1fr)_128px_minmax(0,150px)_100px]" as const;
+  "grid-cols-[24px_minmax(0,1fr)_auto_112px] sm:grid-cols-[24px_32px_minmax(0,1fr)_auto_132px] lg:grid-cols-[24px_32px_minmax(0,1fr)_128px_minmax(0,150px)_132px]" as const;
 
 // A sheet is ~600px wide at every viewport, so the ledger's viewport breakpoints
 // would hand it the account column at lg and starve the description. Compact
 // rows keep the sm layout throughout, with the account as an inline suffix.
-const COMPACT_GRID_COLS =
-  "grid-cols-[24px_minmax(0,1fr)_auto_80px] sm:grid-cols-[24px_32px_minmax(0,1fr)_minmax(0,140px)_92px]" as const;
+export const COMPACT_GRID_COLS =
+  "grid-cols-[24px_minmax(0,1fr)_auto_112px] sm:grid-cols-[24px_32px_minmax(0,1fr)_minmax(0,140px)_124px]" as const;
 
 interface TransactionRowProps {
   transaction: TxnRow;
@@ -126,24 +126,6 @@ export const TransactionRow = memo(function TransactionRow({
         isActive && "bg-muted",
       )}
     >
-      {onHiddenChange && (
-        <button
-          type="button"
-          onClick={handleHiddenClick}
-          title={txn.isHidden ? "Unhide transaction" : "Hide transaction"}
-          aria-label={txn.isHidden ? "Unhide transaction" : "Hide transaction"}
-          className={cn(
-            "absolute right-2 top-1/2 z-10 flex h-7 -translate-y-1/2 items-center justify-center gap-1 rounded-full border border-border bg-card shadow-sm transition-all hover:bg-muted",
-            txn.isHidden
-              ? "px-2 text-xs font-medium"
-              : "w-7 scale-90 opacity-0 group-hover/row:scale-100 group-hover/row:opacity-100",
-          )}
-        >
-          {txn.isHidden ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
-          {txn.isHidden && <span>Unhide</span>}
-        </button>
-      )}
-
       <div onClick={stopRowClick}>
         <ReviewedDot
           key={`${id}-reviewed-${txn.reviewed}`}
@@ -188,7 +170,23 @@ export const TransactionRow = memo(function TransactionRow({
           on `pending`, and stacking the two leaves a pending transfer barely
           readable. Muting the amount also drops its `text-positive` green,
           which a transfer into an account never earned. */}
-      <div className="text-right">
+      <div className="relative text-right">
+        {onHiddenChange && (
+          // Lives in the gutter left of the amount (the column is wider than the
+          // figure needs), so revealing it never covers the number.
+          <button
+            type="button"
+            onClick={handleHiddenClick}
+            title={txn.isHidden ? "Unhide transaction" : "Hide transaction"}
+            aria-label={txn.isHidden ? "Unhide transaction" : "Hide transaction"}
+            className={cn(
+              "absolute left-0 top-1/2 z-10 flex size-7 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-card shadow-sm transition-all hover:bg-muted",
+              txn.isHidden ? "" : "scale-90 opacity-0 group-hover/row:scale-100 group-hover/row:opacity-100",
+            )}
+          >
+            {txn.isHidden ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
+          </button>
+        )}
         <AmountDisplay
           amount={txn.normalizedAmount}
           currency={txn.currency}

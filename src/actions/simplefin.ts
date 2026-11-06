@@ -155,6 +155,7 @@ export async function claimAndDiscoverAccountsDirect(
               // double-confirm guard intact.
               status: "pending_classification",
               errorCode: null,
+              errorMessage: null,
               institutionName,
               updatedAt: new Date(),
             })
@@ -435,7 +436,7 @@ export async function reconnectSimplefinDirect(
   }
 
   await db.update(bankConnections)
-    .set({ credential: encrypt(accessUrl), status: "active", errorCode: null, updatedAt: new Date() })
+    .set({ credential: encrypt(accessUrl), status: "active", errorCode: null, errorMessage: null, updatedAt: new Date() })
     .where(eq(bankConnections.id, connectionId));
 
   try {

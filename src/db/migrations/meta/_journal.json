@@ -113,6 +113,55 @@
       "when": 1793554519794,
       "tag": "0015_parallel_gladiator",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1793567530839,
+      "tag": "0016_brief_phalanx",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793573162706,
+      "tag": "0017_thin_cerebro",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793639650933,
+      "tag": "0018_known_nekra",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793927306097,
+      "tag": "0019_category_system_key",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793976706879,
+      "tag": "0020_receipts",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793976943385,
+      "tag": "0021_receipt_hints",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1793977172300,
+      "tag": "0022_receipt_items",
+      "breakpoints": true
     }
   ]
 }

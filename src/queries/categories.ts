@@ -8,6 +8,7 @@ interface CategoryOption {
   icon: string | null;
   isIncome: boolean;
   includeTransferInSpending: boolean;
+  excludeFromSpending: boolean;
   isSystem: boolean;
   sortOrder: number;
 }
@@ -48,6 +49,7 @@ export async function getCategories(
       icon: cat.icon,
       isIncome: cat.isIncome ?? false,
       includeTransferInSpending: cat.includeTransferInSpending ?? false,
+      excludeFromSpending: cat.excludeFromSpending ?? false,
       isSystem: cat.isSystem ?? false,
       sortOrder: cat.sortOrder ?? 0,
     });

@@ -57,8 +57,11 @@ export function budgetPace({
   const { year, monthIndex } = parseMonth(month);
   const daysInMonth = daysIn(year, monthIndex);
 
-  const currentYear = asOf.getUTCFullYear();
-  const currentMonthIndex = asOf.getUTCMonth();
+  // Local getters, to agree with getCurrentMonth/todayDateString: the month a
+  // page reports and the day count beside it must come from the same clock, or
+  // the last evening of a month shows a new month's day count.
+  const currentYear = asOf.getFullYear();
+  const currentMonthIndex = asOf.getMonth();
 
   let daysElapsed: number;
   if (year < currentYear || (year === currentYear && monthIndex < currentMonthIndex)) {
@@ -66,7 +69,7 @@ export function budgetPace({
   } else if (year > currentYear || monthIndex > currentMonthIndex) {
     daysElapsed = 0; // a future month has not started
   } else {
-    daysElapsed = asOf.getUTCDate();
+    daysElapsed = asOf.getDate();
   }
 
   const remaining = totalBudgeted - totalSpent;
