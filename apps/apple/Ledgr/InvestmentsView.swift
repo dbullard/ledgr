@@ -150,19 +150,21 @@ struct InvestmentsView: View {
                 if o.history.count > 1 {
                     Chart(o.history) { p in
                         if let d = Fmt.date(p.date) {
-                            AreaMark(x: .value("Date", d), y: .value("Value", Double(p.value) / 100))
+                            AreaMark(x: .value("Date", d), yStart: .value("Floor", tightDomain(o.history.map { Double($0.value) / 100 }).lowerBound), yEnd: .value("Value", Double(p.value) / 100))
                                 .foregroundStyle(LinearGradient(colors: [Color.accentColor.opacity(0.3), .clear], startPoint: .top, endPoint: .bottom))
                             LineMark(x: .value("Date", d), y: .value("Value", Double(p.value) / 100))
                                 .foregroundStyle(Color.accentColor).interpolationMethod(.monotone)
                         }
                     }
                     .chartYAxis { AxisMarks(position: .trailing) { AxisValueLabel(format: .currency(code: "USD").notation(.compactName)) } }
+                    .tightYScale(o.history.map { Double($0.value) / 100 })
                     .frame(height: 150)
                 }
                 Picker("Range", selection: $range) {
                     ForEach(["1M", "3M", "6M", "1Y", "all"], id: \.self) { Text($0 == "all" ? "All" : $0).tag($0) }
                 }
                 .pickerStyle(.segmented)
+                .labelsHidden()
             }
             if let g = o.growth {
                 Card("Growth since \(Fmt.shortDate(g.since))") {

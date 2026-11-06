@@ -79,6 +79,8 @@ struct StatusToolbar: ViewModifier {
                     .labelStyle(.titleAndIcon)
                     .font(.footnote)
                     .fixedSize()
+                    .padding(.horizontal, 6)
+                    .help("Connected via \(connection.mode.label)")
                     .foregroundStyle(connection.mode == .offline ? .red : .secondary)
             }
         }

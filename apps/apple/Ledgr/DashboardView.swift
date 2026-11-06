@@ -56,7 +56,7 @@ struct DashboardView: View {
             if d.history.count > 1 {
                 Chart(d.history) { p in
                     if let date = Fmt.date(p.date) {
-                        AreaMark(x: .value("Date", date), y: .value("Net worth", Double(p.netWorth) / 100))
+                        AreaMark(x: .value("Date", date), yStart: .value("Floor", tightDomain(d.history.map { Double($0.netWorth) / 100 }).lowerBound), yEnd: .value("Net worth", Double(p.netWorth) / 100))
                             .foregroundStyle(LinearGradient(colors: [Color.accentColor.opacity(0.3), .clear], startPoint: .top, endPoint: .bottom))
                         LineMark(x: .value("Date", date), y: .value("Net worth", Double(p.netWorth) / 100))
                             .foregroundStyle(Color.accentColor)
@@ -64,12 +64,14 @@ struct DashboardView: View {
                     }
                 }
                 .chartYAxis { AxisMarks(position: .trailing) { AxisValueLabel(format: .currency(code: "USD").notation(.compactName)) } }
+                .tightYScale(d.history.map { Double($0.netWorth) / 100 })
                 .frame(height: 150)
             }
             Picker("Range", selection: $range) {
                 ForEach(ranges, id: \.self) { Text($0 == "all" ? "All" : $0).tag($0) }
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
         }
     }
 

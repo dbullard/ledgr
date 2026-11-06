@@ -1,4 +1,5 @@
 import SwiftUI
+import Charts
 
 extension Color {
     /// Palette adapted from the Copilot Money Mac app's design tokens
@@ -135,4 +136,15 @@ struct TxnRow: View {
         }
         .contentShape(Rectangle())
     }
+}
+
+/// Y range zoomed to the data (with padding) so trends are visible instead of being flattened against $0.
+func tightDomain(_ values: [Double]) -> ClosedRange<Double> {
+    let lo = values.min() ?? 0, hi = values.max() ?? 1
+    let pad = max((hi - lo) * 0.12, abs(hi) * 0.01, 1)
+    return (lo - pad)...(hi + pad)
+}
+
+extension View {
+    func tightYScale(_ values: [Double]) -> some View { chartYScale(domain: tightDomain(values)) }
 }

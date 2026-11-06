@@ -154,8 +154,21 @@ struct AccountsView: View {
         let rows = group.accounts.filter { showHidden || !$0.isHidden }
         return Group {
             if !rows.isEmpty {
-                Card(group.institutionName, trailing: AnyView(
-                    HStack(spacing: 10) {
+                Card {
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(group.institutionName).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                            if group.status == "error" || group.status == "login_required" {
+                                Label(group.errorMessage ?? "Needs attention", systemImage: "exclamationmark.triangle.fill")
+                                    .font(.caption).foregroundStyle(Color.alert)
+                            } else if let cid = group.connectionId, let note = syncNotes[cid] {
+                                Text(note).font(.caption)
+                                    .foregroundStyle(note.hasPrefix("Refreshed") ? Color.income : Color.alert)
+                            } else if let when = group.lastDataAt {
+                                Text("Updated \(Fmt.relative(when))").font(.caption).foregroundStyle(.tertiary)
+                            }
+                        }
+                        Spacer()
                         Text(Fmt.money(group.subtotal)).font(.subheadline.weight(.semibold).monospacedDigit())
                         if let cid = group.connectionId {
                             Button { Task { await refresh(group) } } label: {
@@ -163,20 +176,9 @@ struct AccountsView: View {
                                 else { Image(systemName: "arrow.clockwise") }
                             }
                             .buttonStyle(.borderless)
+                            .frame(width: 28, height: 28).contentShape(Rectangle())
                             .disabled(syncing.contains(cid))
                             .accessibilityLabel("Refresh \(group.institutionName)")
-                        }
-                    }
-                )) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        if group.status == "error" || group.status == "login_required" {
-                            Label(group.errorMessage ?? "Needs attention", systemImage: "exclamationmark.triangle.fill")
-                                .font(.caption).foregroundStyle(Color.alert)
-                        } else if let cid = group.connectionId, let note = syncNotes[cid] {
-                            Text(note).font(.caption)
-                                .foregroundStyle(note.hasPrefix("Refreshed") ? Color.income : Color.alert)
-                        } else if let when = group.lastDataAt {
-                            Text("Updated \(Fmt.relative(when))").font(.caption).foregroundStyle(.secondary)
                         }
                     }
                     ForEach(rows) { account in
@@ -239,13 +241,14 @@ struct AccountDetailView: View {
                     if history.count > 1 {
                         Chart(history) { p in
                             if let date = Fmt.date(p.date) {
-                                AreaMark(x: .value("Date", date), y: .value("Balance", Double(p.balance) / 100))
+                                AreaMark(x: .value("Date", date), yStart: .value("Floor", tightDomain(history.map { Double($0.balance) / 100 }).lowerBound), yEnd: .value("Balance", Double(p.balance) / 100))
                                     .foregroundStyle(LinearGradient(colors: [Color.accentColor.opacity(0.3), .clear], startPoint: .top, endPoint: .bottom))
                                 LineMark(x: .value("Date", date), y: .value("Balance", Double(p.balance) / 100))
                                     .foregroundStyle(Color.accentColor).interpolationMethod(.monotone)
                             }
                         }
                         .chartYAxis { AxisMarks(position: .trailing) { AxisValueLabel(format: .currency(code: "USD").notation(.compactName)) } }
+                        .tightYScale(history.map { Double($0.balance) / 100 })
                         .frame(height: 140)
                     }
                     Picker("Range", selection: $days) {
