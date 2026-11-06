@@ -1,24 +1,32 @@
 import SwiftUI
 
 extension Color {
-    /// Card background that works on both platforms.
-    static var card: Color {
+    /// Palette adapted from the Copilot Money Mac app's design tokens
+    /// (pale blue-grey canvas + white cards in light, deep navy in dark).
+    private static func dynamic(light: UInt32, dark: UInt32) -> Color {
+        func rgb(_ v: UInt32) -> (Double, Double, Double) {
+            (Double((v >> 16) & 0xFF) / 255, Double((v >> 8) & 0xFF) / 255, Double(v & 0xFF) / 255)
+        }
         #if os(iOS)
-        Color(.secondarySystemGroupedBackground)
+        return Color(UIColor { t in
+            let c = rgb(t.userInterfaceStyle == .dark ? dark : light)
+            return UIColor(red: c.0, green: c.1, blue: c.2, alpha: 1)
+        })
         #else
-        Color.primary.opacity(0.07)
+        return Color(NSColor(name: nil) { a in
+            let isDark = a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let c = rgb(isDark ? dark : light)
+            return NSColor(srgbRed: c.0, green: c.1, blue: c.2, alpha: 1)
+        })
         #endif
     }
 
-    static var canvas: Color {
-        #if os(iOS)
-        Color(.systemGroupedBackground)
-        #else
-        Color(nsColor: .windowBackgroundColor)
-        #endif
-    }
-
-    static let income = Color(red: 0.13, green: 0.65, blue: 0.38)
+    static let card = dynamic(light: 0xFFFFFF, dark: 0x03101C)
+    static let canvas = dynamic(light: 0xF6F8FA, dark: 0x00080F)
+    static let hairline = dynamic(light: 0xE4E8EF, dark: 0x0C2340)
+    static let track = dynamic(light: 0xDDE1E8, dark: 0x042554)
+    static let income = dynamic(light: 0x1AA80F, dark: 0x31D252)
+    static let alert = dynamic(light: 0xD96800, dark: 0xFF7A00)
 }
 
 struct Card<Content: View>: View {
@@ -33,10 +41,12 @@ struct Card<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             if title != nil || trailing != nil {
                 HStack {
-                    if let title { Text(title).font(.headline) }
+                    if let title {
+                        Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                    }
                     Spacer()
                     trailing
                 }
@@ -45,7 +55,9 @@ struct Card<Content: View>: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(Color.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.hairline, lineWidth: 1))
+        .shadow(color: .black.opacity(0.04), radius: 8, y: 2)
     }
 }
 
@@ -68,12 +80,23 @@ struct CategoryBadge: View {
     let icon: String?
     var size: CGFloat = 38
 
+    private static let palette: [Color] = [
+        Color(red: 0.01, green: 0.39, blue: 0.77), Color(red: 0.13, green: 0.65, blue: 0.38),
+        Color(red: 0.85, green: 0.41, blue: 0.0), Color(red: 0.55, green: 0.32, blue: 0.85),
+        Color(red: 0.86, green: 0.25, blue: 0.40), Color(red: 0.0, green: 0.60, blue: 0.70),
+        Color(red: 0.69, green: 0.50, blue: 0.0),
+    ]
+    private var tint: Color {
+        guard let icon else { return .gray }
+        return Self.palette[abs(icon.unicodeScalars.reduce(0) { $0 &* 31 &+ Int($1.value) }) % Self.palette.count]
+    }
+
     var body: some View {
         Image(systemName: Icons.symbol(icon))
             .font(.system(size: size * 0.44, weight: .semibold))
-            .foregroundStyle(Color.accentColor)
+            .foregroundStyle(tint)
             .frame(width: size, height: size)
-            .background(Color.accentColor.opacity(0.14), in: Circle())
+            .background(tint.opacity(0.14), in: Circle())
     }
 }
 
@@ -84,14 +107,19 @@ struct TxnRow: View {
         HStack(spacing: 12) {
             CategoryBadge(icon: txn.isTransfer ? "arrow-left-right" : txn.categoryIcon)
             VStack(alignment: .leading, spacing: 2) {
-                Text(txn.name).font(.body).lineLimit(1)
+                HStack(spacing: 6) {
+                    if !txn.reviewed && !txn.isTransfer {
+                        Circle().fill(Color.accentColor).frame(width: 7, height: 7)
+                    }
+                    Text(txn.name).font(.body.weight(.medium)).lineLimit(1)
+                }
                 HStack(spacing: 4) {
                     if let cat = txn.categoryName {
-                        Text(cat)
+                        Text(cat).lineLimit(1).fixedSize()
                     } else {
-                        Text("Uncategorized").foregroundStyle(.orange)
+                        Text("Uncategorized").foregroundStyle(Color.alert).lineLimit(1).fixedSize()
                     }
-                    Text("· \(txn.accountName)").lineLimit(1)
+                    Text("· \(txn.accountName)").lineLimit(1).truncationMode(.tail)
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -100,6 +128,7 @@ struct TxnRow: View {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(Fmt.money(txn.normalizedAmount))
                     .font(.body.monospacedDigit())
+                    .fontWeight(.medium)
                     .foregroundStyle(txn.normalizedAmount > 0 ? Color.income : Color.primary)
                 if txn.pending { Text("Pending").font(.caption2).foregroundStyle(.secondary) }
             }

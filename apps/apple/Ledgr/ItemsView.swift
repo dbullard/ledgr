@@ -55,6 +55,8 @@ struct ItemsView: View {
                 Section { ProgressView().frame(maxWidth: .infinity) }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(Color.canvas)
         .navigationTitle("Items")
         .refreshable { await load() }
         .task(id: connection.active) { await load() }

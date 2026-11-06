@@ -25,12 +25,15 @@ struct TransactionsView: View {
                 Section(header) {
                     ForEach(items) { txn in
                         NavigationLink(value: txn) { TxnRow(txn: txn) }
+                            .listRowBackground(Color.card)
                             .onAppear { if txn.id == rows.last?.id { Task { await loadMore() } } }
                     }
                 }
             }
             if loadingMore { ProgressView().frame(maxWidth: .infinity) }
         }
+        .scrollContentBackground(.hidden)
+        .background(Color.canvas)
         .overlay {
             if !loaded && error == nil { ProgressView() }
             else if let error, rows.isEmpty { ErrorState(message: error) { Task { await reload() } } }

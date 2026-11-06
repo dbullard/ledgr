@@ -66,6 +66,8 @@ struct ReceiptsView: View {
                 Section { Text(error).font(.footnote).foregroundStyle(.red) }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(Color.canvas)
         .navigationTitle("Receipts")
         .quickLookPreview($preview)
         .refreshable { await load() }

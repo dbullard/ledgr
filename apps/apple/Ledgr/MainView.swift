@@ -1,7 +1,8 @@
 import SwiftUI
 
-enum AppSection: Hashable, CaseIterable {
+enum AppSection: Hashable {
     case dashboard, transactions, receipts, items, more
+    case web(WebPage)
 }
 
 /// Pages that don't have a native screen yet open the real web app.
@@ -61,6 +62,8 @@ struct MoreView: View {
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(Color.canvas)
         .navigationTitle("More")
     }
 }
@@ -101,11 +104,18 @@ struct MainView: View {
                     Label("Receipts", systemImage: "receipt").tag(AppSection.receipts)
                     Label("Items", systemImage: "cart").tag(AppSection.items)
                 }
-                Section("More") {
-                    Label("Full app & settings", systemImage: "ellipsis.circle").tag(AppSection.more)
+                Section("Manage") {
+                    ForEach(WebPage.all.prefix(6)) { page in
+                        Label(page.title, systemImage: page.symbol).tag(AppSection.web(page))
+                    }
+                }
+                Section {
+                    Label("Settings", systemImage: "gearshape").tag(AppSection.more)
                 }
             }
-            .navigationSplitViewColumnWidth(min: 190, ideal: 210)
+            .navigationSplitViewColumnWidth(min: 200, ideal: 220)
+            .scrollContentBackground(.hidden)
+            .background(Color.canvas)
         } detail: {
             detail(for: section ?? .dashboard)
         }
@@ -131,6 +141,7 @@ struct MainView: View {
                 case .receipts: ReceiptsView()
                 case .items: ItemsView()
                 case .more: MoreView()
+                case .web(let page): WebPageView(page: page)
                 }
             }
             .navigationDestination(for: Txn.self) { TransactionDetailView(initial: $0) }

@@ -45,8 +45,8 @@ struct DashboardView: View {
     private func netWorth(_ d: DashboardResponse) -> some View {
         Card {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Net worth").font(.subheadline).foregroundStyle(.secondary)
-                Text(Fmt.money(d.summary.netWorth)).font(.system(size: 36, weight: .bold, design: .rounded)).monospacedDigit()
+                Text("Net worth").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                Text(Fmt.money(d.summary.netWorth)).font(.system(size: 40, weight: .bold)).monospacedDigit().minimumScaleFactor(0.6).lineLimit(1)
                 HStack(spacing: 16) {
                     Label(Fmt.moneyWhole(d.summary.assets), systemImage: "arrow.up.right").foregroundStyle(Color.income)
                     Label(Fmt.moneyWhole(abs(d.summary.liabilities)), systemImage: "arrow.down.right").foregroundStyle(.red)
@@ -89,6 +89,7 @@ struct DashboardView: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.hairline, lineWidth: 1))
     }
 
     private func spending(_ rows: [SpendRow]) -> some View {
@@ -106,7 +107,7 @@ struct DashboardView: View {
                             Text(Fmt.money(row.total)).font(.subheadline.monospacedDigit())
                         }
                         GeometryReader { geo in
-                            Capsule().fill(Color.accentColor.opacity(0.18))
+                            Capsule().fill(Color.track)
                                 .overlay(alignment: .leading) {
                                     Capsule().fill(Color.accentColor).frame(width: max(6, geo.size.width * Double(row.total) / maxTotal))
                                 }
