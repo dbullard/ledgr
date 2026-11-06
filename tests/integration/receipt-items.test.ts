@@ -11,7 +11,7 @@ import {
   insertHousehold,
   insertTransaction,
 } from "./helpers";
-import { receiptItems, transactionSplits } from "../../src/db/schema";
+import { receiptItems, receipts, transactionSplits } from "../../src/db/schema";
 import type { LedgrDb } from "../../src/db";
 import type { ParseRunner } from "../../src/lib/receipts/parse-model";
 
@@ -91,6 +91,29 @@ describe("receipt items", () => {
     ]);
     expect(res.data.itemsTotalCents).toBe(1347);
     expect(res.data.gapCents).toBe(153);
+  });
+
+  it("retries once when the lines found cover far less than the receipt total", async () => {
+    const { parseReceiptItems } = await import("../../src/actions/receipt-items");
+    await db.update(receipts).set({ hintTotalCents: 1500 }).where(eq(receipts.id, receiptId));
+    let calls = 0;
+    const shortThenFull: ParseRunner = async (input) => {
+      calls++;
+      if (calls === 1) return { items: [{ name: "KS ORG BNNA", totalCents: 349 }] };
+      return model(input);
+    };
+    const res = await parseReceiptItems(receiptId, db, root, shortThenFull, null);
+    if (!("data" in res)) throw new Error(JSON.stringify(res));
+    expect(calls).toBe(2);
+    expect(res.data.items).toHaveLength(4);
+
+    calls = 0;
+    const good: ParseRunner = async (input) => {
+      calls++;
+      return model(input);
+    };
+    await parseReceiptItems(receiptId, db, root, good, null);
+    expect(calls).toBe(1);
   });
 
   it("learns a correction and applies it on the next receipt", async () => {

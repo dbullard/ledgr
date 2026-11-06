@@ -25,7 +25,7 @@ export const receipts = pgTable(
     contentType: text("content_type").notNull(),
     sizeBytes: integer("size_bytes").notNull(),
     sha256: text("sha256").notNull(),
-    source: text("source", { enum: ["upload", "folder", "email", "extension"] })
+    source: text("source", { enum: ["upload", "folder", "email", "extension", "mcp", "import"] })
       .notNull()
       .default("upload"),
     /**

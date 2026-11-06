@@ -131,9 +131,10 @@ export function buildItemsPrompt(text: string | null, categoryNames: string[]): 
     "Extract the purchased line items from this receipt.",
     "Rules:",
     "- One entry per purchased product. Skip subtotal, tax, total, tender, change, loyalty and savings summary lines.",
+    '- name: copy the item text EXACTLY as printed on the receipt, character for character (keep abbreviations and capital letters; never expand, translate or reword it).',
     "- totalCents is the line's price in integer cents (a $3.49 line is 349). Discount or coupon lines are negative.",
     "- quantity is the count or weight when printed, else 1.",
-    '- product is a short plain-English name for the item (e.g. "KS ORG BNNA" -> "Bananas").',
+    '- product: always fill this with a short plain-English name for the item (e.g. name "KS ORG BNNA" -> product "Bananas").',
     ...(categoryNames.length
       ? [`- category must be exactly one of: ${categoryNames.join(", ")}. Omit it if none fits.`]
       : []),

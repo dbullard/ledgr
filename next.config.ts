@@ -12,6 +12,11 @@ const nextConfig: NextConfig = {
   // WASM, native code), so they must stay external. In Docker they come from
   // OCR_MODULES_DIR (see the ocr-deps stage in the Dockerfile).
   serverExternalPackages: ["tesseract.js", "tesseract.js-core", "@napi-rs/canvas"],
+  experimental: {
+    // Receipt photos, PDFs and order-history spreadsheets are uploaded through server
+    // actions; the 1 MB default would reject an ordinary phone photo.
+    serverActions: { bodySizeLimit: "20mb" },
+  },
   env: {
     APP_VERSION: version,
   },

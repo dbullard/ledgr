@@ -51,7 +51,7 @@ describe("MCP tool catalog", () => {
     const tools = (res.result as { tools: { name: string }[] }).tools;
 
     expect(tools.map((t) => t.name).sort()).toEqual(readmeToolNames());
-    expect(tools).toHaveLength(17);
+    expect(tools).toHaveLength(22);
   });
 
   test("answers a tool call with an error instead of querying data", async () => {
@@ -60,5 +60,33 @@ describe("MCP tool catalog", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toBe(CATALOG_ONLY_MESSAGE);
+  });
+});
+
+describe("MCP receipt scope", () => {
+  async function toolNames(scope: string): Promise<string[]> {
+    const { createMcpServer } = await import("./server");
+    const { registerAllTools } = await import("./tools");
+    const names: string[] = [];
+    const server = createMcpServer();
+    const original = server.registerTool.bind(server);
+    server.registerTool = ((name: string, ...rest: unknown[]) => {
+      names.push(name);
+      return (original as (...a: unknown[]) => unknown)(name, ...rest);
+    }) as typeof server.registerTool;
+    registerAllTools(server, { sub: "u", household_id: "h", scope });
+    return names;
+  }
+
+  test("receipt tools need ledgr:receipts; reading item spending needs ledgr:read", async () => {
+    const writeTools = ["save_receipt", "list_unmatched_receipts", "attach_receipt", "set_receipt_items"];
+    const readOnly = await toolNames("ledgr:read");
+    expect(readOnly).toContain("get_item_spending");
+    for (const t of writeTools) expect(readOnly).not.toContain(t);
+
+    const receipts = await toolNames("ledgr:receipts");
+    for (const t of writeTools) expect(receipts).toContain(t);
+    expect(receipts).not.toContain("get_item_spending");
+    expect(receipts).not.toContain("update_transaction_category");
   });
 });

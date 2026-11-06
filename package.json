@@ -66,6 +66,7 @@
     "react-dom": "19.2.8",
     "react-grid-layout": "^2.2.4",
     "react-plaid-link": "^4.1.1",
+    "read-excel-file": "^9.3.14",
     "recharts": "^3.10.1",
     "shadcn": "^4.19.0",
     "tailwind-merge": "^3.6.0",
@@ -104,6 +105,7 @@
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.12",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "write-excel-file": "^4.1.1"
   }
 }

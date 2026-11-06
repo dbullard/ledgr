@@ -107,10 +107,11 @@ export function McpSetupInstructions({ mcpUrl }: McpSetupInstructionsProps) {
 
       <p className="text-xs text-muted-foreground">
         On first connect, your client will open an authorization page where
-        you grant access. Three scopes are available:{" "}
+        you grant access. Four scopes are available:{" "}
         <strong>ledgr:read</strong> (view data),{" "}
-        <strong>ledgr:write</strong> (edit categories &amp; budgets), and{" "}
-        <strong>ledgr:sync</strong> (trigger bank syncs).
+        <strong>ledgr:write</strong> (edit categories &amp; budgets),{" "}
+        <strong>ledgr:sync</strong> (trigger bank syncs), and{" "}
+        <strong>ledgr:receipts</strong> (save receipts and their items).
       </p>
     </div>
   );

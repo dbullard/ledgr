@@ -7,7 +7,7 @@ import { registerAllTools } from "./tools";
 const CATALOG_CLAIMS: AccessTokenClaims = {
   sub: "catalog",
   household_id: "catalog",
-  scope: "ledgr:read ledgr:write ledgr:sync",
+  scope: "ledgr:read ledgr:write ledgr:sync ledgr:receipts",
 };
 
 export const CATALOG_ONLY_MESSAGE =

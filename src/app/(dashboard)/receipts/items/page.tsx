@@ -136,10 +136,10 @@ export default async function ReceiptItemsPage({
               <thead className="text-left text-xs text-muted-foreground">
                 <tr>
                   <th className="py-1 font-normal">Product</th>
-                  <th className="py-1 text-right font-normal">Spent</th>
-                  <th className="py-1 text-right font-normal">Times</th>
-                  <th className="py-1 text-right font-normal">Avg price</th>
-                  <th className="py-1 text-right font-normal">Last bought</th>
+                  <th className="py-1 pl-3 text-right font-normal">Spent</th>
+                  <th className="py-1 pl-3 text-right font-normal">Times</th>
+                  <th className="py-1 pl-3 text-right font-normal">Avg price</th>
+                  <th className="py-1 pl-3 text-right font-normal">Last bought</th>
                 </tr>
               </thead>
               <tbody>
@@ -150,10 +150,10 @@ export default async function ReceiptItemsPage({
                         {p.name}
                       </Link>
                     </td>
-                    <td className="py-1.5 text-right tabular-nums">{centsToDisplay(p.totalCents)}</td>
-                    <td className="py-1.5 text-right tabular-nums">{p.purchases}</td>
-                    <td className="py-1.5 text-right tabular-nums">{centsToDisplay(p.avgUnitCents)}</td>
-                    <td className="py-1.5 text-right">{formatDateShort(p.lastDate)}</td>
+                    <td className="py-1.5 pl-3 text-right tabular-nums">{centsToDisplay(p.totalCents)}</td>
+                    <td className="py-1.5 pl-3 text-right tabular-nums">{p.purchases}</td>
+                    <td className="py-1.5 pl-3 text-right tabular-nums">{centsToDisplay(p.avgUnitCents)}</td>
+                    <td className="py-1.5 pl-3 text-right whitespace-nowrap">{formatDateShort(p.lastDate)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -176,7 +176,7 @@ export default async function ReceiptItemsPage({
                     <tr key={i} className="border-t border-border/70">
                       <td className="py-1.5">{formatDateShort(h.date)}</td>
                       <td className="py-1.5">{h.merchant}</td>
-                      <td className="py-1.5 text-right tabular-nums">{centsToDisplay(h.unitCents)} each</td>
+                      <td className="py-1.5 pl-3 text-right tabular-nums">{centsToDisplay(h.unitCents)} each</td>
                     </tr>
                   ))}
                 </tbody>

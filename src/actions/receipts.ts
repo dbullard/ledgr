@@ -1,6 +1,6 @@
 "use server";
 
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { v4 as uuid } from "uuid";
 import { db as defaultDb, type LedgrDb } from "@/db";
@@ -16,9 +16,9 @@ import {
   receiptExtension,
   receiptsRoot,
 } from "@/lib/receipts/paths";
-import { deleteReceiptFile, moveReceipt, sha256Hex, writeReceipt } from "@/lib/receipts/storage";
-import { candidateTransactions, ingestReceipt } from "@/lib/receipts/ingest";
-import { suggestMatches } from "@/lib/receipts/match";
+import { deleteReceiptFile, sha256Hex, writeReceipt } from "@/lib/receipts/storage";
+import { ingestReceipt } from "@/lib/receipts/ingest";
+import { attachReceiptToTransaction, listUnmatchedReceipts } from "@/lib/receipts/service";
 
 const idSchema = z.string().min(1);
 
@@ -243,40 +243,8 @@ export async function fetchUnmatchedReceipts(
   db: LedgrDb = defaultDb,
 ): Promise<{ data: UnmatchedReceipt[] } | { error: string }> {
   const householdId = await getHouseholdId();
-  const data = await withHousehold(
-    householdId,
-    async (tx) => {
-      const rows = await tx
-        .select({
-          ...summaryColumns,
-          hintTotalCents: receipts.hintTotalCents,
-          hintDate: receipts.hintDate,
-          hintMerchant: receipts.hintMerchant,
-        })
-        .from(receipts)
-        .where(scopedQuery(householdId, tx).where(receipts, isNull(receipts.transactionId)))
-        .orderBy(desc(receipts.createdAt))
-        .limit(200);
-
-      const out: UnmatchedReceipt[] = [];
-      for (const r of rows) {
-        const hints = { totalCents: r.hintTotalCents, date: r.hintDate, merchant: r.hintMerchant };
-        const suggestions = suggestMatches(hints, await candidateTransactions(householdId, hints, tx)).map(
-          (s) => ({
-            transactionId: s.txn.id,
-            name: s.txn.name,
-            date: s.txn.date,
-            amountCents: Math.abs(s.txn.normalizedAmount),
-            reasons: s.reasons,
-          }),
-        );
-        out.push({ ...toSummary(r), hintTotalCents: r.hintTotalCents, hintDate: r.hintDate, hintMerchant: r.hintMerchant, suggestions });
-      }
-      return out;
-    },
-    db,
-  );
-  return { data };
+  const rows = await withHousehold(householdId, (tx) => listUnmatchedReceipts(tx, householdId), db);
+  return { data: rows.map((r) => ({ ...toSummary(r), hintTotalCents: r.hintTotalCents, hintDate: r.hintDate, hintMerchant: r.hintMerchant, suggestions: r.suggestions })) };
 }
 
 /** Attaches an unmatched receipt to a transaction and renames the file to match it. */
@@ -295,41 +263,7 @@ export async function attachReceipt(
 
   return withHousehold(
     householdId,
-    async (tx) => {
-      const scoped = scopedQuery(householdId, tx);
-      const [receipt] = await tx
-        .select({ filePath: receipts.filePath, contentType: receipts.contentType, transactionId: receipts.transactionId })
-        .from(receipts)
-        .where(scoped.where(receipts, eq(receipts.id, parsedReceipt.data)))
-        .limit(1);
-      if (!receipt) return { error: "Receipt not found" };
-      if (receipt.transactionId) return { error: "Receipt is already attached" };
-
-      const [txn] = await tx
-        .select({ date: transactions.date, name: transactions.name, normalizedAmount: transactions.normalizedAmount })
-        .from(transactions)
-        .where(scoped.where(transactions, eq(transactions.id, parsedTxn.data), notDeleted(transactions)))
-        .limit(1);
-      if (!txn) return { error: "Transaction not found" };
-
-      const ext = receiptExtension(receipt.filePath);
-      if (!ext) return { error: "Unsupported file type" };
-      const newRel = await moveReceipt(
-        receipt.filePath,
-        { date: txn.date, merchant: txn.name, amountCents: txn.normalizedAmount, ext },
-        root,
-      );
-      try {
-        await tx
-          .update(receipts)
-          .set({ transactionId: parsedTxn.data, filePath: newRel })
-          .where(scoped.where(receipts, eq(receipts.id, parsedReceipt.data)));
-      } catch (e) {
-        await moveReceipt(newRel, { date: txn.date, ext, hash: parsedReceipt.data }, root).catch(() => undefined);
-        throw e;
-      }
-      return { success: true as const };
-    },
+    (tx) => attachReceiptToTransaction(tx, householdId, parsedReceipt.data, parsedTxn.data, root),
     db,
   );
 }

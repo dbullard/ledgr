@@ -108,7 +108,7 @@ export async function ingestReceipt(opts: {
   householdId: string;
   data: Buffer;
   filename: string;
-  source: "upload" | "folder" | "email" | "extension";
+  source: "upload" | "folder" | "email" | "extension" | "mcp" | "import";
   db: LedgrDb;
   root?: string;
   today?: string;

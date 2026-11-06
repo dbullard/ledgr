@@ -9,6 +9,7 @@ import { registerRecurringTools } from "./recurring";
 import { registerInvestmentTools } from "./investments";
 import { registerCategoryReadTools, registerCategoryWriteTools } from "./categories";
 import { registerSyncTools } from "./sync";
+import { registerReceiptReadTools, registerReceiptTools } from "./receipts";
 import { registerAppTools } from "../apps/register";
 
 export function registerAllTools(server: McpServer, claims: AccessTokenClaims) {
@@ -24,6 +25,7 @@ export function registerAllTools(server: McpServer, claims: AccessTokenClaims) {
     registerRecurringTools(server, householdId);
     registerInvestmentTools(server, householdId);
     registerCategoryReadTools(server, householdId);
+    registerReceiptReadTools(server, householdId);
     registerAppTools(server, householdId);
   }
 
@@ -31,6 +33,10 @@ export function registerAllTools(server: McpServer, claims: AccessTokenClaims) {
     registerCategoryWriteTools(server, householdId);
     registerBudgetWriteTools(server, householdId);
     registerTransactionWriteTools(server, householdId);
+  }
+
+  if (scopes.includes("ledgr:receipts")) {
+    registerReceiptTools(server, householdId);
   }
 
   if (scopes.includes("ledgr:sync")) {

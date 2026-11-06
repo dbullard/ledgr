@@ -8,13 +8,14 @@ export function getMcpResourceUrl(): string {
   return `${getLedgrUrl()}/api/mcp`;
 }
 
-export const MCP_SCOPES = ["ledgr:read", "ledgr:write", "ledgr:sync"] as const;
-export const DEFAULT_SCOPE = "ledgr:read ledgr:write ledgr:sync";
+export const MCP_SCOPES = ["ledgr:read", "ledgr:write", "ledgr:sync", "ledgr:receipts"] as const;
+export const DEFAULT_SCOPE = "ledgr:read ledgr:write ledgr:sync ledgr:receipts";
 
 export const SCOPE_LABELS: Record<string, string> = {
   "ledgr:read": "View your accounts, transactions, budgets, and reports",
   "ledgr:write": "Update transaction categories, transfer status, and budget allocations",
   "ledgr:sync": "Trigger bank account syncs",
+  "ledgr:receipts": "Save receipts and their line items to your receipts folder, and attach them to transactions",
 };
 
 export const READ_ANNOTATIONS = {

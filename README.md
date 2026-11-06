@@ -189,8 +189,13 @@ On first connection, Ledgr redirects you through an OAuth flow to authorize acce
 | `get_dashboard_summary` | Overview of your finances |
 | `show_financial_dashboard` | Interactive dashboard widget |
 | `sync_accounts` | Trigger a bank sync |
+| `get_item_spending` | What you buy: spend by category and top products, from itemized receipts |
+| `save_receipt` | Save a receipt you read, with its items, and attach it to the matching transaction |
+| `list_unmatched_receipts` | Saved receipts not yet attached, with suggested matches |
+| `attach_receipt` | Attach a saved receipt to a transaction |
+| `set_receipt_items` | Replace a saved receipt's line items |
 
-Read, write, and sync tools are gated by OAuth scopes (`ledgr:read`, `ledgr:write`, `ledgr:sync`) that you grant during authorization.
+Read, write, sync, and receipt tools are gated by OAuth scopes (`ledgr:read`, `ledgr:write`, `ledgr:sync`, `ledgr:receipts`) that you grant during authorization.
 
 **Example prompts:**
 - "How much did I spend on groceries this month?"

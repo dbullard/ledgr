@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ReceiptTray } from "@/components/organisms/receipt-tray";
+import { WalmartImport } from "@/components/organisms/walmart-import";
 
 export const metadata = { title: "Receipts" };
 
@@ -17,6 +18,7 @@ export default function ReceiptsPage() {
         </Link>
       </div>
       <ReceiptTray />
+      <WalmartImport />
     </div>
   );
 }

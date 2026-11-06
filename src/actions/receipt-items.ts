@@ -20,6 +20,7 @@ import {
   normalizeRawName,
   reconcile,
 } from "@/lib/receipts/items";
+import type { ParsedReceipt } from "@/lib/receipts/items";
 import { receiptModelBlocker, runReceiptModel, type ParseRunner } from "@/lib/receipts/parse-model";
 
 const idSchema = z.string().min(1);
@@ -42,6 +43,9 @@ export interface ReceiptItemsResult {
   /** Receipt (or transaction) total minus the lines: tax, fees, or a missed line. */
   gapCents: number | null;
 }
+
+/** Lines found must cover at least this share of the receipt total, else the read is retried once. */
+const MIN_COVERAGE = 0.6;
 
 const IMAGE_TYPES: Record<string, string> = {
   png: "image/png",
@@ -122,7 +126,7 @@ export async function parseReceiptItems(
     async (tx) => {
       const scoped = scopedQuery(householdId, tx);
       const [receipt] = await tx
-        .select({ filePath: receipts.filePath })
+        .select({ filePath: receipts.filePath, hintTotalCents: receipts.hintTotalCents })
         .from(receipts)
         .where(scoped.where(receipts, eq(receipts.id, parsedId.data)))
         .limit(1);
@@ -149,14 +153,24 @@ export async function parseReceiptItems(
     if (!text?.trim()) return { error: "No readable text in this file. Try a PDF with text, an image, or a .txt." };
   }
 
-  let parsed;
+  const attempt = async () => cleanItems(await run({ text, image, categoryNames: found.cats.map((c) => c.name) }), found.cats);
+  let parsed: ParsedReceipt | null = null;
+  let cleaned: ReturnType<typeof cleanItems> = [];
   try {
-    parsed = await run({ text, image, categoryNames: found.cats.map((c) => c.name) });
+    const first = await run({ text, image, categoryNames: found.cats.map((c) => c.name) });
+    parsed = first;
+    cleaned = cleanItems(first, found.cats);
+    // A model sometimes stops after a few lines. If the lines found cover well under
+    // the receipt's own total, try once more and keep whichever read found more.
+    const total = found.receipt.hintTotalCents;
+    if (total && reconcile(cleaned, total).itemsTotalCents < total * MIN_COVERAGE) {
+      const second = await attempt().catch(() => []);
+      if (second.length > cleaned.length) cleaned = second;
+    }
   } catch (e) {
     console.error("[receipts] item parsing failed", e);
     return { error: "The model couldn't read this receipt. Check that it is running and supports this file type." };
   }
-  const cleaned = cleanItems(parsed, found.cats);
   if (cleaned.length === 0) return { error: "No line items were found on this receipt" };
 
   return withHousehold(
@@ -181,7 +195,7 @@ export async function parseReceiptItems(
       );
       await tx
         .update(receipts)
-        .set({ parsedAt: new Date(), hintTotalCents: parsed.totalCents ? Math.round(parsed.totalCents) : undefined })
+        .set({ parsedAt: new Date(), hintTotalCents: parsed?.totalCents ? Math.round(parsed.totalCents) : undefined })
         .where(scoped.where(receipts, eq(receipts.id, parsedId.data)));
       const result = await loadItems(tx, householdId, parsedId.data);
       return result ? { data: result } : { error: "Receipt not found" };
