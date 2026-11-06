@@ -15,15 +15,20 @@ struct LedgrApp: App {
     @StateObject private var connection: Connection
     @StateObject private var web: WebModel
     @StateObject private var queue = UploadQueue()
-    @StateObject private var actions = AppActions()
+    @StateObject private var actions: AppActions
     @StateObject private var api: API
 
     init() {
         let connection = Connection()
         let web = WebModel()
+        let actions = AppActions()
+        _actions = StateObject(wrappedValue: actions)
+        AppContext.shared.actions = actions
         _connection = StateObject(wrappedValue: connection)
         _web = StateObject(wrappedValue: web)
-        _api = StateObject(wrappedValue: API(connection: connection, web: web))
+        let api = API(connection: connection, web: web)
+        _api = StateObject(wrappedValue: api)
+        AppContext.shared.api = api
     }
 
     var body: some Scene {
