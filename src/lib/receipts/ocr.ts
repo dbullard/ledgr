@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import path from "node:path";
 
 /**
@@ -26,16 +27,34 @@ export function looksLikeImage(b: Buffer): boolean {
   return png || jpeg || webp;
 }
 
+/**
+ * In the Docker image the OCR packages live in their own flat node_modules
+ * (OCR_MODULES_DIR); everywhere else they resolve normally.
+ */
+function modulesDir(): string | null {
+  return process.env.OCR_MODULES_DIR ?? null;
+}
+
+export async function loadTesseract(): Promise<typeof import("tesseract.js")> {
+  const dir = modulesDir();
+  if (dir) return createRequire(path.join(dir, "x.js"))("tesseract.js");
+  return import("tesseract.js");
+}
+
+export async function loadCanvas(): Promise<typeof import("@napi-rs/canvas")> {
+  const dir = modulesDir();
+  if (dir) return createRequire(path.join(dir, "x.js"))("@napi-rs/canvas");
+  return import("@napi-rs/canvas");
+}
+
 function langPath(): string {
-  return (
-    process.env.OCR_LANG_PATH ??
-    path.join(process.cwd(), "node_modules", "@tesseract.js-data", "eng", "4.0.0_best_int")
-  );
+  const base = modulesDir() ?? process.cwd();
+  return process.env.OCR_LANG_PATH ?? path.join(base, "node_modules", "@tesseract.js-data", "eng", "4.0.0_best_int");
 }
 
 async function getWorker(): Promise<OcrWorker> {
   if (!worker) {
-    worker = import("tesseract.js").then(
+    worker = loadTesseract().then(
       ({ createWorker }) =>
         createWorker("eng", 1, { langPath: langPath(), gzip: true, cachePath: path.join(process.env.TMPDIR ?? "/tmp", "ledgr-ocr"),
           // A bad image makes the worker emit an error event; without a handler that
@@ -87,7 +106,7 @@ export async function renderPdfPages(data: Buffer, maxPages = 3): Promise<Buffer
     const pages: Buffer[] = [];
     for (let n = 1; n <= Math.min(pdf.numPages, maxPages); n++) {
       const png = await renderPageAsImage(pdf, n, {
-        canvasImport: () => import("@napi-rs/canvas"),
+        canvasImport: loadCanvas,
         scale: 2,
       });
       pages.push(Buffer.from(png as Uint8Array));

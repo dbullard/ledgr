@@ -8,18 +8,10 @@ const { version } = JSON.parse(readFileSync("./package.json", "utf8"));
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  // Receipt OCR: the Tesseract worker, its WASM core, the bundled English model and
-  // the native canvas are loaded at runtime, so file tracing must carry them into
-  // the standalone image.
+  // Receipt OCR loads tesseract.js and @napi-rs/canvas at runtime (worker threads,
+  // WASM, native code), so they must stay external. In Docker they come from
+  // OCR_MODULES_DIR (see the ocr-deps stage in the Dockerfile).
   serverExternalPackages: ["tesseract.js", "tesseract.js-core", "@napi-rs/canvas"],
-  outputFileTracingIncludes: {
-    "/*": [
-      "./node_modules/tesseract.js/**/*",
-      "./node_modules/tesseract.js-core/**/*",
-      "./node_modules/@tesseract.js-data/eng/4.0.0_best_int/**/*",
-      "./node_modules/@napi-rs/canvas*/**/*",
-    ],
-  },
   env: {
     APP_VERSION: version,
   },

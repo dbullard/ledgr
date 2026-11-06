@@ -18,6 +18,16 @@ COPY scripts/install-migrate-deps.mjs ./
 COPY package.json ./app-package.json
 RUN node install-migrate-deps.mjs
 
+# Receipt OCR runtime. Installed flat with npm instead of traced out of the pnpm
+# layout: the standalone trace copies tesseract.js and @napi-rs/canvas without
+# their nested dependencies or the platform-specific native binding, so they fail
+# to load. Versions match package.json; loaded via OCR_MODULES_DIR (lib/receipts/ocr.ts).
+FROM base AS ocr-deps
+WORKDIR /ocr
+RUN npm init -y >/dev/null && \
+    npm install --omit=dev --no-audit --no-fund --save-exact \
+      tesseract.js@7.0.0 @tesseract.js-data/eng@1.0.0 @napi-rs/canvas@1.1.0
+
 FROM base AS builder
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
@@ -58,6 +68,8 @@ COPY --from=builder /app/src/db/migrations ./migrations
 COPY --from=builder /app/scripts/migrate.mjs ./migrations/migrate.mjs
 COPY --from=builder /app/scripts/ensure-app-role.mjs ./migrations/ensure-app-role.mjs
 COPY --from=migrate-deps /deps/node_modules ./migrations/node_modules
+COPY --from=ocr-deps --chown=nextjs:nodejs /ocr/node_modules ./ocr_modules/node_modules
+ENV OCR_MODULES_DIR=/app/ocr_modules
 COPY --from=builder --chmod=755 /app/scripts/docker-entrypoint.sh ./docker-entrypoint.sh
 COPY --from=builder --chmod=755 /app/scripts/ensure-secrets.sh ./ensure-secrets.sh
 
