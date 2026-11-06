@@ -71,16 +71,19 @@ struct MoreView: View {
 struct StatusToolbar: ViewModifier {
     @EnvironmentObject var connection: Connection
     @EnvironmentObject var queue: UploadQueue
+    @EnvironmentObject var actions: AppActions
 
     func body(content: Content) -> some View {
         content.toolbar {
             ToolbarItem(placement: .navigation) {
+                Button { actions.showSettings = true } label: {
                 Label(connection.mode.label, systemImage: connection.mode.symbol)
                     .labelStyle(.titleAndIcon)
                     .font(.footnote)
                     .fixedSize()
                     .padding(.horizontal, 6)
-                    .help("Connected via \(connection.mode.label)")
+                    .help("Connected via \(connection.mode.label). Click to change server addresses.")
+                }
                     .foregroundStyle(connection.mode == .offline ? .red : .secondary)
             }
         }
