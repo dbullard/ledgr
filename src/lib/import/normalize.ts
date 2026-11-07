@@ -79,7 +79,8 @@ export function normalizeImportedRows(
         skipped.push({ row, reason: `Unparseable credit amount: "${creditStr}"` });
         continue;
       }
-      amountCents = debit > 0 ? debit : -credit;
+      // Some banks (Arvest) already sign debits negative; the column, not the sign, says which it is.
+      amountCents = debit !== 0 ? Math.abs(debit) : -Math.abs(credit);
     }
 
     result.push({

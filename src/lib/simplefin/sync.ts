@@ -263,7 +263,7 @@ async function applyToDb(
     const newRows = rowsWithAccount.filter(({ row }) => !existingIdByExternalId.has(row.externalId));
     if (newRows.length) {
       const adoptable = await tx
-        .select({ id: transactions.id, accountId: transactions.accountId, date: transactions.date, amount: transactions.amount })
+        .select({ id: transactions.id, accountId: transactions.accountId, date: transactions.date, amount: transactions.normalizedAmount })
         .from(transactions)
         .where(
           and(
@@ -273,7 +273,7 @@ async function applyToDb(
         );
       for (const accountId of new Set(newRows.map((n) => n.internalAccountId))) {
         const matches = matchNearDuplicates(
-          newRows.filter((n) => n.internalAccountId === accountId).map((n) => ({ key: n.row.externalId, date: n.row.date, amount: n.row.amount })),
+          newRows.filter((n) => n.internalAccountId === accountId).map((n) => ({ key: n.row.externalId, date: n.row.date, amount: n.row.normalizedAmount })),
           adoptable.filter((a) => a.accountId === accountId).map((a) => ({ key: a.id, date: a.date, amount: a.amount })),
         );
         for (const [externalId, existingId] of matches) adoptedIdByExternalId.set(externalId, existingId);

@@ -54,9 +54,9 @@ describe("file import and SimpleFIN sync do not duplicate each other", () => {
     });
     const incoming: NormalizedRow[] = [
       // same purchase, bank's wording, posted a day later
-      { id: "i1", accountId, householdId, date: dayStr(-4), originalName: "POS DEBIT COFFEE SHOP", name: "x", amount: -4250, externalId: "FIT-1" },
+      { id: "i1", accountId, householdId, date: dayStr(-4), originalName: "POS DEBIT COFFEE SHOP", name: "x", amount: 4250, externalId: "FIT-1" },
       // genuinely new
-      { id: "i2", accountId, householdId, date: dayStr(-4), originalName: "HARDWARE", name: "x", amount: -9900, externalId: "FIT-2" },
+      { id: "i2", accountId, householdId, date: dayStr(-4), originalName: "HARDWARE", name: "x", amount: 9900, externalId: "FIT-2" },
     ];
     const { unique, duplicates } = await findDuplicates(incoming, accountId, db);
     expect(duplicates.map((r) => r.id)).toEqual(["i1"]);
@@ -66,7 +66,7 @@ describe("file import and SimpleFIN sync do not duplicate each other", () => {
   it("sync adopts an imported row instead of inserting a duplicate, keeping its category and name", async () => {
     const { householdId, connectionId, accountId } = await setup();
     const { transactionId } = await insertTransaction(db, householdId, accountId, {
-      externalId: "FIT-1", provider: null, date: dayStr(-3), amount: -4250, normalizedAmount: -4250,
+      externalId: "FIT-1", provider: null, date: dayStr(-3), amount: 4250, normalizedAmount: -4250,
       originalName: "POS DEBIT COFFEE SHOP", name: "My coffee",
     }) as { transactionId: string };
 
