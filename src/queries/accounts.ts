@@ -4,6 +4,21 @@ import { accounts, bankConnections, institutionLogos, transactions, ACCOUNT_TYPE
 import { scopedQuery } from "@/lib/scoped-query";
 import { notDeleted, countRows } from "@/lib/query-helpers";
 import { classifyAccountType } from "@/lib/account-utils";
+import { decrypt } from "@/lib/encryption";
+import { bridgeUrlFromAccessUrl } from "@/lib/simplefin/utils";
+
+/** Only decrypt a credential when the user actually has to go to the Bridge. */
+function bridgeUrlForAttention(
+  item: { provider: string; status: string | null; credential: string } | undefined,
+): string | null {
+  if (!item || item.provider !== "simplefin") return null;
+  if (item.status !== "reauth_required" && item.status !== "error") return null;
+  try {
+    return bridgeUrlFromAccessUrl(decrypt(item.credential));
+  } catch {
+    return null;
+  }
+}
 
 export async function getAccounts(householdId: string, db: LedgrDb = defaultDb) {
   const scoped = scopedQuery(householdId, db);
@@ -33,6 +48,8 @@ export interface InstitutionGroup {
   lastDataAt: Date | null;
   logoBase64: string | null;
   primaryColor: string | null;
+  /** SimpleFIN only, when the bank needs attention: the Bridge to re-authorize on. */
+  bridgeUrl?: string | null;
   accounts: AccountRow[];
 }
 
@@ -76,6 +93,7 @@ export async function getAccountsByInstitution(
           lastDataAt: item?.lastDataAt ?? null,
           logoBase64: logoMap.get(account.bankConnectionId!) ?? null,
           primaryColor: item?.primaryColor ?? null,
+          bridgeUrl: bridgeUrlForAttention(item),
           accounts: [],
         });
       }

@@ -3,6 +3,20 @@ import type { ConnectionStatus } from "@/db/schema";
 import type { SimplefinAccountsResponse } from "./schemas";
 
 /**
+ * Where the user manages this credential's bank logins: the Bridge the access
+ * URL was issued by (public bridge, beta-bridge, or a self-hosted one), minus
+ * its embedded credentials. Null if the URL is unusable.
+ */
+export function bridgeUrlFromAccessUrl(accessUrl: string): string | null {
+  try {
+    const url = new URL(accessUrl);
+    return url.protocol === "https:" ? `${url.origin}/simplefin` : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * SimpleFIN has no webhooks — item-health signals (revoked/expired access)
  * must be inferred from HTTP response codes during a poll, per the protocol's
  * required checklist: "Handles a 403 response from /accounts."

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { classifyPollError, assessConnectionHealth } from "./utils";
+import { classifyPollError, assessConnectionHealth, bridgeUrlFromAccessUrl } from "./utils";
 import { SimplefinHttpError } from "./client";
 
 describe("classifyPollError", () => {
@@ -143,5 +143,19 @@ describe("assessConnectionHealth", () => {
     expect(loren.issue?.message).toContain("Loren's");
     const david = assessConnectionHealth(response, new Set(["david"]), now);
     expect(david.issue?.message).toContain("David's");
+  });
+});
+
+describe("bridgeUrlFromAccessUrl", () => {
+  it("points at the same Bridge the access URL came from, without its credentials", () => {
+    expect(bridgeUrlFromAccessUrl("https://user:secret@beta-bridge.simplefin.org/simplefin"))
+      .toBe("https://beta-bridge.simplefin.org/simplefin");
+    expect(bridgeUrlFromAccessUrl("https://u:p@bridge.simplefin.org/simplefin"))
+      .toBe("https://bridge.simplefin.org/simplefin");
+  });
+
+  it("returns null for anything that is not an https URL", () => {
+    expect(bridgeUrlFromAccessUrl("http://u:p@bridge.simplefin.org/simplefin")).toBeNull();
+    expect(bridgeUrlFromAccessUrl("not a url")).toBeNull();
   });
 });

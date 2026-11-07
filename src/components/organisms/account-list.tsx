@@ -184,7 +184,8 @@ export function AccountList({ groups }: AccountListProps) {
       );
     }
     if (c.provider === "simplefin" && c.status === "reauth_required") {
-      return <SimplefinBridgeLink />;
+      const bridgeUrl = groups.find((g) => g.connectionId === c.connectionId)?.bridgeUrl;
+      return <SimplefinBridgeLink href={bridgeUrl} label={`Re-authorize ${c.institutionName}`} />;
     }
     return undefined;
   };

@@ -9,10 +9,17 @@ import type { ConnectionAlert } from "@/lib/connection-alerts";
 /** Where a SimpleFIN user re-enters bank credentials / MFA. Bridges are self-hostable, so this is the public default. */
 export const SIMPLEFIN_BRIDGE_URL = "https://bridge.simplefin.org/simplefin";
 
-export function SimplefinBridgeLink({ label = "Open SimpleFIN Bridge" }: { label?: string }) {
+export function SimplefinBridgeLink({
+  label = "Open SimpleFIN Bridge",
+  href = SIMPLEFIN_BRIDGE_URL,
+}: {
+  label?: string;
+  /** The Bridge this credential was issued by; falls back to the public one. */
+  href?: string | null;
+}) {
   return (
     <a
-      href={SIMPLEFIN_BRIDGE_URL}
+      href={href ?? SIMPLEFIN_BRIDGE_URL}
       target="_blank"
       rel="noopener noreferrer"
       className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
