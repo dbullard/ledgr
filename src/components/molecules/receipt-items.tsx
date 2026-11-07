@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { ListChecks } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,6 +32,20 @@ export function ReceiptItems({
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+
+  // A receipt that already has items shows them without a click.
+  useEffect(() => {
+    let live = true;
+    fetchReceiptItems(receiptId).then((res) => {
+      if (live && "data" in res && res.data.items.length > 0) {
+        setResult(res.data);
+        setOpen(true);
+      }
+    });
+    return () => {
+      live = false;
+    };
+  }, [receiptId]);
 
   function show() {
     setOpen(true);

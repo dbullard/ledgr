@@ -97,7 +97,7 @@ struct AccountsView: View {
                     .help("Show hidden accounts")
             }
         }
-        .refreshable { await load() }
+        .refreshable { await api.syncBanks(); await load() }
         .task(id: connection.active) { await load() }
     }
 

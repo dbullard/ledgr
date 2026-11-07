@@ -21,6 +21,42 @@ final class API: ObservableObject {
     enum AuthState { case unknown, signedOut, signedIn }
 
     @Published private(set) var auth: AuthState = .unknown
+    /// Set whenever a transaction is edited so lists and the dashboard can update in place.
+    @Published private(set) var changedTxn: Txn?
+    /// Bumped on any edit that can change totals (category, review, receipts).
+    @Published private(set) var dataVersion = 0
+
+    private var bankSyncTask: Task<Void, Never>?
+    private var lastBankSync: Date?
+
+    /// Asks the server to pull new transactions from every connected bank. Pull-to-refresh
+    /// calls this before it reloads. Overlapping pulls share one sync, a sync within the last
+    /// 45 seconds is not repeated (so a pulling habit can't hammer the banks), and waiting
+    /// stops after 40 seconds (the server keeps going). Never throws: a bank that can't
+    /// sync just means the reload shows what is already there.
+    func syncBanks() async {
+        if let running = bankSyncTask { await running.value; return }
+        if let last = lastBankSync, Date().timeIntervalSince(last) < 45 { return }
+        let task = Task<Void, Never> {
+            let work = Task { try? await self.post("api/native/accounts/sync", body: ["all": true]) }
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { _ = await work.value }
+                group.addTask { try? await Task.sleep(nanoseconds: 40_000_000_000) }
+                await group.next()
+                group.cancelAll()
+            }
+        }
+        bankSyncTask = task
+        await task.value
+        bankSyncTask = nil
+        lastBankSync = Date()
+    }
+
+    func noteChanged(_ txn: Txn? = nil) {
+        if let txn { changedTxn = txn }
+        dataVersion += 1
+    }
+
     /// Why the last request was turned away, shown on the sign-in screen.
     @Published private(set) var lastIssue: String?
 
@@ -83,12 +119,16 @@ final class API: ObservableObject {
         return try decode(data)
     }
 
+    func put(_ path: String, body: [String: Any]) async throws {
+        _ = try await send("PUT", path, body: body)
+    }
+
     func post(_ path: String, body: [String: Any]) async throws {
         _ = try await send("POST", path, body: body)
     }
 
-    func delete(_ path: String) async throws {
-        _ = try await send("DELETE", path)
+    func delete(_ path: String, query: [String: String] = [:]) async throws {
+        _ = try await send("DELETE", path, query: query)
     }
 
     /// Multipart upload for endpoints that take a file plus form fields. Returns the JSON object.
@@ -223,6 +263,7 @@ final class API: ObservableObject {
     }
 
     func signOut() async {
+        await PushManager.shared.unregister(using: self)
         if let base = connection.active {
             var request = URLRequest(url: base.appendingPathComponent("api/auth/sign-out"))
             request.httpMethod = "POST"

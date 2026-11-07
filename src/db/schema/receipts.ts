@@ -1,4 +1,4 @@
-import { index, integer, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { boolean, index, integer, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { households } from "./households";
 import { categories } from "./categories";
 import { transactions } from "./transactions";
@@ -36,6 +36,11 @@ export const receipts = pgTable(
     hintTotalCents: integer("hint_total_cents"),
     hintDate: text("hint_date"),
     hintMerchant: text("hint_merchant"),
+    /**
+     * Set when a person removes the receipt from a transaction, so the matcher
+     * never puts it back on its own. They can still attach it by hand.
+     */
+    autoMatchBlocked: boolean("auto_match_blocked").notNull().default(false),
     /** When line items were last parsed from the file; NULL if never. */
     parsedAt: timestamp("parsed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

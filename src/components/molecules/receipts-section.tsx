@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { FileText, Paperclip, Trash2 } from "lucide-react";
+import { FileText, Loader2, Paperclip, Trash2, Unlink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { centsToDisplay } from "@/lib/money";
 import { ReceiptItems } from "@/components/molecules/receipt-items";
@@ -10,6 +10,7 @@ import { DetailGroup, DetailRow } from "@/components/molecules/detail-group";
 import {
   attachReceipt,
   deleteReceipt,
+  detachReceipt,
   fetchReceipts,
   fetchUnmatchedReceipts,
   uploadReceipt,
@@ -95,7 +96,21 @@ export function ReceiptsSection({
     });
   }
 
-  function remove(id: string) {
+  function detach(id: string) {
+    setError(null);
+    startTransition(async () => {
+      const res = await detachReceipt(id);
+      if ("error" in res) {
+        setError(res.error);
+        return;
+      }
+      setItems((prev) => prev.filter((r) => r.id !== id));
+      onSplitsChanged(); // splits made from its items are gone
+    });
+  }
+
+  function remove(id: string, filename: string) {
+    if (!window.confirm(`Delete ${filename}? The file is removed permanently.`)) return;
     setError(null);
     startTransition(async () => {
       const res = await deleteReceipt(id);
@@ -141,8 +156,8 @@ export function ReceiptsSection({
             onClick={() => inputRef.current?.click()}
             disabled={pending}
           >
-            <Paperclip className="mr-1 size-3" aria-hidden />
-            {pending ? "Working…" : "Attach"}
+            {pending ? <Loader2 className="mr-1 size-3 animate-spin" aria-hidden /> : <Paperclip className="mr-1 size-3" aria-hidden />}
+            {pending ? "Reading receipt…" : "Attach"}
           </Button>
           <Button
             variant="ghost"
@@ -167,16 +182,30 @@ export function ReceiptsSection({
               <span className="truncate">{r.originalFilename}</span>
               <span className="shrink-0 text-xs text-muted-foreground">{formatSize(r.sizeBytes)}</span>
             </a>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-7 shrink-0"
-              aria-label={`Delete receipt ${r.originalFilename}`}
-              onClick={() => remove(r.id)}
-              disabled={pending}
-            >
-              <Trash2 className="size-3.5" aria-hidden />
-            </Button>
+            <div className="flex shrink-0 items-center">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                aria-label={`Remove ${r.originalFilename} from this transaction`}
+                title="Remove from this transaction (keeps the file)"
+                onClick={() => detach(r.id)}
+                disabled={pending}
+              >
+                <Unlink className="size-3.5" aria-hidden />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                aria-label={`Delete receipt ${r.originalFilename}`}
+                title="Delete the receipt file"
+                onClick={() => remove(r.id, r.originalFilename)}
+                disabled={pending}
+              >
+                <Trash2 className="size-3.5" aria-hidden />
+              </Button>
+            </div>
           </div>
           <ReceiptItems receiptId={r.id} categories={categories} onSplitsChanged={onSplitsChanged} />
           </div>

@@ -142,3 +142,31 @@ export const transactionSplits = pgTable(
     index("idx_splits_category").on(table.categoryId),
   ]
 );
+
+/**
+ * On-device AI category suggestions, cached per transaction so the model only
+ * ever sees a row once. A null `categoryId` means "answered, nothing to
+ * suggest" (no fit, or the user confirmed/dismissed it). Suggestions are never
+ * applied to the transaction until the user confirms them in the app.
+ */
+export const transactionCategorySuggestions = pgTable(
+  "transaction_category_suggestions",
+  {
+    transactionId: text("transaction_id")
+      .primaryKey()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    householdId: text("household_id")
+      .notNull()
+      .references(() => households.id, { onDelete: "cascade" }),
+    categoryId: text("category_id").references(() => categories.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_txn_cat_suggestions_household").on(table.householdId),
+    pgPolicy("household_isolation", {
+      for: "all",
+      using: sql`household_id = current_setting('app.household_id', true)`,
+      withCheck: sql`household_id = current_setting('app.household_id', true)`,
+    }),
+  ]
+).enableRLS();

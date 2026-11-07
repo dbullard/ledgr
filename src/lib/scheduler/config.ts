@@ -6,6 +6,7 @@ export type SchedulerConfig = {
   safetySyncCron: string;
   simplefinSyncCron: string;
   receiptInboxCron: string;
+  pushScanCron: string;
 };
 
 const DEFAULTS = {
@@ -15,6 +16,9 @@ const DEFAULTS = {
   // webhooks, so a once-a-day poll leaves data up to a day old.
   simplefinSyncCron: "45 */6 * * *",
   receiptInboxCron: "*/10 * * * *",
+  // Push notifications (bills, big charges, budgets, bank problems). A no-op
+  // until APNS_KEY_ID / APNS_TEAM_ID / a key are configured.
+  pushScanCron: "*/15 * * * *",
 } as const;
 
 function readBool(value: string | undefined, fallback: boolean): boolean {
@@ -51,6 +55,10 @@ export function getSchedulerConfig(): SchedulerConfig {
     receiptInboxCron: validateCron(
       "SCHEDULER_RECEIPT_INBOX_CRON",
       process.env.SCHEDULER_RECEIPT_INBOX_CRON ?? DEFAULTS.receiptInboxCron,
+    ),
+    pushScanCron: validateCron(
+      "SCHEDULER_PUSH_SCAN_CRON",
+      process.env.SCHEDULER_PUSH_SCAN_CRON ?? DEFAULTS.pushScanCron,
     ),
   };
 }

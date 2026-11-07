@@ -14,6 +14,14 @@ struct NamePrompt: Identifiable {
     let kind: Kind
 }
 
+/// Which category or group the icon picker is editing.
+struct IconTarget: Identifiable {
+    let id: String
+    let name: String
+    let current: String?
+    let isGroup: Bool
+}
+
 struct CategoriesView: View {
     @EnvironmentObject var api: API
     @EnvironmentObject var connection: Connection
@@ -22,6 +30,7 @@ struct CategoriesView: View {
     @State private var error: String?
     @State private var prompt: NamePrompt?
     @State private var message: String?
+    @State private var iconTarget: IconTarget?
 
     var body: some View {
         ScrollView {
@@ -51,6 +60,13 @@ struct CategoriesView: View {
             NameSheet(prompt: p) { text in await apply(p, text) }
                 .presentationDetents([.height(220)])
         }
+        .sheet(item: $iconTarget) { t in
+            IconPickerSheet(target: t) { icon in
+                let path = t.isGroup ? "api/native/category-groups/\(t.id)" : "api/native/categories/\(t.id)"
+                await patch(path, ["icon": icon ?? NSNull()])
+            }
+            .presentationDetents([.medium, .large])
+        }
     }
 
     private func groupCard(_ g: CategoryGroup) -> some View {
@@ -58,6 +74,7 @@ struct CategoriesView: View {
             Menu {
                 Button("Add category") { prompt = NamePrompt(title: "New category in \(g.name)", initial: "", kind: .newCategory(groupId: g.id, income: false)) }
                 Button("Add income category") { prompt = NamePrompt(title: "New income category", initial: "", kind: .newCategory(groupId: g.id, income: true)) }
+                Button("Change icon…") { iconTarget = IconTarget(id: g.id, name: g.name, current: g.icon, isGroup: true) }
                 if g.isSystem != true {
                     Button("Rename group") { prompt = NamePrompt(title: "Rename group", initial: g.name, kind: .renameGroup(id: g.id)) }
                     Menu("Merge into…") {
@@ -79,8 +96,13 @@ struct CategoriesView: View {
                     if c.excludeFromSpending == true { Text("Excluded").font(.caption2).foregroundStyle(.secondary) }
                     if c.isIncome { Text("Income").font(.caption2).padding(.horizontal, 6).padding(.vertical, 2).background(Color.income.opacity(0.15), in: Capsule()).foregroundStyle(Color.income) }
                     Spacer()
-                    if c.isSystem != true {
+                    if c.isSystem == true {
+                        Button { iconTarget = IconTarget(id: c.id, name: c.name, current: c.icon, isGroup: false) } label: { Image(systemName: "face.smiling") }
+                            .buttonStyle(.plain)
+                            .help("Change icon")
+                    } else {
                         Menu {
+                            Button("Change icon…") { iconTarget = IconTarget(id: c.id, name: c.name, current: c.icon, isGroup: false) }
                             Button("Rename") { prompt = NamePrompt(title: "Rename category", initial: c.name, kind: .renameCategory(id: c.id)) }
                             Menu("Move to group") {
                                 ForEach(groups.filter { $0.id != g.id }) { t in
@@ -154,6 +176,42 @@ struct CategoriesView: View {
             message = nil
             await load()
         } catch { message = error.localizedDescription }
+    }
+}
+
+struct IconPickerSheet: View {
+    let target: IconTarget
+    let onPick: (String?) async -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    private let columns = [GridItem(.adaptive(minimum: 48), spacing: 8)]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Icon for \(target.name)").font(.title3.weight(.semibold))
+                Spacer()
+                Button("Done") { dismiss() }
+            }
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 8) {
+                    ForEach(Icons.pickable, id: \.self) { name in
+                        Button {
+                            Task { await onPick(name); dismiss() }
+                        } label: {
+                            CategoryBadge(icon: name, size: 44)
+                                .overlay(Circle().stroke(Color.accentColor, lineWidth: name == target.current ? 2 : 0))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(name.replacingOccurrences(of: "-", with: " "))
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            Button("Use default icon") { Task { await onPick(nil); dismiss() } }
+                .disabled(target.current == nil)
+        }
+        .padding(20)
     }
 }
 

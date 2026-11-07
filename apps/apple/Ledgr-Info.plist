@@ -2,22 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
-	<key>LSSupportsOpeningDocumentsInPlace</key>
-	<true/>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<!-- Ledgr lives on your own network; the home address is plain http. -->
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-	</dict>
-	<key>NSCameraUsageDescription</key>
-	<string>Ledgr uses the camera to scan receipts.</string>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Ledgr connects to your server on your home network.</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Ledgr attaches receipt photos you choose.</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -36,5 +20,10 @@
 			</array>
 		</dict>
 	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 </dict>
 </plist>

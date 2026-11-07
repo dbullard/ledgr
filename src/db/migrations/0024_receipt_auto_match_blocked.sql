@@ -1,0 +1,1 @@
+ALTER TABLE "receipts" ADD COLUMN "auto_match_blocked" boolean DEFAULT false NOT NULL;

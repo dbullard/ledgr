@@ -27,6 +27,27 @@ enum ReceiptReader {
         return nil
     }
 
+    /// One short sentence saying what a document is ("Reimbursement from Acme for March
+    /// conference travel"), for receipts with no itemized lines. nil when this device
+    /// can't read documents or the file has no readable text.
+    static func noteText(data: Data, filename: String, context: String) async -> String? {
+        #if canImport(FoundationModels)
+        if #available(iOS 27.0, macOS 27.0, *) {
+            return await writeNote(data: data, filename: filename, context: context)
+        }
+        #endif
+        return nil
+    }
+
+    /// Model output cleaned for a notes field: one line, no wrapping quotes, bounded length.
+    static func cleanedNote(_ raw: String) -> String? {
+        var t = raw.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        t = t.trimmingCharacters(in: CharacterSet(charactersIn: "\"“”'` "))
+        while t.contains("  ") { t = t.replacingOccurrences(of: "  ", with: " ") }
+        guard t.count >= 4 else { return nil }
+        return t.count > 160 ? String(t.prefix(157)) + "…" : t
+    }
+
     static func pages(data: Data, filename: String) -> [CGImage] {
         if filename.lowercased().hasSuffix(".pdf") {
             guard let doc = PDFDocument(data: data) else { return [] }
@@ -130,7 +151,50 @@ struct ScannedReceipt {
 }
 
 @available(iOS 27.0, macOS 27.0, *)
+@Generable
+struct DocumentNote {
+    @Guide(description: "One plain sentence, under 100 characters, saying what this document is and who or what it is for. Use only what is printed.")
+    var note: String
+}
+
+@available(iOS 27.0, macOS 27.0, *)
 extension ReceiptReader {
+    static func writeNote(data: Data, filename: String, context: String) async -> String? {
+        let model = SystemLanguageModel.default
+        guard case .available = model.availability else { return nil }
+        let images = await Task.detached { pages(data: data, filename: filename) }.value
+        guard let first = images.first else { return nil }
+        let text = images.map { recognizeText($0) }.joined(separator: "\n")
+        guard text.count > 20 else { return nil }
+        do {
+            return try await withThrowingTaskGroup(of: String?.self) { group in
+                group.addTask {
+                    let session = LanguageModelSession(
+                        model: model,
+                        instructions: "You write one short note for a personal finance app about a document attached to a bank transaction. Say what it is (a reimbursement, refund, invoice, statement, order confirmation, letter...) and who or what it is for, using only what is printed. One sentence. Never guess or invent details."
+                    )
+                    let response: LanguageModelSession.Response<DocumentNote>
+                    if model.capabilities.contains(.vision) {
+                        response = try await session.respond(generating: DocumentNote.self) {
+                            "Transaction: \(context)\nRecognized text, top to bottom:\n\(text.prefix(4000))"
+                            Attachment(first)
+                        }
+                    } else {
+                        response = try await session.respond(generating: DocumentNote.self) {
+                            "Transaction: \(context)\nRecognized text, top to bottom:\n\(text.prefix(4000))"
+                        }
+                    }
+                    return cleanedNote(response.content.note)
+                }
+                group.addTask { try await Task.sleep(nanoseconds: 30_000_000_000); return nil }
+                defer { group.cancelAll() }
+                return try await group.next() ?? nil
+            }
+        } catch {
+            return nil
+        }
+    }
+
     static func read(data: Data, filename: String) async -> ParsedReceiptPayload? {
         let model = SystemLanguageModel.default
         guard case .available = model.availability, model.capabilities.contains(.vision) else { return nil }

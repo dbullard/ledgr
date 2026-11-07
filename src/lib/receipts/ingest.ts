@@ -9,6 +9,7 @@ import { extractHints, findDate, readReceiptText, type ReceiptHints } from "./hi
 import { renderPdfPages } from "./ocr";
 import { receiptModelBlocker, runReceiptModel } from "./parse-model";
 import type { ParsedReceipt } from "./items";
+import { autoItems } from "./auto-items";
 import { replaceReceiptItems } from "./service";
 import { confidentMatch, suggestMatches, type Suggestion, type TxnCandidate } from "./match";
 import { MAX_RECEIPT_BYTES, RECEIPT_TYPES, receiptExtension, receiptsRoot } from "./paths";
@@ -186,11 +187,13 @@ export async function ingestReceipt(opts: {
     await deleteReceiptFile(rel, root);
     throw e;
   }
-  if (onDevice && onDevice.items.length > 0) {
+  // Items come from the device's reader when it has them, otherwise straight from printed lines.
+  const items = await autoItems({ ext, data, text, onDevice });
+  if (items.length > 0) {
     try {
-      await replaceReceiptItems(db, householdId, id, onDevice.items);
+      await replaceReceiptItems(db, householdId, id, items);
     } catch (e) {
-      console.error("[receipts] storing on-device items failed", e);
+      console.error("[receipts] storing items failed", e);
     }
   }
   return {

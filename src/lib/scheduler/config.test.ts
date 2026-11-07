@@ -6,6 +6,7 @@ const KEYS = [
   "SCHEDULER_SNAPSHOT_CRON",
   "SCHEDULER_SAFETY_SYNC_CRON",
   "SCHEDULER_SIMPLEFIN_SYNC_CRON",
+  "SCHEDULER_PUSH_SCAN_CRON",
 ];
 
 describe("getSchedulerConfig", () => {
@@ -31,6 +32,7 @@ describe("getSchedulerConfig", () => {
       safetySyncCron: "30 4 * * *",
       simplefinSyncCron: "45 */6 * * *",
       receiptInboxCron: "*/10 * * * *",
+      pushScanCron: "*/15 * * * *",
     });
   });
 

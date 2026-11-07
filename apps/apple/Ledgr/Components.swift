@@ -103,6 +103,8 @@ struct CategoryBadge: View {
 
 struct TxnRow: View {
     let txn: Txn
+    /// On-device suggestion shown (with a sparkle) until the user confirms it.
+    var suggestion: Category?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -117,6 +119,8 @@ struct TxnRow: View {
                 HStack(spacing: 4) {
                     if let cat = txn.categoryName {
                         Text(cat).lineLimit(1).fixedSize()
+                    } else if let s = suggestion {
+                        Label(s.name, systemImage: "sparkles").foregroundStyle(Color.accentColor).lineLimit(1).fixedSize()
                     } else {
                         Text("Uncategorized").foregroundStyle(Color.alert).lineLimit(1).fixedSize()
                     }

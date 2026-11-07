@@ -4,7 +4,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { v4 as uuid } from "uuid";
 import { db as defaultDb, type LedgrDb } from "@/db";
-import { receipts, transactions } from "@/db/schema";
+import { categories, receipts, transactionSplits, transactions } from "@/db/schema";
 import { scopedQuery } from "@/lib/scoped-query";
 import { notDeleted } from "@/lib/query-helpers";
 import { authorizeAction } from "@/lib/auth/authorize-action";
@@ -20,6 +20,8 @@ import { deleteReceiptFile, sha256Hex, writeReceipt } from "@/lib/receipts/stora
 import { ingestReceipt } from "@/lib/receipts/ingest";
 import { attachReceiptToTransaction, listUnmatchedReceipts, replaceReceiptItems } from "@/lib/receipts/service";
 import { parseClientReceipt } from "@/lib/receipts/items";
+import { autoItems } from "@/lib/receipts/auto-items";
+import { readReceiptText } from "@/lib/receipts/hints";
 import { rematchWaitingReceipts } from "@/lib/receipts/rematch";
 
 const idSchema = z.string().min(1);
@@ -100,8 +102,10 @@ export async function uploadReceipt(
 
   const data = Buffer.from(await file.arrayBuffer());
   const sha256 = sha256Hex(data);
+  // Read before the transaction opens: a photo may need OCR, which takes a few seconds.
+  const text = await readReceiptText(ext, data);
 
-  return withHousehold(
+  const saved = await withHousehold(
     householdId,
     async (tx) => {
       const scoped = scopedQuery(householdId, tx);
@@ -110,8 +114,10 @@ export async function uploadReceipt(
           date: transactions.date,
           name: transactions.name,
           normalizedAmount: transactions.normalizedAmount,
+          categoryName: categories.name,
         })
         .from(transactions)
+        .leftJoin(categories, eq(transactions.categoryId, categories.id))
         .where(scoped.where(transactions, eq(transactions.id, parsedId.data), notDeleted(transactions)))
         .limit(1);
       if (!txn) return { error: "Transaction not found" };
@@ -143,15 +149,7 @@ export async function uploadReceipt(
             source: "upload",
           })
           .returning(summaryColumns);
-        const parsed = parseClientReceipt(formData.get("parsed"));
-        if (parsed && parsed.items.length > 0) {
-          try {
-            await replaceReceiptItems(tx, householdId, row.id, parsed.items);
-          } catch (e) {
-            console.error("[receipts] storing on-device items failed", e);
-          }
-        }
-        return { data: toSummary(row) };
+        return { data: toSummary(row), categoryName: txn.categoryName };
       } catch (e) {
         await deleteReceiptFile(rel, root);
         throw e;
@@ -159,6 +157,25 @@ export async function uploadReceipt(
     },
     db,
   );
+  if ("error" in saved) return saved;
+
+  // Items come after the receipt is saved, so a slow OCR never holds a database transaction open.
+  // The device's reading when it sent one (prices checked against the text), else printed lines.
+  const items = await autoItems({
+    ext,
+    data,
+    text,
+    onDevice: parseClientReceipt(formData.get("parsed")),
+    defaultCategory: saved.categoryName,
+  });
+  if (items.length > 0) {
+    try {
+      await withHousehold(householdId, (tx) => replaceReceiptItems(tx, householdId, saved.data.id, items), db);
+    } catch (e) {
+      console.error("[receipts] storing items failed", e);
+    }
+  }
+  return { data: saved.data };
 }
 
 /** Removes the row and the file. The transaction is untouched. */
@@ -187,6 +204,45 @@ export async function deleteReceipt(
 
   await deleteReceiptFile(removed[0].filePath, root);
   return { success: true };
+}
+
+/**
+ * Takes a receipt off its transaction and puts it back in the waiting list,
+ * file and items intact. Splits that were made from its items are removed,
+ * since they described a purchase that is no longer linked. The matcher will
+ * not attach it again by itself; attaching by hand still works.
+ */
+export async function detachReceipt(receiptId: string, db: LedgrDb = defaultDb): Promise<{ success: true } | { error: string }> {
+  const auth = await authorizeAction();
+  if ("error" in auth) return auth;
+  const { householdId } = auth;
+
+  const parsed = idSchema.safeParse(receiptId);
+  if (!parsed.success) return { error: "Invalid input" };
+
+  return withHousehold(
+    householdId,
+    async (tx) => {
+      const scoped = scopedQuery(householdId, tx);
+      const [row] = await tx
+        .select({ transactionId: receipts.transactionId })
+        .from(receipts)
+        .where(scoped.where(receipts, eq(receipts.id, parsed.data)))
+        .limit(1);
+      if (!row) return { error: "Receipt not found" };
+      if (!row.transactionId) return { error: "This receipt isn't attached to a transaction" };
+
+      await tx
+        .update(receipts)
+        .set({ transactionId: null, autoMatchBlocked: true })
+        .where(and(eq(receipts.householdId, householdId), eq(receipts.id, parsed.data)));
+      await tx
+        .delete(transactionSplits)
+        .where(and(eq(transactionSplits.transactionId, row.transactionId), eq(transactionSplits.notes, "From receipt items")));
+      return { success: true as const };
+    },
+    db,
+  );
 }
 
 export interface ReceiptSuggestion {

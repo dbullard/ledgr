@@ -1,7 +1,7 @@
 import { generateText, Output } from "ai";
 import { createUserModel } from "@/lib/ai/provider";
 import { getAiConfig } from "@/lib/ai/config";
-import { buildItemsPrompt, parsedReceiptSchema, type ParsedReceipt } from "./items";
+import { buildItemsPrompt, correctPricesFromText, parsedReceiptSchema, type ParsedReceipt } from "./items";
 
 export interface ParseInput {
   text: string | null;
@@ -47,5 +47,5 @@ export const runReceiptModel: ParseRunner = async ({ text, image, categoryNames 
     ],
   });
   if (!output) throw new Error("The model returned nothing usable");
-  return output;
+  return correctPricesFromText(output, text);
 };

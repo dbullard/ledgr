@@ -27,9 +27,16 @@ struct DashboardView: View {
         }
         .background(Color.canvas)
         .navigationTitle("Dashboard")
-        .refreshable { await load() }
+        .refreshable { await api.syncBanks(); await load() }
         .task(id: connection.active) { await load() }
         .onChange(of: range) { _, _ in Task { await load() } }
+        .onChange(of: api.changedTxn) { _, t in
+            // Show the edit immediately in "Recent", then refresh totals in the background.
+            guard let t, var d = data, let i = d.recent.firstIndex(where: { $0.id == t.id }) else { return }
+            d.recent[i] = t
+            data = d
+        }
+        .onChange(of: api.dataVersion) { _, _ in Task { await load() } }
     }
 
     private func load() async {
@@ -43,36 +50,7 @@ struct DashboardView: View {
     }
 
     private func netWorth(_ d: DashboardResponse) -> some View {
-        Card {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Net worth").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-                Text(Fmt.money(d.summary.netWorth)).font(.system(size: 40, weight: .bold)).monospacedDigit().minimumScaleFactor(0.6).lineLimit(1)
-                HStack(spacing: 16) {
-                    Label(Fmt.moneyWhole(d.summary.assets), systemImage: "arrow.up.right").foregroundStyle(Color.income)
-                    Label(Fmt.moneyWhole(abs(d.summary.liabilities)), systemImage: "arrow.down.right").foregroundStyle(.red)
-                }
-                .font(.footnote.weight(.medium))
-            }
-            if d.history.count > 1 {
-                Chart(d.history) { p in
-                    if let date = Fmt.date(p.date) {
-                        AreaMark(x: .value("Date", date), yStart: .value("Floor", tightDomain(d.history.map { Double($0.netWorth) / 100 }).lowerBound), yEnd: .value("Net worth", Double(p.netWorth) / 100))
-                            .foregroundStyle(LinearGradient(colors: [Color.accentColor.opacity(0.3), .clear], startPoint: .top, endPoint: .bottom))
-                        LineMark(x: .value("Date", date), y: .value("Net worth", Double(p.netWorth) / 100))
-                            .foregroundStyle(Color.accentColor)
-                            .interpolationMethod(.monotone)
-                    }
-                }
-                .chartYAxis { AxisMarks(position: .trailing) { AxisValueLabel(format: .currency(code: "USD").notation(.compactName)) } }
-                .tightYScale(d.history.map { Double($0.netWorth) / 100 })
-                .frame(height: 150)
-            }
-            Picker("Range", selection: $range) {
-                ForEach(ranges, id: \.self) { Text($0 == "all" ? "All" : $0).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-        }
+        NetWorthCard(summary: d.summary, history: d.history, range: $range, ranges: ranges)
     }
 
     private func tiles(_ s: Summary) -> some View {
@@ -128,5 +106,124 @@ struct DashboardView: View {
                 if txn.id != rows.last?.id { Divider() }
             }
         }
+    }
+}
+
+/// Net worth headline + chart. Press and drag across the chart to scrub: the headline
+/// follows the finger and shows the value and change as of that day.
+private struct NetWorthCard: View {
+    let summary: Summary
+    @Binding var range: String
+    let ranges: [String]
+    @State private var selectedDate: Date?
+
+    private struct Pt: Identifiable { let id: String; let date: Date; let cents: Int }
+
+    private static let dayFormat: DateFormatter = {
+        let f = DateFormatter()
+        f.setLocalizedDateFormatFromTemplate("EEEMMMdyyyy")
+        return f
+    }()
+
+    // Computed once per data load, not on every scrub frame.
+    private let pts: [Pt]
+    private let domain: ClosedRange<Double>
+
+    init(summary: Summary, history: [NetPoint], range: Binding<String>, ranges: [String]) {
+        self.summary = summary
+        self._range = range
+        self.ranges = ranges
+        let p = history.compactMap { h in Fmt.date(h.date).map { Pt(id: h.date, date: $0, cents: h.netWorth) } }
+        self.pts = p
+        self.domain = tightDomain(p.map { Double($0.cents) / 100 })
+    }
+
+    /// Binary search: points are date-ascending.
+    private func nearest(to date: Date) -> Pt? {
+        guard !pts.isEmpty else { return nil }
+        var lo = 0, hi = pts.count - 1
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if pts[mid].date < date { lo = mid + 1 } else { hi = mid }
+        }
+        if lo > 0, abs(pts[lo - 1].date.timeIntervalSince(date)) < abs(pts[lo].date.timeIntervalSince(date)) { return pts[lo - 1] }
+        return pts[lo]
+    }
+
+    var body: some View {
+        let selected = selectedDate.flatMap(nearest(to:))
+        let shownCents = selected?.cents ?? summary.netWorth
+        // Change from the start of the range to the shown point.
+        let delta: (cents: Int, pct: Double)? = {
+            guard let first = pts.first, first.cents != 0 else { return nil }
+            let d = shownCents - first.cents
+            return (d, Double(d) / Double(abs(first.cents)))
+        }()
+        Card {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(selected.map { Self.dayFormat.string(from: $0.date) } ?? "Net worth")
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                Text(Fmt.money(shownCents))
+                    .font(.system(size: 40, weight: .bold)).monospacedDigit()
+                    .tracking(-0.8)
+                    .minimumScaleFactor(0.6).lineLimit(1)
+                if let delta {
+                    HStack(spacing: 6) {
+                        Image(systemName: delta.cents >= 0 ? "arrow.up.right" : "arrow.down.right")
+                        Text("\(delta.cents >= 0 ? "+" : "−")\(Fmt.moneyWhole(abs(delta.cents)))")
+                        Text("(\(abs(delta.pct).formatted(.percent.precision(.fractionLength(1)))))")
+                        Text(selected == nil ? "this period" : "since start").foregroundStyle(.secondary).fontWeight(.regular)
+                    }
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(delta.cents >= 0 ? Color.income : Color.red)
+                    .monospacedDigit()
+                }
+            }
+            .transaction { $0.animation = nil } // scrubbing must be 1:1, never animated
+
+            if pts.count > 1 {
+                Chart {
+                    ForEach(pts) { p in
+                        AreaMark(x: .value("Date", p.date), yStart: .value("Floor", domain.lowerBound), yEnd: .value("Net worth", Double(p.cents) / 100))
+                            .foregroundStyle(LinearGradient(colors: [Color.accentColor.opacity(0.28), .clear], startPoint: .top, endPoint: .bottom))
+                            .interpolationMethod(.monotone)
+                        LineMark(x: .value("Date", p.date), y: .value("Net worth", Double(p.cents) / 100))
+                            .foregroundStyle(Color.accentColor)
+                            .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                            .interpolationMethod(.monotone)
+                    }
+                    if let s = selected {
+                        RuleMark(x: .value("Date", s.date))
+                            .foregroundStyle(.secondary.opacity(0.45))
+                            .lineStyle(StrokeStyle(lineWidth: 1))
+                        PointMark(x: .value("Date", s.date), y: .value("Net worth", Double(s.cents) / 100))
+                            .symbolSize(90)
+                            .foregroundStyle(Color.accentColor)
+                            .annotation(position: .overlay) {
+                                Circle().stroke(Color.card, lineWidth: 2.5).frame(width: 11, height: 11)
+                            }
+                    }
+                }
+                .chartXSelection(value: $selectedDate)
+                .chartYAxis { AxisMarks(position: .trailing) { AxisValueLabel(format: .currency(code: "USD").notation(.compactName)) } }
+                .chartYScale(domain: domain)
+                .frame(height: 170)
+                .sensoryFeedback(.selection, trigger: selected?.id)
+            }
+            Picker("Range", selection: $range) {
+                ForEach(ranges, id: \.self) { Text($0 == "all" ? "All" : $0).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            HStack(spacing: 16) {
+                Label(Fmt.moneyWhole(summary.assets), systemImage: "arrow.up.right").foregroundStyle(Color.income)
+                Label(Fmt.moneyWhole(abs(summary.liabilities)), systemImage: "arrow.down.right").foregroundStyle(.red)
+                Spacer()
+                Text("Assets · Liabilities").font(.caption).foregroundStyle(.tertiary)
+            }
+            .font(.footnote.weight(.medium))
+        }
+        .onChange(of: range) { _, _ in selectedDate = nil }
     }
 }

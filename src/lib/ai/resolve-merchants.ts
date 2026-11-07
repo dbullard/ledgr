@@ -7,6 +7,7 @@ import { transactions, merchants } from "@/db/schema";
 import { notDeleted } from "@/lib/query-helpers";
 import { titleCase } from "@/lib/text-utils";
 import { fetchFaviconDataUri } from "@/lib/favicon";
+import { guessMerchantFromDescription } from "@/lib/merchant-domain";
 import { coalesce } from "@/lib/coalesce";
 import { withHousehold } from "@/lib/household-context";
 import { getAiConfig, createAiModel } from "./config";
@@ -181,10 +182,14 @@ async function runMerchantResolution(
   db: LedgrDb,
 ): Promise<{ resolved: number; skipped: number }> {
   const linkedByName = await linkKnownMerchantNames(householdId, db);
+  // Deterministic and free, so it runs with or without an AI provider and
+  // before the model sees anything — the model only gets what's left.
+  const linkedByHeuristic = await linkByDomainHeuristic(householdId, db);
+  const linkedWithoutAi = linkedByName + linkedByHeuristic;
 
   const config = getAiConfig();
   const model = createAiModel();
-  if (!config || !model) return { resolved: linkedByName, skipped: 0 };
+  if (!config || !model) return { resolved: linkedWithoutAi, skipped: 0 };
 
   // Short-lived transaction — not held open across the batched LLM calls below.
   const candidates = await withHousehold(householdId, (tx) =>
@@ -201,7 +206,7 @@ async function runMerchantResolution(
       ),
   db);
 
-  if (candidates.length === 0) return { resolved: linkedByName, skipped: 0 };
+  if (candidates.length === 0) return { resolved: linkedWithoutAi, skipped: 0 };
 
   const batchSize = getBatchSize(config.aiProvider);
   const now = new Date();
@@ -278,7 +283,58 @@ async function runMerchantResolution(
     resolved += merchantIdByTxnId.size;
   }
 
-  return { resolved: linkedByName + resolved, skipped: candidates.length - resolved };
+  return { resolved: linkedWithoutAi + resolved, skipped: candidates.length - resolved };
+}
+
+/**
+ * Links unlinked transactions to a merchant (and fetches its logo) using
+ * guessMerchantFromDescription — no model call. Covers every unlinked row,
+ * including ones the AI pass already gave up on, since the guess is
+ * deterministic and a NULL merchantId never encodes a deliberate choice.
+ */
+async function linkByDomainHeuristic(householdId: string, db: LedgrDb): Promise<number> {
+  const unlinked = await withHousehold(householdId, (tx) =>
+    tx
+      .select({ id: transactions.id, name: transactions.name })
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.householdId, householdId),
+          isNull(transactions.merchantId),
+          eq(transactions.isTransfer, false),
+          notDeleted(transactions),
+        ),
+      ),
+  db);
+
+  const candidates: MerchantCandidate[] = [];
+  for (const t of unlinked) {
+    const guess = guessMerchantFromDescription(t.name);
+    if (guess) {
+      candidates.push({ transactionId: t.id, name: guess.name, domain: guess.domain, rawName: t.name });
+    }
+  }
+  if (candidates.length === 0) return 0;
+
+  const merchantIdByTxnId = await linkOrCreateMerchants(db, householdId, candidates);
+
+  const txnIdsByMerchantId = new Map<string, string[]>();
+  for (const [transactionId, merchantId] of merchantIdByTxnId) {
+    const ids = txnIdsByMerchantId.get(merchantId);
+    if (ids) ids.push(transactionId);
+    else txnIdsByMerchantId.set(merchantId, [transactionId]);
+  }
+
+  const now = new Date();
+  await withHousehold(householdId, async (tx) => {
+    for (const [merchantId, ids] of txnIdsByMerchantId) {
+      await tx.update(transactions)
+        .set({ merchantId, updatedAt: now })
+        .where(inArray(transactions.id, ids));
+    }
+  }, db);
+
+  return merchantIdByTxnId.size;
 }
 
 interface MerchantCandidate {

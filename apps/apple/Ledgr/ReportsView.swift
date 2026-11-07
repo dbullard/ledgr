@@ -121,6 +121,11 @@ struct ReportsView: View {
                 .pickerStyle(.segmented)
                 if let error { ErrorState(message: error) { Task { await load() } } }
                 else {
+                    if let digest = aiDigest {
+                        OnDeviceInsightCard(title: "Summary", prompt: "Summarize this report", resetKey: "\(tab.rawValue)|\(range)|\(digest.count)") {
+                            await OnDeviceAI.reportSummary(title: tab.title, range: range, data: digest)
+                        }
+                    }
                     switch tab {
                     case .spending: spendingView
                     case .incomeExpense: incomeExpenseView
@@ -135,7 +140,7 @@ struct ReportsView: View {
         }
         .background(Color.canvas)
         .navigationTitle("Reports")
-        .refreshable { await load() }
+        .refreshable { await api.syncBanks(); await load() }
         .task(id: Key(tab: tab, range: range, base: connection.active)) { await load() }
     }
 
@@ -343,6 +348,32 @@ struct ReportsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.hairline, lineWidth: 1))
+    }
+
+    /// Compact text of the loaded report for the on-device summary; nil until it has loaded.
+    private var aiDigest: String? {
+        func m(_ c: Int) -> String { Fmt.moneyWhole(c) }
+        switch tab {
+        case .spending:
+            guard let s = spending else { return nil }
+            return "Income \(m(s.totalIncome)). Spending by category" + (s.comparisonLabel.map { " (vs \($0))" } ?? "") + ":\n"
+                + s.rows.sorted { $0.total > $1.total }.prefix(15).map { "\($0.categoryName) \(m($0.total))" + ($0.prevTotal.map { " (before \(m($0))" + ")" } ?? "") }.joined(separator: "\n")
+        case .incomeExpense:
+            guard let r = ie else { return nil }
+            return "By month:\n" + r.monthly.map { "\($0.period): income \(m($0.income)), expenses \(m($0.expenses)), net \(m($0.net))" }.joined(separator: "\n")
+                + "\nTop expense categories:\n" + r.byCategory.filter { !$0.isIncome }.sorted { $0.total > $1.total }.prefix(8).map { "\($0.categoryName) \(m($0.total))" }.joined(separator: "\n")
+        case .cashFlow:
+            guard let c = cash else { return nil }
+            let s = c.safeToSpend
+            return "Safe to spend \(m(s.safeToSpend)) for \(s.month): income \(m(s.monthlyIncome)), recurring bills \(m(s.recurringExpenses)), discretionary spent \(m(s.discretionarySpent)).\n"
+                + c.monthly.map { "\($0.period): income \(m($0.income)), expenses \(m($0.expenses)), net \(m($0.net))" }.joined(separator: "\n")
+        case .trends:
+            guard let t = trends else { return nil }
+            return t.rows.map { "\($0.period) \($0.categoryName) \(m($0.total))" }.joined(separator: "\n")
+        case .netWorth:
+            guard let w = worth, let first = w.rows.first, let last = w.rows.last else { return nil }
+            return "From \(first.date): net worth \(m(first.netWorth)), assets \(m(first.assets)), liabilities \(m(first.liabilities)).\nTo \(last.date): net worth \(m(last.netWorth)), assets \(m(last.assets)), liabilities \(m(last.liabilities))."
+        }
     }
 
     // MARK: Data

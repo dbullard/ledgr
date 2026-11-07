@@ -43,6 +43,201 @@ export function parseClientReceipt(raw: unknown): ParsedReceipt | null {
   }
 }
 
+export interface PricedLine {
+  name: string;
+  quantity: number;
+  totalCents: number;
+}
+
+const QTY_AT_END = /\bQty\s+(\d+)\s+\$([\d,]+\.\d{2})\s*$/;
+const SECTION_HEADER = /items\s*\(\d+\)\s*$/i;
+/** Lines that are never part of a product name: anything with a price, and the summary block. */
+const NOT_A_NAME = /\$|^(?:subtotal|total|delivery|shipping|sales|tax|savings|promotion|driver|free)\b/i;
+
+/**
+ * Lines printed as "<name> Qty N $price" (Sam's Club and Walmart order pages).
+ * The price is the line total. Two text layouts exist and both are read:
+ *  - the server's PDF text: single spaces, and a long name wraps with its tail
+ *    on the line BEFORE "Qty";
+ *  - column text (`pdftotext -layout`): a wide gap before "Qty", and the tail on
+ *    the line AFTER.
+ * Returns [] for any other layout, so callers fall back to the model.
+ */
+export function extractPricedLines(text: string | null): PricedLine[] {
+  if (!text) return [];
+  const layout = /\S {2,}Qty\s+\d+\s+\$/.test(text);
+  const lines = text.split("\n").map((l) => l.trimEnd());
+  const out: PricedLine[] = [];
+  let pending: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const m = line.match(QTY_AT_END);
+    if (!m) {
+      const t = line.trim();
+      if (SECTION_HEADER.test(t)) pending = [];
+      else if (t && !NOT_A_NAME.test(t)) pending.push(t);
+      continue;
+    }
+    const head = line.slice(0, m.index).trim();
+    let name: string;
+    if (head) {
+      name = head;
+      const next = (lines[i + 1] ?? "").trim();
+      if (layout && next && !QTY_AT_END.test(next) && !SECTION_HEADER.test(next) && !NOT_A_NAME.test(next)) {
+        name += ` ${next}`;
+        i += 1;
+      }
+    } else {
+      // Wrapped name: the pieces are the lines since the last price. A preamble (address) can
+      // precede the first item, so a long run keeps only its last two lines.
+      name = (pending.length > 3 ? pending.slice(-2) : pending).join(" ");
+    }
+    pending = [];
+    const cents = Math.round(parseFloat(m[2].replace(/,/g, "")) * 100);
+    if (name && cents > 0) out.push({ name, quantity: parseInt(m[1], 10), totalCents: cents });
+  }
+  return out;
+}
+
+/**
+ * Models sometimes attach a neighbouring line's price, or read a size
+ * ("61.81 oz.") as a price. When the receipt text prints priced lines, those
+ * prices win: a model item whose name matches a printed line takes that line's
+ * price and quantity, and printed lines the model skipped are added.
+ */
+export function correctPricesFromText(parsed: ParsedReceipt, text: string | null): ParsedReceipt {
+  const printed = extractPricedLines(text);
+  if (printed.length === 0) return parsed;
+  const left = printed.map((p) => ({ p, key: matchKey(p.name) }));
+  const take = (name: string): PricedLine | null => {
+    const k = matchKey(name);
+    if (!k) return null;
+    // Exact name first, then one that is a prefix of the other (a model often drops a wrapped tail).
+    const at =
+      left.findIndex((l) => l.key === k) >= 0
+        ? left.findIndex((l) => l.key === k)
+        : left.findIndex((l) => k.length >= 20 && (l.key.startsWith(k) || k.startsWith(l.key)));
+    return at >= 0 ? left.splice(at, 1)[0].p : null;
+  };
+  const items = parsed.items.map((it) => {
+    const hit = take(it.name);
+    return hit ? { ...it, totalCents: hit.totalCents, quantity: hit.quantity } : it;
+  });
+  for (const { p } of left) items.push({ name: p.name, quantity: p.quantity, totalCents: p.totalCents });
+  return { ...parsed, items };
+}
+
+/** normalizeRawName, forgiving the capital-I / lowercase-L mix-up in "lbs." that models and OCR make. */
+export function matchKey(name: string): string {
+  return normalizeRawName(name).replace(/\bibs\b/g, "lbs");
+}
+
+const SUMMARY_WORD = /\b(?:sub\s?total|total|tax|tip|gratuity|balance|change|tendered|visa|mastercard|amex|discover|amount|payment|approval|authorization)\b/i;
+const PRICE_AT_END = /^(.*?)\s*\$\s*(\d{1,3}(?:,\d{3})*\.\d{2})\s*$/;
+
+/**
+ * Restaurant-style receipts (text read from a photo or a printed email): a name,
+ * then a "$price" at the end of the line, before the subtotal. Names can wrap
+ * (a one-word line like "Sandwich" takes the line above), and modifier lines
+ * ("Gluten Free Bun") carry no price and are left out.
+ *
+ * The printed subtotal is the proof: lines are returned only when they add up to
+ * it exactly. Anything else returns [], so a misread receipt gets no items rather
+ * than wrong ones.
+ */
+export function extractTotaledLines(text: string | null): PricedLine[] {
+  if (!text) return [];
+  const lines = text.split("\n").map((l) => l.trim().replace(/^[‘’'`"“”]+/, ""));
+  const end = lines.findIndex((l) => /\bsub\s?total\b/i.test(l) && /\d\.\d{2}/.test(l));
+  if (end < 0) return [];
+  const subtotal = lines[end].match(/\$?\s*(\d{1,3}(?:,\d{3})*\.\d{2})\s*$/);
+  if (!subtotal) return [];
+  const subtotalCents = Math.round(parseFloat(subtotal[1].replace(/,/g, "")) * 100);
+
+  const out: PricedLine[] = [];
+  let lastName = "";
+  for (const line of lines.slice(0, end)) {
+    if (!line) continue;
+    const m = line.match(PRICE_AT_END);
+    if (!m || SUMMARY_WORD.test(line) || /\bfor \$|\bat\b.*\$/i.test(line)) {
+      if (!m && !SUMMARY_WORD.test(line) && !/@|\.com\b|\d{3,}/.test(line)) lastName = line;
+      continue;
+    }
+    let name = m[1].trim();
+    let quantity = 1;
+    const q = name.match(/^(\d{1,2})\s+(.+)$/);
+    if (q) {
+      quantity = parseInt(q[1], 10);
+      name = q[2];
+    }
+    if (name && name.split(/\s+/).length <= 1 && lastName) name = `${lastName} ${name}`;
+    const cents = Math.round(parseFloat(m[2].replace(/,/g, "")) * 100);
+    if (name && cents > 0) out.push({ name, quantity, totalCents: cents });
+    lastName = "";
+  }
+  return out.reduce((s, l) => s + l.totalCents, 0) === subtotalCents ? out : [];
+}
+
+/** "Red Baron Pepperoni Pizza, 61.81 oz., 3 pk." -> "Red Baron Pepperoni Pizza". */
+export function cleanProductName(name: string): string {
+  return name
+    .replace(/\u2019/g, "'")
+    .replace(/,?\s*priced per pound.*$/i, "")
+    .replace(/[,\s]+\d[\d.]*\s*(?:oz|fl|lb|lbs|ct|pk|gal|dozen|rolls|wipes|sheets|tissues)\b.*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[,\s]+|[,\s]+$/g, "")
+    .slice(0, 120);
+}
+
+const CATEGORY_RULES: [RegExp, string][] = [
+  [/diaper|baby wipes|infant formula/i, "Baby"],
+  [/probiotic|creatine|vitamin(?! d whole)/i, "Pharmacy"],
+  [/\bpads\b|razor|shampoo|toothpaste|deodorant/i, "Personal Care"],
+  [/toilet paper|facial tissues|paper towel|trash bag|detergent|gas grill|griddle|cookware/i, "Home Goods"],
+];
+
+/**
+ * A category NAME for a store-order line. Only used where lines are read without
+ * a model; names the household doesn't have are dropped when stored, and the
+ * household's own corrections override this. Everything else on a grocery order is food.
+ */
+export function guessCategoryName(name: string): string {
+  for (const [re, cat] of CATEGORY_RULES) if (re.test(name)) return cat;
+  return "Groceries";
+}
+
+/**
+ * The items for a newly stored receipt, with no model needed. A reader on the
+ * user's device may already have items: its prices are checked against the
+ * printed lines. Otherwise printed `Qty N $price` lines become the items.
+ */
+export function itemsFromText(
+  text: string | null,
+  onDevice: ParsedReceipt | null,
+  /** Category name for lines that aren't store-order lines (e.g. the transaction's own category). */
+  defaultCategory?: string | null,
+): ParsedReceipt["items"] {
+  if (onDevice && onDevice.items.length > 0) return correctPricesFromText(onDevice, text).items;
+  const store = extractPricedLines(text);
+  if (store.length > 0) {
+    return store.map((l) => ({
+      name: l.name,
+      quantity: l.quantity,
+      totalCents: l.totalCents,
+      product: cleanProductName(l.name),
+      category: guessCategoryName(l.name),
+    }));
+  }
+  return extractTotaledLines(text).map((l) => ({
+    name: l.name,
+    quantity: l.quantity,
+    totalCents: l.totalCents,
+    product: l.name,
+    ...(defaultCategory ? { category: defaultCategory } : {}),
+  }));
+}
+
 export interface CategoryOption {
   id: string;
   name: string;
@@ -57,7 +252,19 @@ export interface CleanItem {
 }
 
 /**
- * Drops lines that can't be real purchases (no name, zero or absurd price),
+ * Receipt summary lines the extractor sometimes returns as if they were
+ * purchases ("Total", "Change", "Driver tip", ...). Matched against the whole
+ * name so a product that merely contains one of these words is kept.
+ */
+const SUMMARY_LINE =
+  /^(?:(?:sub[\s-]*)?total(?:\s+(?:due|amount|savings|purchase))?|(?:sales\s+)?tax(?:\s+\d.*)?|change(?:\s+due)?|balance(?:\s+due)?|amount\s+(?:due|paid|tendered)|(?:driver|delivery|service)?\s*tip|(?:total\s+)?savings|cash|tend(?:er(?:ed)?)?|(?:visa|mastercard|debit|credit)(?:\s+(?:card|tend))?|items?\s+sold|number\s+of\s+items)[\s:.\-]*$/i;
+
+export function isSummaryLine(name: string): boolean {
+  return SUMMARY_LINE.test(name.replace(/\s+/g, " ").trim());
+}
+
+/**
+ * Drops lines that can't be real purchases (no name, summary lines, zero or absurd price),
  * snaps categories to ones the household actually has, and converts quantity.
  * Negative lines (discounts, coupons) are kept: they reduce the total.
  */
@@ -68,6 +275,7 @@ export function cleanItems(parsed: ParsedReceipt, categories: CategoryOption[]):
     const rawName = it.name.replace(/\s+/g, " ").trim().slice(0, 200);
     const cents = Math.round(it.totalCents);
     if (!rawName || !Number.isFinite(cents) || cents === 0 || Math.abs(cents) > 10_000_000) continue;
+    if (isSummaryLine(rawName)) continue;
     const qty = it.quantity && Number.isFinite(it.quantity) && it.quantity > 0 ? it.quantity : 1;
     out.push({
       rawName,
@@ -148,6 +356,7 @@ export function buildItemsPrompt(text: string | null, categoryNames: string[]): 
     "- One entry per purchased product. Skip subtotal, tax, total, tender, change, loyalty and savings summary lines.",
     '- name: copy the item text EXACTLY as printed on the receipt, character for character (keep abbreviations and capital letters; never expand, translate or reword it).',
     "- totalCents is the line's price in integer cents (a $3.49 line is 349). Discount or coupon lines are negative.",
+    '- The price is the dollar amount printed on that same line (after "Qty"). Never use a size or weight from the name, such as "61.81 oz.", and never a price from the line above or below.',
     "- quantity is the count or weight when printed, else 1.",
     '- product: always fill this with a short plain-English name for the item (e.g. name "KS ORG BNNA" -> product "Bananas").',
     ...(categoryNames.length

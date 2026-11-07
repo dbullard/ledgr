@@ -18,6 +18,9 @@ struct LedgrApp: App {
     @StateObject private var actions: AppActions
     @StateObject private var api: API
     @AppStorage("appearance") private var appearance = AppearanceChoice.system.rawValue
+    #if os(iOS)
+    @UIApplicationDelegateAdaptor(PushAppDelegate.self) private var pushDelegate
+    #endif
 
     init() {
         let connection = Connection()
@@ -41,6 +44,9 @@ struct LedgrApp: App {
                 .environmentObject(actions)
                 .environmentObject(api)
                 .preferredColorScheme(AppearanceChoice(rawValue: appearance)?.scheme)
+                .onChange(of: api.auth) { _, state in
+                    if state == .signedIn { Task { await PushManager.shared.registerIfAllowed() } }
+                }
                 #if os(macOS)
                 .frame(minWidth: 900, minHeight: 600)
                 #endif

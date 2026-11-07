@@ -60,6 +60,10 @@ struct AccountSettingsView: View {
                     Text("Applies to this device only.").font(.caption).foregroundStyle(.secondary)
                 }
 
+                #if os(iOS)
+                NotificationsCard()
+                #endif
+
                 if let data {
                     Card("Demo mode") {
                         Toggle("Show demo data", isOn: Binding(get: { data.demoEnabled }, set: { _ in Task { await toggleDemo() } }))

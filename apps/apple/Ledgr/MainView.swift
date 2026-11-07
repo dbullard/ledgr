@@ -45,7 +45,7 @@ struct MoreView: View {
             Section("Native") {
                 NavigationLink { BudgetsView() } label: { Label("Budgets", systemImage: "chart.pie") }
                 NavigationLink { RecurringView() } label: { Label("Recurring", systemImage: "repeat") }
-                NavigationLink { InvestmentsView() } label: { Label("Investments", systemImage: "chart.line.uptrend.xyaxis") }
+                NavigationLink { AccountsView() } label: { Label("Accounts", systemImage: "building.columns") }
                 NavigationLink { ReportsView() } label: { Label("Reports", systemImage: "chart.bar.xaxis") }
                 NavigationLink { CategoriesView() } label: { Label("Categories", systemImage: "tag") }
                 NavigationLink { RulesView() } label: { Label("Rules", systemImage: "wand.and.stars") }
@@ -147,12 +147,12 @@ struct MainView: View {
         }
         #else
         TabView(selection: Binding(get: { section ?? .dashboard }, set: { section = $0 })) {
-            detail(for: .dashboard).tabItem { Label("Dashboard", systemImage: "square.grid.2x2") }.tag(AppSection.dashboard)
-            detail(for: .transactions).tabItem { Label("Transactions", systemImage: "list.bullet") }.tag(AppSection.transactions)
-            detail(for: .accounts).tabItem { Label("Accounts", systemImage: "building.columns") }.tag(AppSection.accounts)
-            detail(for: .receipts).tabItem { Label("Receipts", systemImage: "receipt") }
+            detail(for: .dashboard).tabItem { Label("Dashboard", systemImage: "square.grid.2x2").labelStyle(.iconOnly) }.tag(AppSection.dashboard)
+            detail(for: .transactions).tabItem { Label("Transactions", systemImage: "list.bullet").labelStyle(.iconOnly) }.tag(AppSection.transactions)
+            detail(for: .investments).tabItem { Label("Investments", systemImage: "chart.line.uptrend.xyaxis").labelStyle(.iconOnly) }.tag(AppSection.investments)
+            detail(for: .receipts).tabItem { Label("Receipts", systemImage: "receipt").labelStyle(.iconOnly) }
                 .badge(queue.items.count + waiting).tag(AppSection.receipts)
-            detail(for: .more).tabItem { Label("More", systemImage: "ellipsis.circle") }.tag(AppSection.more)
+            detail(for: .more).tabItem { Label("More", systemImage: "ellipsis.circle").labelStyle(.iconOnly) }.tag(AppSection.more)
         }
         #endif
     }
@@ -174,7 +174,12 @@ struct MainView: View {
                 case .receipts: ReceiptsView()
                 case .items: ItemsView()
                 case .importFile: ImportView()
-                case .more: AccountSettingsView()
+                case .more:
+                    #if os(macOS)
+                    AccountSettingsView()
+                    #else
+                    MoreView()
+                    #endif
                 case .web(let page): WebPageView(page: page)
                 }
             }

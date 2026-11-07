@@ -58,15 +58,44 @@ struct RootView: View {
             .onOpenURL { queue.addFile(at: $0) }
             .onAppear { queue.importSharedInbox() }
             .onChange(of: scenePhase) { _, phase in if phase == .active { queue.importSharedInbox() } }
-            .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
-                for p in providers {
-                    _ = p.loadObject(ofClass: URL.self) { url, _ in
-                        if let url { Task { @MainActor in queue.addFile(at: url) } }
-                    }
+            .onDrop(of: ReceiptDrop.types, isTargeted: $dropTargeted) { providers in
+                Task { @MainActor in
+                    for f in await ReceiptDrop.load(providers) { queue.add(data: f.data, filename: f.name) }
                 }
                 return true
             }
-            .overlay { if dropTargeted { Color.accentColor.opacity(0.12).ignoresSafeArea().allowsHitTesting(false) } }
+            .overlay {
+                if dropTargeted {
+                    ZStack {
+                        Color.accentColor.opacity(0.12)
+                        VStack(spacing: 8) {
+                            Image(systemName: "tray.and.arrow.down.fill").font(.system(size: 34))
+                            Text("Drop to upload & match").font(.headline)
+                            Text("Drop on a transaction to attach it directly").font(.footnote).foregroundStyle(.secondary)
+                        }
+                        .foregroundStyle(Color.accentColor)
+                        .padding(28)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    }
+                    .ignoresSafeArea().allowsHitTesting(false)
+                }
+            }
+            .overlay(alignment: .top) {
+                if queue.uploading || !queue.items.isEmpty {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text(queue.items.count > 1 ? "Uploading \(queue.items.count) receipts…" : "Uploading receipt…")
+                            .font(.subheadline.weight(.medium))
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .background(.regularMaterial, in: Capsule())
+                    .shadow(color: .black.opacity(0.15), radius: 8, y: 2)
+                    .padding(.top, 10)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .allowsHitTesting(false)
+                }
+            }
+            .animation(.snappy(duration: 0.2), value: queue.items.count)
             .task(id: connection.active) {
                 if connection.active != nil { await api.refreshAuth() }
             }

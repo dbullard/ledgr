@@ -103,11 +103,59 @@ describe("receipt item reports", () => {
     expect(rows.map((r) => r.key)).toEqual(["soap"]);
   });
 
+  it("sorts by name, times bought and last bought, in either direction", async () => {
+    const keys = async (sort: "name" | "times" | "last" | "avg", dir?: "asc" | "desc") =>
+      (await getTopProducts(householdId, range, 10, db, { sort, dir })).map((r) => r.key);
+    expect(await keys("name")).toEqual(["bananas", "mystery", "soap"]);
+    expect(await keys("name", "desc")).toEqual(["soap", "mystery", "bananas"]);
+    expect((await keys("times"))[0]).toBe("bananas");
+    expect((await keys("last"))[0]).toBe("bananas"); // 2026-10-05; soap is 09-05
+    expect((await keys("last", "asc"))[0]).toBe("soap");
+    expect((await keys("avg"))[0]).toBe("soap"); // 500 per unit beats 140
+  });
+
+  it("searches product names without treating % or _ as wildcards", async () => {
+    const hit = await getTopProducts(householdId, range, 10, db, { search: "BANA" });
+    expect(hit.map((r) => r.key)).toEqual(["bananas"]);
+    expect(await getTopProducts(householdId, range, 10, db, { search: "%" })).toEqual([]);
+  });
+
+  it("finds items by category, store, month, price, account and printed name", async () => {
+    const keys = async (search: string) => (await getTopProducts(householdId, range, 10, db, { search })).map((r) => r.key).sort();
+    expect(await keys("home goods")).toEqual(["soap"]);
+    expect(await keys("kroger")).toEqual(["bananas", "mystery"]);
+    expect(await keys("september")).toEqual(["bananas", "soap"]);
+    expect(await keys("$5.00")).toEqual(["soap"]);
+    expect(await keys("card")).toEqual(["bananas", "mystery", "soap"]);
+    expect(await keys("ks org")).toEqual(["bananas"]);
+  });
+
+  it("needs every word to match, and totals cover only the matching purchases", async () => {
+    const rows = await getTopProducts(householdId, range, 10, db, { search: "bananas kroger" });
+    expect(rows.map((r) => [r.key, r.totalCents, r.purchases])).toEqual([["bananas", 400, 1]]);
+    expect(await getTopProducts(householdId, range, 10, db, { search: "bananas nowhere" })).toEqual([]);
+  });
+
+  it("lists where each product was bought, most often first", async () => {
+    const rows = await getTopProducts(householdId, range, 10, db);
+    expect(rows.find((r) => r.key === "bananas")).toMatchObject({
+      stores: [{ name: "Kroger", count: 1 }, { name: "Walmart", count: 1 }],
+      storeCount: 2,
+    });
+  });
+
   it("gives a per-unit price history, oldest first", async () => {
     const h = await getProductPriceHistory(householdId, "Bananas", db);
     expect(h.map((p) => [p.date, p.merchant, p.unitCents])).toEqual([
       ["2026-09-05", "Walmart", 100],
       ["2026-10-05", "Kroger", 200],
     ]);
+  });
+
+  it("links every purchase to its transaction", async () => {
+    const h = await getProductPriceHistory(householdId, "Bananas", db);
+    expect(h.every((p) => typeof p.transactionId === "string" && p.transactionId.length > 0)).toBe(true);
+    expect(new Set(h.map((p) => p.transactionId)).size).toBe(2);
+    expect(h[0].accountName).toBe("Card");
   });
 });

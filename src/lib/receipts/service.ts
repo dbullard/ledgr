@@ -281,6 +281,8 @@ export interface UnmatchedReceiptRow {
   hintTotalCents: number | null;
   hintDate: string | null;
   hintMerchant: string | null;
+  /** True when the receipt was removed from a transaction by hand; never auto-attach it. */
+  autoMatchBlocked: boolean;
   suggestions: {
     transactionId: string;
     name: string;
@@ -306,6 +308,7 @@ export async function listUnmatchedReceipts(
       hintTotalCents: receipts.hintTotalCents,
       hintDate: receipts.hintDate,
       hintMerchant: receipts.hintMerchant,
+      autoMatchBlocked: receipts.autoMatchBlocked,
     })
     .from(receipts)
     .where(scopedQuery(householdId, tx).where(receipts, isNull(receipts.transactionId)))

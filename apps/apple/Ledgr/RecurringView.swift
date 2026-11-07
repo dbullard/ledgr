@@ -82,7 +82,7 @@ struct RecurringView: View {
                 Button { showCreate = true } label: { Image(systemName: "plus") }
             }
         }
-        .refreshable { await load() }
+        .refreshable { await api.syncBanks(); await load() }
         .task(id: connection.active) { await load() }
         .sheet(isPresented: $showCreate) {
             RecurringCreateSheet { await load() }

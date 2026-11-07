@@ -3,9 +3,11 @@ import { getHouseholdId } from "@/lib/auth/session";
 import { withHousehold } from "@/lib/household-context";
 import { getCategories } from "@/queries/categories";
 import {
+  PRODUCT_SORTS,
   getItemSpendByCategory,
   getProductPriceHistory,
   getTopProducts,
+  type ProductSort,
 } from "@/queries/receipt-items";
 import { PriceSparkline } from "@/components/atoms/price-sparkline";
 import { centsToDisplay } from "@/lib/money";
@@ -40,6 +42,12 @@ export default async function ReceiptItemsPage({
   const range = RANGES.some((r) => r.value === first(params.range)) ? first(params.range)! : "90";
   const categoryId = first(params.category);
   const product = first(params.product);
+  const search = first(params.q);
+  const sort: ProductSort = PRODUCT_SORTS.includes(first(params.sort) as ProductSort)
+    ? (first(params.sort) as ProductSort)
+    : "spent";
+  const defaultDir = sort === "name" ? "asc" : "desc";
+  const dir = first(params.dir) === "asc" || first(params.dir) === "desc" ? (first(params.dir) as "asc" | "desc") : defaultDir;
 
   const filters = {
     dateFrom: range === "all" ? "2000-01-01" : daysAgo(Number(range)),
@@ -50,7 +58,7 @@ export default async function ReceiptItemsPage({
   const { byCategory, products, history, groups } = await withHousehold(householdId, async (tx) => ({
     // The category chart ignores the category filter so every category stays visible.
     byCategory: await getItemSpendByCategory(householdId, { ...filters, categoryId: null }, tx),
-    products: await getTopProducts(householdId, filters, 30, tx),
+    products: await getTopProducts(householdId, filters, 200, tx, { sort, dir, search }),
     history: product ? await getProductPriceHistory(householdId, product, tx) : [],
     groups: await getCategories(householdId, tx),
   }));
@@ -59,10 +67,32 @@ export default async function ReceiptItemsPage({
   const maxCat = Math.max(1, ...byCategory.map((r) => r.totalCents));
   const query = (extra: Record<string, string | null>) => {
     const q = new URLSearchParams();
-    const merged = { range, category: categoryId, product, ...extra };
+    const merged = { range, category: categoryId, product, q: search, sort, dir, ...extra };
     for (const [k, v] of Object.entries(merged)) if (v) q.set(k, v);
     return `/receipts/items?${q}`;
   };
+  const header = (key: ProductSort, label: string, align: "left" | "right" = "right") => {
+    const active = sort === key;
+    const nextDir = active ? (dir === "desc" ? "asc" : "desc") : key === "name" ? "asc" : "desc";
+    return (
+      <th
+        scope="col"
+        aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}
+        className={`py-1 font-normal ${align === "right" ? "pl-3 text-right" : ""}`}
+      >
+        <Link
+          href={query({ sort: key, dir: nextDir })}
+          className={`inline-flex items-center gap-1 hover:text-foreground ${active ? "text-foreground" : ""}`}
+        >
+          {label}
+          <span aria-hidden className={active ? "" : "opacity-0"}>
+            {dir === "asc" ? "↑" : "↓"}
+          </span>
+        </Link>
+      </th>
+    );
+  };
+  const itemCount = byCategory.reduce((s, r) => s + r.itemCount, 0);
   const picked = history.length > 0 ? products.find((p) => p.key === product?.toLowerCase()) : null;
 
   return (
@@ -78,7 +108,32 @@ export default async function ReceiptItemsPage({
         </p>
       </div>
 
+      {byCategory.length > 0 && (
+        <dl className="grid grid-cols-3 gap-3">
+          {[
+            ["Spent on items", centsToDisplay(grandTotal)],
+            ["Items bought", itemCount.toLocaleString()],
+            ["Categories", String(byCategory.length)],
+          ].map(([k, v]) => (
+            <div key={k} className="rounded-xl bg-card p-3 ring-1 ring-foreground/10">
+              <dt className="text-xs text-muted-foreground">{k}</dt>
+              <dd className="mt-0.5 text-xl font-semibold tabular-nums tracking-tight">{v}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+
       <form method="get" className="flex flex-wrap items-center gap-2 text-sm">
+        <input type="hidden" name="sort" value={sort} />
+        <input type="hidden" name="dir" value={dir} />
+        <input
+          type="search"
+          name="q"
+          defaultValue={search ?? ""}
+          placeholder="Search name, store, category, month, price…"
+          aria-label="Search items"
+          className="min-w-40 flex-1 rounded border border-border bg-background px-2 py-1"
+        />
         <select name="range" defaultValue={range} aria-label="Date range" className="rounded border border-border bg-background px-2 py-1">
           {RANGES.map((r) => (
             <option key={r.value} value={r.value}>
@@ -112,10 +167,11 @@ export default async function ReceiptItemsPage({
           <section aria-label="Spend by category" className="space-y-2">
             <h2 className="text-sm font-medium">By category · {centsToDisplay(grandTotal)}</h2>
             {byCategory.map((r) => (
-              <div key={r.categoryId ?? "none"} className="grid grid-cols-[9rem_1fr_6rem] items-center gap-2 text-sm">
+              <div key={r.categoryId ?? "none"} className="grid grid-cols-[9rem_1fr_6rem_3rem] items-center gap-2 text-sm">
                 <Link
-                  href={query({ category: r.categoryId, product: null })}
-                  className="truncate hover:underline"
+                  href={query({ category: categoryId === r.categoryId ? null : r.categoryId, product: null })}
+                  aria-current={categoryId === r.categoryId ? "true" : undefined}
+                  className={`truncate hover:underline ${categoryId === r.categoryId ? "font-semibold" : ""}`}
                 >
                   {r.categoryName ?? "No category"}
                 </Link>
@@ -126,20 +182,30 @@ export default async function ReceiptItemsPage({
                   />
                 </div>
                 <span className="text-right tabular-nums">{centsToDisplay(r.totalCents)}</span>
+                <span className="text-right text-xs tabular-nums text-muted-foreground">
+                  {grandTotal > 0 ? `${Math.round((Math.max(r.totalCents, 0) / grandTotal) * 100)}%` : ""}
+                </span>
               </div>
             ))}
           </section>
 
           <section aria-label="Top products" className="space-y-2">
-            <h2 className="text-sm font-medium">Top products</h2>
+            <h2 className="text-sm font-medium">
+              Products · {products.length}
+              {search ? ` matching “${search}”` : ""}
+              {categoryId ? " in this category" : ""}
+            </h2>
             <table className="w-full text-sm">
               <thead className="text-left text-xs text-muted-foreground">
                 <tr>
-                  <th className="py-1 font-normal">Product</th>
-                  <th className="py-1 pl-3 text-right font-normal">Spent</th>
-                  <th className="py-1 pl-3 text-right font-normal">Times</th>
-                  <th className="py-1 pl-3 text-right font-normal">Avg price</th>
-                  <th className="py-1 pl-3 text-right font-normal">Last bought</th>
+                  {header("name", "Product", "left")}
+                  <th scope="col" className="py-1 pl-3 text-left font-normal">
+                    Bought at
+                  </th>
+                  {header("spent", "Spent")}
+                  {header("times", "Times")}
+                  {header("avg", "Avg price")}
+                  {header("last", "Last bought")}
                 </tr>
               </thead>
               <tbody>
@@ -149,6 +215,10 @@ export default async function ReceiptItemsPage({
                       <Link href={query({ product: p.key })} className="hover:underline">
                         {p.name}
                       </Link>
+                    </td>
+                    <td className="py-1.5 pl-3 text-muted-foreground">
+                      {p.stores.map((s) => s.name).join(", ")}
+                      {p.storeCount > p.stores.length ? ` +${p.storeCount - p.stores.length}` : ""}
                     </td>
                     <td className="py-1.5 pl-3 text-right tabular-nums">{centsToDisplay(p.totalCents)}</td>
                     <td className="py-1.5 pl-3 text-right tabular-nums">{p.purchases}</td>
@@ -175,7 +245,12 @@ export default async function ReceiptItemsPage({
                   {[...history].reverse().map((h, i) => (
                     <tr key={i} className="border-t border-border/70">
                       <td className="py-1.5">{formatDateShort(h.date)}</td>
-                      <td className="py-1.5">{h.merchant}</td>
+                      <td className="py-1.5">
+                        <Link href={`/transactions?txn=${h.transactionId}`} className="hover:underline">
+                          {h.merchant}
+                        </Link>
+                        {h.accountName ? <span className="text-muted-foreground"> · {h.accountName}</span> : null}
+                      </td>
                       <td className="py-1.5 pl-3 text-right tabular-nums">{centsToDisplay(h.unitCents)} each</td>
                     </tr>
                   ))}

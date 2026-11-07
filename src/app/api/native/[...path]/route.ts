@@ -28,6 +28,7 @@ import {
 } from "@/queries/investments";
 import { rangeToDateBounds } from "@/lib/date-utils";
 import { getCategoryRules } from "@/queries/category-rules";
+import { getCategorySuggestions, setCategorySuggestion } from "@/lib/ai/category-suggestions";
 import {
   createCategoryRule,
   deleteCategoryRule,
@@ -44,6 +45,8 @@ import {
   renameCategory,
   renameCategoryGroup,
   updateCategoryExclusion,
+  updateCategoryGroupIcon,
+  updateCategoryIcon,
 } from "@/actions/categories";
 import { getMcpSettings } from "@/queries/mcp-settings";
 import { revokeMcpClient, toggleMcpEndpoint } from "@/actions/mcp-settings";
@@ -53,6 +56,15 @@ import { getAccountsForImport } from "@/queries/accounts";
 import { getRecurrings, getRecurringSummary, getRecurringTransactions } from "@/queries/recurring";
 import { createRecurringTransaction, setRecurringStatus } from "@/actions/recurring";
 import { getBudgetForMonth } from "@/queries/budgets";
+import { getApnsConfig } from "@/lib/push/apns";
+import {
+  listDevices,
+  normalizeEnvironment,
+  normalizeToken,
+  registerDevice,
+  unregisterDevice,
+} from "@/lib/push/devices";
+import { notifyHousehold } from "@/lib/push/notify";
 import {
   copyBudgetFromMonth,
   createBudget,
@@ -63,14 +75,16 @@ import {
 import { getCurrentMonth, shiftMonth } from "@/lib/date-utils";
 import { triggerSync } from "@/actions/sync";
 import { getAccountsByInstitution, getAccountSummary } from "@/queries/accounts";
-import { balanceHistory } from "@/db/schema";
-import { and, eq, gte } from "drizzle-orm";
+import { balanceHistory, bankConnections } from "@/db/schema";
+import { scopedQuery } from "@/lib/scoped-query";
+import { and, eq, gte, inArray } from "drizzle-orm";
 import { getTransactions, type TransactionFilters } from "@/queries/transactions";
 import { getCategories } from "@/queries/categories";
-import { getItemSpendByCategory, getTopProducts } from "@/queries/receipt-items";
+import { getItemSpendByCategory, getProductPriceHistory, getTopProducts } from "@/queries/receipt-items";
 import { fetchTransactionDetail, updateTransactionFields } from "@/actions/transaction-detail";
 import { toggleReviewed, updateTransactionCategory } from "@/actions/transactions";
-import { attachReceipt, deleteReceipt, fetchReceipts, fetchUnmatchedReceipts, uploadReceipt } from "@/actions/receipts";
+import { fetchReceiptItems } from "@/actions/receipt-items";
+import { attachReceipt, deleteReceipt, detachReceipt, fetchReceipts, fetchUnmatchedReceipts, uploadReceipt } from "@/actions/receipts";
 
 export const dynamic = "force-dynamic";
 
@@ -83,12 +97,16 @@ export const dynamic = "force-dynamic";
  *   GET    /api/native/transactions?search&needsReview&categoryId&cursor&limit
  *   GET    /api/native/transactions/:id
  *   PATCH  /api/native/transactions/:id   { categoryId?, reviewed?, notes? }
+ *   GET    /api/native/category-suggestions?ids=a,b   cached on-device AI picks { [txnId]: categoryId | null }
+ *   PUT    /api/native/category-suggestions/:txnId    { categoryId: string | null }
  *   GET    /api/native/categories
  *   GET    /api/native/receipts                      (waiting for a transaction)
  *   POST   /api/native/transactions/:id/receipts   (multipart `file`; attaches directly)
  *   POST   /api/native/receipts/attach   { receiptId, transactionId }
+ *   POST   /api/native/receipts/:id/detach   (back to the waiting list; the matcher won't re-attach it)
  *   DELETE /api/native/receipts/:id
- *   GET    /api/native/items?from&to
+ *   GET    /api/native/items?from&to&category&q
+ *   GET    /api/native/items/history?key
  *   GET    /api/native/accounts                      (grouped by institution + totals)
  *   GET    /api/native/accounts/:id/history?days=90
  *   GET    /api/native/settings                      (profile, demo mode, MCP access)
@@ -102,9 +120,9 @@ export const dynamic = "force-dynamic";
  *   GET    /api/native/investments/holdings?view=consolidated|by-account&accountId
  *   GET    /api/native/investments/transactions?type&accountId&cursor
  *   POST   /api/native/categories        { name, groupId, isIncome? }
- *   PATCH  /api/native/categories/:id    { name }       DELETE /api/native/categories/:id
+ *   PATCH  /api/native/categories/:id    { name } | { icon: lucideName | null }   DELETE /api/native/categories/:id
  *   POST   /api/native/category-groups   { name }
- *   PATCH  /api/native/category-groups/:id { name }     DELETE /api/native/category-groups/:id
+ *   PATCH  /api/native/category-groups/:id { name } | { icon: lucideName | null }   DELETE /api/native/category-groups/:id
  *   GET    /api/native/category-rules
  *   POST   /api/native/category-rules    { categoryId, matchField, matchPattern, priority }
  *   PATCH  /api/native/category-rules/:id  (same fields)  DELETE /api/native/category-rules/:id
@@ -118,6 +136,11 @@ export const dynamic = "force-dynamic";
  *   PATCH  /api/native/budgets/:id/categories/:categoryId   { limit }   (cents)
  *   DELETE /api/native/budgets/:id/categories/:categoryId
  *   POST   /api/native/accounts/sync     { connectionId }   (refresh one bank connection)
+ *   POST   /api/native/accounts/sync     { all: true }      (refresh every connection that can sync)
+ *   GET    /api/native/push                          ({ configured, devices }: is APNs set up on the server)
+ *   POST   /api/native/push/register     { token, environment: "sandbox"|"production" }   (this device's APNs token)
+ *   DELETE /api/native/push/register     { token }   (call on sign-out)
+ *   POST   /api/native/push/test                     (send a test notification to this household's devices)
  */
 
 const RANGES = ["1M", "3M", "6M", "1Y", "all"] as const;
@@ -286,6 +309,7 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
   if (head === "categories" && method !== "GET") {
     const body = (await req.json().catch(() => null)) as {
       name?: string; groupId?: string; isIncome?: boolean; excludeFromSpending?: boolean; targetId?: string;
+      icon?: string | null;
     } | null;
     if (id && segs[2] === "merge" && method === "POST") {
       if (!body?.targetId) return fail("Invalid input");
@@ -302,6 +326,9 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
       }));
     }
     if (id && method === "PATCH") {
+      if (body && "icon" in body && (body.icon === null || typeof body.icon === "string")) {
+        return fin(await updateCategoryIcon(id, body.icon));
+      }
       if (body?.groupId) return fin(await moveCategoryToGroup(id, body.groupId));
       if (typeof body?.excludeFromSpending === "boolean") return fin(await updateCategoryExclusion(id, body.excludeFromSpending));
       if (!body?.name) return fail("Invalid input");
@@ -311,7 +338,7 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
   }
 
   if (head === "category-groups") {
-    const body = (await req.json().catch(() => null)) as { name?: string; targetId?: string } | null;
+    const body = (await req.json().catch(() => null)) as { name?: string; targetId?: string; icon?: string | null } | null;
     if (id && segs[2] === "merge" && method === "POST") {
       if (!body?.targetId) return fail("Invalid input");
       return fin(await mergeCategoryGroups(id, body.targetId));
@@ -321,10 +348,25 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
       return fin(await createCategoryGroup(body.name));
     }
     if (id && method === "PATCH") {
+      if (body && "icon" in body && (body.icon === null || typeof body.icon === "string")) {
+        return fin(await updateCategoryGroupIcon(id, body.icon));
+      }
       if (!body?.name) return fail("Invalid input");
       return fin(await renameCategoryGroup(id, body.name));
     }
     if (id && method === "DELETE") return fin(await deleteCategoryGroup(id));
+  }
+
+  if (head === "category-suggestions") {
+    if (!id && method === "GET") {
+      const ids = (q.get("ids") ?? "").split(",").filter(Boolean).slice(0, 200);
+      return ok(await getCategorySuggestions(householdId, ids));
+    }
+    if (id && method === "PUT") {
+      const body = (await req.json().catch(() => null)) as { categoryId?: string | null } | null;
+      if (!body || (body.categoryId != null && typeof body.categoryId !== "string")) return fail("Invalid input");
+      return fin(await setCategorySuggestion(householdId, id, body.categoryId ?? null));
+    }
   }
 
   if (head === "category-rules") {
@@ -461,7 +503,19 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
   }
 
   if (head === "accounts" && id === "sync" && method === "POST") {
-    const body = (await req.json().catch(() => null)) as { connectionId?: string } | null;
+    const body = (await req.json().catch(() => null)) as { connectionId?: string; all?: boolean } | null;
+    if (body?.all === true) {
+      // Connections that need a person (re-link, revoked) would only fail, so they are skipped.
+      const ids = await withHousehold(householdId, (tx) =>
+        tx
+          .select({ id: bankConnections.id })
+          .from(bankConnections)
+          .where(scopedQuery(householdId, tx).where(bankConnections, inArray(bankConnections.status, ["active", "error"]))),
+      );
+      const results = await Promise.allSettled(ids.map((c) => triggerSync(c.id)));
+      const failed = results.filter((r) => r.status === "rejected" || !r.value.success).length;
+      return ok({ synced: ids.length - failed, failed });
+    }
     if (!body?.connectionId) return fail("Invalid input");
     const result = await triggerSync(body.connectionId);
     return result.success ? ok(result) : fail(result.error, 502);
@@ -516,7 +570,16 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
     const detail = await fetchTransactionDetail(id);
     if ("error" in detail) return fail(detail.error, 404);
     const receipts = await fetchReceipts(id);
-    return ok({ ...detail.data, receipts: "data" in receipts ? receipts.data : [] });
+    const list = "data" in receipts ? receipts.data : [];
+    // The lines read from this transaction's receipts, so the detail can show what was bought.
+    const sets = (await Promise.all(list.map((r) => fetchReceiptItems(r.id)))).flatMap((r) => ("data" in r ? [r.data] : []));
+    return ok({
+      ...detail.data,
+      receipts: list,
+      items: sets.flatMap((r) => r.items),
+      itemsTotalCents: sets.reduce((sum, r) => sum + r.itemsTotalCents, 0),
+      itemsGapCents: sets.length === 1 ? sets[0].gapCents : null,
+    });
   }
 
   if (head === "transactions" && id && method === "PATCH") {
@@ -563,20 +626,71 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
     return "error" in res ? fail(res.error) : ok(res);
   }
 
+  if (head === "receipts" && id && id !== "attach" && segs[2] === "detach" && method === "POST") {
+    const res = await detachReceipt(id);
+    return "error" in res ? fail(res.error) : ok(res);
+  }
+
   if (head === "receipts" && id && id !== "attach" && method === "DELETE") {
     const res = await deleteReceipt(id);
     return "error" in res ? fail(res.error) : ok(res);
   }
 
-  if (head === "items" && method === "GET") {
+  if (head === "items" && id === "history" && method === "GET") {
+    const key = q.get("key");
+    if (!key) return fail("key is required");
+    return ok(await withHousehold(householdId, (tx) => getProductPriceHistory(householdId, key, tx)));
+  }
+
+  if (head === "items" && !id && method === "GET") {
     const to = q.get("to") ?? iso(new Date());
     const from = q.get("from") ?? iso(new Date(Date.parse(`${to}T00:00:00Z`) - 90 * 86_400_000));
     const filters = { dateFrom: from, dateTo: to };
+    const category = q.get("category");
+    const search = q.get("q")?.slice(0, 120) || null;
     const [byCategory, products] = await Promise.all([
       withHousehold(householdId, (tx) => getItemSpendByCategory(householdId, filters, tx)),
-      withHousehold(householdId, (tx) => getTopProducts(householdId, filters, 30, tx)),
+      // Wide enough that the app can re-sort locally; search is done here, across every field.
+      withHousehold(householdId, (tx) =>
+        getTopProducts(householdId, { ...filters, categoryId: category || null }, 400, tx, { search }),
+      ),
     ]);
     return ok({ from, to, byCategory, products });
+  }
+
+  if (head === "push") {
+    const session = await getSession();
+    if (!session) return fail("Unauthorized", 401);
+    if (!id && method === "GET") {
+      const devices = await listDevices(householdId);
+      return ok({ configured: !!getApnsConfig(), devices: devices.length });
+    }
+    if (id === "register" && method === "POST") {
+      const body = (await req.json().catch(() => null)) as { token?: unknown; environment?: unknown } | null;
+      const token = normalizeToken(body?.token);
+      const environment = normalizeEnvironment(body?.environment);
+      if (!token || !environment) return fail("Invalid input");
+      await registerDevice(householdId, session.user.id, token, environment);
+      return ok({ ok: true });
+    }
+    if (id === "register" && method === "DELETE") {
+      const body = (await req.json().catch(() => null)) as { token?: unknown } | null;
+      const token = normalizeToken(body?.token ?? q.get("token"));
+      if (!token) return fail("Invalid input");
+      await unregisterDevice(householdId, token);
+      return ok({ ok: true });
+    }
+    if (id === "test" && method === "POST") {
+      if (!getApnsConfig()) return fail("Push isn't configured on the server (APNS_KEY_ID, APNS_TEAM_ID and a key are missing).", 503);
+      const result = await notifyHousehold(householdId, {
+        title: "Ledgr notifications are on",
+        body: "This is a test from your NAS.",
+        threadId: "test",
+        data: { kind: "test" },
+      });
+      if (result.devices === 0) return fail("No device is registered yet. Allow notifications in the app first.", 409);
+      return ok(result);
+    }
   }
 
   return fail("Not found", 404);

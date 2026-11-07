@@ -105,6 +105,9 @@ struct BudgetsView: View {
                         empty(data)
                     } else {
                         summary(data)
+                        OnDeviceInsightCard(title: "Budget insights", prompt: "Analyze this month", resetKey: month) {
+                            await OnDeviceAI.budgetAdvice(data)
+                        }
                         ForEach(data.groups) { group in groupCard(group) }
                         unbudgeted(data)
                     }
@@ -118,7 +121,7 @@ struct BudgetsView: View {
         }
         .background(Color.canvas)
         .navigationTitle("Budgets")
-        .refreshable { await load() }
+        .refreshable { await api.syncBanks(); await load() }
         .task(id: "\(connection.active?.absoluteString ?? "")|\(month)") { await load() }
         .sheet(item: $editing) { target in
             LimitEditor(target: target) { cents in

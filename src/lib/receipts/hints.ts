@@ -45,16 +45,40 @@ function toCents(raw: string): number | null {
  * win, since a receipt's final total comes last.
  */
 export function findTotal(text: string): number | null {
+  return findTotalMatch(text)?.cents ?? null;
+}
+
+function findTotalMatch(text: string): { cents: number; end: number } | null {
   const re =
     /(grand\s+total|order\s+total|total\s+due|amount\s+due|total)[\s:\-]*(?:usd)?\s*\$?\s*(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})/gi;
-  let best: number | null = null;
+  let best: { cents: number; end: number } | null = null;
   for (const m of text.matchAll(re)) {
     const before = text.slice(Math.max(0, m.index - 4), m.index);
     if (/sub\s*-?$/i.test(before)) continue;
     const cents = toCents(m[2]);
-    if (cents !== null) best = cents;
+    if (cents !== null) best = { cents, end: m.index + m[0].length };
   }
   return best;
+}
+
+/**
+ * What the card was actually charged. Sam's Club prints the card line after the
+ * total ("Ending in 1322  $101.21"): that amount is the charge, and it already
+ * includes a driver tip when one was billed to the card (2026 orders) and not
+ * when it wasn't (2025 orders). Without a card line, a "Driver tip" listed after
+ * the total is added; a tip printed before the total is already part of it.
+ */
+export function findChargedTotal(text: string): number | null {
+  const total = findTotalMatch(text);
+  if (!total) return null;
+  const after = text.slice(total.end);
+  const AMOUNT = "(\\d{1,3}(?:,\\d{3})*\\.\\d{2}|\\d+\\.\\d{2})";
+  const card = after.match(new RegExp(`(?:ending\\s+in\\s+|\\*)\\d{4}\\s+\\$?\\s*${AMOUNT}`, "i"));
+  const cardCents = card ? toCents(card[1]) : null;
+  if (cardCents !== null && cardCents >= total.cents) return cardCents;
+  const tip = after.match(new RegExp(`\\b(?:driver|delivery)\\s+tip\\b[\\s:\\-]*\\$?\\s*${AMOUNT}`, "i"));
+  const tipCents = tip ? toCents(tip[1]) : null;
+  return total.cents + (tipCents ?? 0);
 }
 
 /** "Amazon <orders@amazon.com>" -> "Amazon". */
@@ -93,7 +117,7 @@ export function extractHints(filename: string, text: string | null): ReceiptHint
   const stem = filename.replace(/\.[^.]+$/, "");
   const body = text ?? "";
   const fromBody = body.trim().length > 0;
-  let totalCents = fromBody ? findTotal(body) : null;
+  let totalCents = fromBody ? findChargedTotal(body) : null;
   if (totalCents === null) {
     // Filenames like "Amazon_75.39.pdf" carry the amount.
     const m = stem.match(/(?:^|[^\d])(\d{1,5}\.\d{2})(?!\d)/);
@@ -106,6 +130,16 @@ export function extractHints(filename: string, text: string | null): ReceiptHint
 }
 
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp"]);
+
+/** OCR of a PDF's pages, for PDFs whose text layer is missing the receipt lines. null when nothing readable. */
+export async function readPdfOcrText(data: Buffer): Promise<string | null> {
+  try {
+    const { ocrPdf } = await import("./ocr");
+    return (await ocrPdf(data)) || null;
+  } catch {
+    return null;
+  }
+}
 /** A PDF with less text than this is treated as a scan and sent through OCR. */
 const SCANNED_PDF_CHARS = 40;
 
