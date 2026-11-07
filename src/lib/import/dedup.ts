@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { eq, and, inArray } from "drizzle-orm";
+import { matchNearDuplicates } from "./near-match";
 import { db as defaultDb, type LedgrDb } from "@/db";
 import { transactions } from "@/db/schema";
 import type { NormalizedRow } from "./normalize";
@@ -77,6 +78,28 @@ export async function findDuplicates(
       } else {
         unique.push(row);
       }
+    }
+  }
+
+  // A bank file and an aggregator describe, date and identify the same
+  // transaction differently, so exact id/description matching misses overlap
+  // with rows the bank sync already stored. Catch those by amount + nearby date.
+  if (unique.length > 0) {
+    const synced = await db
+      .select({ id: transactions.id, date: transactions.date, amount: transactions.amount })
+      .from(transactions)
+      .where(and(eq(transactions.accountId, accountId), inArray(transactions.provider, ["simplefin", "plaid"])));
+    const matches = matchNearDuplicates(
+      unique.map((r) => ({ key: r.id, date: r.date, amount: r.amount })),
+      synced.map((s) => ({ key: s.id, date: s.date, amount: s.amount })),
+    );
+    if (matches.size > 0) {
+      const stillUnique: NormalizedRow[] = [];
+      for (const row of unique) {
+        if (matches.has(row.id)) duplicates.push(row);
+        else stillUnique.push(row);
+      }
+      return { unique: stillUnique, duplicates };
     }
   }
 

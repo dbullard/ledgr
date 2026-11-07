@@ -1,6 +1,7 @@
 import { v4 as uuid } from "uuid";
 import { rematchWaitingReceipts } from "@/lib/receipts/rematch";
-import { eq, and, isNull, inArray, desc, sql } from "drizzle-orm";
+import { eq, and, or, isNull, inArray, desc, sql } from "drizzle-orm";
+import { matchNearDuplicates } from "@/lib/import/near-match";
 import type { LedgrDb } from "@/db";
 import { bankConnections, syncLog, transactions, accounts, investmentHoldings, holdingsHistory, institutionLogos } from "@/db/schema";
 import { decrypt } from "@/lib/encryption";
@@ -255,10 +256,43 @@ async function applyToDb(
       : [];
     const existingIdByExternalId = new Map(existingRows.map((r) => [r.externalId, r.id]));
 
+    // Rows the user imported from a bank file (or entered by hand) before the
+    // sync saw them: adopt them rather than inserting a second copy. Matched by
+    // amount + nearby date, one-to-one, since the descriptions differ.
+    const adoptedIdByExternalId = new Map<string, string>();
+    const newRows = rowsWithAccount.filter(({ row }) => !existingIdByExternalId.has(row.externalId));
+    if (newRows.length) {
+      const adoptable = await tx
+        .select({ id: transactions.id, accountId: transactions.accountId, date: transactions.date, amount: transactions.amount })
+        .from(transactions)
+        .where(
+          and(
+            inArray(transactions.accountId, [...new Set(newRows.map((n) => n.internalAccountId))]),
+            or(isNull(transactions.provider), inArray(transactions.provider, ["csv", "manual"])),
+          ),
+        );
+      for (const accountId of new Set(newRows.map((n) => n.internalAccountId))) {
+        const matches = matchNearDuplicates(
+          newRows.filter((n) => n.internalAccountId === accountId).map((n) => ({ key: n.row.externalId, date: n.row.date, amount: n.row.amount })),
+          adoptable.filter((a) => a.accountId === accountId).map((a) => ({ key: a.id, date: a.date, amount: a.amount })),
+        );
+        for (const [externalId, existingId] of matches) adoptedIdByExternalId.set(externalId, existingId);
+      }
+    }
+
     const insertRows: (typeof transactions.$inferInsert)[] = [];
     let modifiedCount = 0;
 
     for (const { row, internalAccountId } of rowsWithAccount) {
+      const adoptedId = adoptedIdByExternalId.get(row.externalId);
+      if (adoptedId) {
+        modifiedCount++;
+        // Keep the user's name, date and category; just tie the row to the bank's id.
+        await tx.update(transactions)
+          .set({ externalId: row.externalId, provider: "simplefin", pending: row.pending, updatedAt: now })
+          .where(eq(transactions.id, adoptedId));
+        continue;
+      }
       const existingId = existingIdByExternalId.get(row.externalId);
       if (existingId) {
         modifiedCount++;
