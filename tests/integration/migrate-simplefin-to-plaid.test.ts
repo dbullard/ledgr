@@ -148,4 +148,23 @@ describe("migrate-simplefin-to-plaid", () => {
   it("rejects a pair whose old account is not SimpleFIN or new account is not Plaid", async () => {
     await expect(plan(client, { pairs: [[newAcct.slice(0, 8), oldAcct.slice(0, 8)]] })).rejects.toThrow(/expected "simplefin"/);
   });
+
+  it("with allowManual, a manual account (no connection) can be the account that is kept", async () => {
+    const { accountId: manual } = await insertAccount(db, householdId, { name: "Qapital", type: "savings", currentBalance: 1591817 });
+    await insertTransaction(db, householdId, manual, {
+      externalId: null, provider: null, date: "2026-10-30", amount: 3997, normalizedAmount: -3997, originalName: "Statement row", name: "Car wash", categoryId,
+    });
+    // Without the flag a manual account is refused.
+    await expect(plan(client, { pairs: [[manual.slice(0, 8), newAcct.slice(0, 8)]] })).rejects.toThrow(/expected "simplefin"/);
+
+    await apply(client, { pairs: [[manual.slice(0, 8), newAcct.slice(0, 8)]], allowManual: true });
+
+    const [a] = await db.select().from(accounts).where(eq(accounts.id, manual));
+    expect(a.bankConnectionId).toBe(plaidConn);
+    expect(a.externalAccountId).toBe("plaid-acc");
+    const txns = await db.select().from(transactions).where(eq(transactions.accountId, manual));
+    const adopted = txns.find((t) => t.externalId === "plaid-1")!;
+    expect(adopted.categoryId).toBe(categoryId); // the manual row, with its category, took the Plaid identity
+    expect(adopted.name).toBe("Car wash");
+  });
 });

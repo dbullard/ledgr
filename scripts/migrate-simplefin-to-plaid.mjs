@@ -29,6 +29,7 @@ const pg = createRequire(`${process.cwd()}/`)("pg");
 //   --pairs OLD=NEW,OLD=NEW   account id prefixes (old SimpleFIN = new Plaid)
 //   --drop  CONN,CONN         old SimpleFIN connection id prefixes to delete
 //   --detach ACC,ACC          account id prefixes to turn into manual accounts
+//   --allow-manual            let a pair's OLD account be a manual one (no connection)
 
 const WINDOW_DAYS = 3;
 const dayNumber = (iso) => Math.floor(Date.parse(`${iso}T00:00:00Z`) / 86_400_000);
@@ -59,7 +60,7 @@ export function matchRows(incoming, existing) {
   return result;
 }
 
-async function resolveAccount(client, prefix, provider) {
+async function resolveAccount(client, prefix, provider, allowManual = false) {
   const { rows } = await client.query(
     `select a.id, a.name, a.household_id, a.bank_connection_id, a.type, c.provider
        from accounts a left join bank_connections c on c.id = a.bank_connection_id
@@ -68,7 +69,8 @@ async function resolveAccount(client, prefix, provider) {
   );
   if (rows.length !== 1) throw new Error(`Account prefix "${prefix}" matched ${rows.length} accounts`);
   const acct = rows[0];
-  if (provider && acct.provider !== provider) {
+  const manualOk = allowManual && acct.provider === null; // a manual account has no connection
+  if (provider && acct.provider !== provider && !manualOk) {
     throw new Error(`Account ${prefix} (${acct.name}) is provider "${acct.provider}", expected "${provider}"`);
   }
   return acct;
@@ -84,8 +86,8 @@ async function loadTxns(client, accountId) {
 }
 
 /** Work out, without changing anything, what a pair migration would do. */
-export async function planPair(client, oldPrefix, newPrefix) {
-  const oldAcct = await resolveAccount(client, oldPrefix, "simplefin");
+export async function planPair(client, oldPrefix, newPrefix, allowManual = false) {
+  const oldAcct = await resolveAccount(client, oldPrefix, "simplefin", allowManual);
   const newAcct = await resolveAccount(client, newPrefix, "plaid");
   if (oldAcct.household_id !== newAcct.household_id) throw new Error("Accounts belong to different households");
   const oldTx = await loadTxns(client, oldAcct.id);
@@ -141,12 +143,12 @@ export async function suggest(client) {
   return out.sort((a, b) => b.shared - a.shared);
 }
 
-/** @typedef {{ pairs: string[][], drop?: string[], detach?: string[] }} MigrationOptions */
+/** @typedef {{ pairs: string[][], drop?: string[], detach?: string[], allowManual?: boolean }} MigrationOptions */
 
 /** @param {any} client @param {MigrationOptions} opts */
-export async function plan(client, { pairs, drop = [], detach = [] }) {
+export async function plan(client, { pairs, drop = [], detach = [], allowManual = false }) {
   const plans = [];
-  for (const [o, n] of pairs) plans.push(describePlan(await planPair(client, o, n)));
+  for (const [o, n] of pairs) plans.push(describePlan(await planPair(client, o, n, allowManual)));
   const drops = [];
   for (const prefix of drop) {
     const { rows } = await client.query(
@@ -160,12 +162,12 @@ export async function plan(client, { pairs, drop = [], detach = [] }) {
 }
 
 /** @param {any} client @param {MigrationOptions} opts */
-export async function apply(client, { pairs, drop = [], detach = [] }) {
+export async function apply(client, { pairs, drop = [], detach = [], allowManual = false }) {
   await client.query("begin");
   try {
     const repointedOldIds = new Set();
     for (const [o, n] of pairs) {
-      const p = await planPair(client, o, n);
+      const p = await planPair(client, o, n, allowManual);
       const A = p.oldAcct.id;
       const P = p.newAcct.id;
       const newById = new Map(p.newTx.map((t) => [t.id, t]));
@@ -235,18 +237,18 @@ function parseArgs(argv) {
   };
   const pairs = flag("--pairs").map((s) => s.split("="));
   if (pairs.some((p) => p.length !== 2 || !p[0] || !p[1])) throw new Error("--pairs must look like OLD=NEW,OLD=NEW");
-  return { mode, pairs, drop: flag("--drop"), detach: flag("--detach") };
+  return { mode, pairs, drop: flag("--drop"), detach: flag("--detach"), allowManual: argv.includes("--allow-manual") };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const { mode, pairs, drop, detach } = parseArgs(process.argv.slice(2));
+  const { mode, pairs, drop, detach, allowManual } = parseArgs(process.argv.slice(2));
   const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
     if (mode === "suggest") console.table(await suggest(client));
-    else if (mode === "plan") console.log(JSON.stringify(await plan(client, { pairs, drop, detach }), null, 2));
+    else if (mode === "plan") console.log(JSON.stringify(await plan(client, { pairs, drop, detach, allowManual }), null, 2));
     else {
-      await apply(client, { pairs, drop, detach });
+      await apply(client, { pairs, drop, detach, allowManual });
       console.log("applied");
     }
   } finally {
