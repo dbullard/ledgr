@@ -19,6 +19,7 @@ struct IconTarget: Identifiable {
     let id: String
     let name: String
     let current: String?
+    var currentColor: String?
     let isGroup: Bool
 }
 
@@ -37,7 +38,9 @@ struct CategoriesView: View {
             if loaded {
                 VStack(spacing: 16) {
                     if let message { Text(message).font(.footnote).foregroundStyle(Color.alert).frame(maxWidth: .infinity, alignment: .leading) }
-                    ForEach(groups) { group in groupCard(group) }
+                    // A group whose categories are all excluded is listed in the "Excluded" card instead.
+                    ForEach(groups.filter { g in g.categories.isEmpty || g.categories.contains { $0.excludeFromSpending != true } }) { group in groupCard(group) }
+                    excludedCard
                 }
                 .padding()
             } else if let error {
@@ -61,11 +64,15 @@ struct CategoriesView: View {
                 .presentationDetents([.height(220)])
         }
         .sheet(item: $iconTarget) { t in
-            IconPickerSheet(target: t) { icon in
-                let path = t.isGroup ? "api/native/category-groups/\(t.id)" : "api/native/categories/\(t.id)"
-                await patch(path, ["icon": icon ?? NSNull()])
+            IconPickerSheet(target: t) { icon, color in
+                if t.isGroup {
+                    await patch("api/native/category-groups/\(t.id)", ["icon": icon ?? NSNull()])
+                } else {
+                    CategoryStyles.shared.set(t.id, color)
+                    await patch("api/native/categories/\(t.id)", ["icon": icon ?? NSNull(), "color": color ?? NSNull()])
+                }
             }
-            .presentationDetents([.medium, .large])
+            .presentationDetents([.large])
         }
     }
 
@@ -88,53 +95,78 @@ struct CategoriesView: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
         )) {
+            let included = g.categories.filter { $0.excludeFromSpending != true }
             if g.categories.isEmpty { Text("No categories").foregroundStyle(.secondary) }
-            ForEach(g.categories) { c in
-                HStack(spacing: 12) {
-                    CategoryBadge(icon: c.icon, size: 32)
-                    Text(c.name).font(.body)
-                    if c.excludeFromSpending == true { Text("Excluded").font(.caption2).foregroundStyle(.secondary) }
-                    if c.isIncome { Text("Income").font(.caption2).padding(.horizontal, 6).padding(.vertical, 2).background(Color.income.opacity(0.15), in: Capsule()).foregroundStyle(Color.income) }
-                    Spacer()
-                    if c.isSystem == true {
-                        Button { iconTarget = IconTarget(id: c.id, name: c.name, current: c.icon, isGroup: false) } label: { Image(systemName: "face.smiling") }
-                            .buttonStyle(.plain)
-                            .help("Change icon")
-                    } else {
-                        Menu {
-                            Button("Change icon…") { iconTarget = IconTarget(id: c.id, name: c.name, current: c.icon, isGroup: false) }
-                            Button("Rename") { prompt = NamePrompt(title: "Rename category", initial: c.name, kind: .renameCategory(id: c.id)) }
-                            Menu("Move to group") {
-                                ForEach(groups.filter { $0.id != g.id }) { t in
-                                    Button(t.name) { Task { await patch("api/native/categories/\(c.id)", ["groupId": t.id]) } }
-                                }
-                            }
-                            Menu("Merge into…") {
-                                ForEach(groups) { t in
-                                    Menu(t.name) {
-                                        ForEach(t.categories.filter { $0.id != c.id }) { o in
-                                            Button(o.name) { Task { await post("api/native/categories/\(c.id)/merge", ["targetId": o.id]) } }
-                                        }
-                                    }
-                                }
-                            }
-                            Button(c.excludeFromSpending == true ? "Include in spending" : "Exclude from spending") {
-                                Task { await patch("api/native/categories/\(c.id)", ["excludeFromSpending": c.excludeFromSpending != true]) }
-                            }
-                            Button("Delete", role: .destructive) { Task { await remove("api/native/categories/\(c.id)") } }
-                        } label: { Image(systemName: "ellipsis") }
-                        .menuStyle(.borderlessButton)
-                        .fixedSize()
-                    }
+            ForEach(included) { c in
+                categoryRow(c, in: g)
+                if c.id != included.last?.id { Divider() }
+            }
+        }
+    }
+
+    /// Categories left out of spending and budgets, kept apart from the regular ones.
+    @ViewBuilder
+    private var excludedCard: some View {
+        let excluded = groups.flatMap { g in g.categories.filter { $0.excludeFromSpending == true }.map { (g, $0) } }
+        if !excluded.isEmpty {
+            Card("Excluded from spending") {
+                Text("These don't count toward spending or budgets, but stay visible in Transactions.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                ForEach(Array(excluded.enumerated()), id: \.element.1.id) { i, pair in
+                    if i > 0 { Divider() }
+                    categoryRow(pair.1, in: pair.0, showGroup: true)
                 }
-                if c.id != g.categories.last?.id { Divider() }
+            }
+        }
+    }
+
+    private func categoryRow(_ c: Category, in g: CategoryGroup, showGroup: Bool = false) -> some View {
+        HStack(spacing: 12) {
+            CategoryBadge(icon: c.icon, size: 32, categoryId: c.id)
+            VStack(alignment: .leading, spacing: 1) {
+    Text(c.name).font(.body)
+    if showGroup, g.name.caseInsensitiveCompare("Excluded") != .orderedSame { Text(g.name).font(.caption).foregroundStyle(.secondary) }
+}
+                        if c.isIncome { Text("Income").font(.caption2).padding(.horizontal, 6).padding(.vertical, 2).background(Color.income.opacity(0.15), in: Capsule()).foregroundStyle(Color.income) }
+            Spacer()
+            if c.isSystem == true {
+                Button { iconTarget = IconTarget(id: c.id, name: c.name, current: c.icon, currentColor: c.color, isGroup: false) } label: { Image(systemName: "face.smiling") }
+                    .buttonStyle(.plain)
+                    .help("Change icon")
+            } else {
+                Menu {
+                    Button("Change icon…") { iconTarget = IconTarget(id: c.id, name: c.name, current: c.icon, currentColor: c.color, isGroup: false) }
+                    Button("Rename") { prompt = NamePrompt(title: "Rename category", initial: c.name, kind: .renameCategory(id: c.id)) }
+                    Menu("Move to group") {
+                        ForEach(groups.filter { $0.id != g.id }) { t in
+                            Button(t.name) { Task { await patch("api/native/categories/\(c.id)", ["groupId": t.id]) } }
+                        }
+                    }
+                    Menu("Merge into…") {
+                        ForEach(groups) { t in
+                            Menu(t.name) {
+                                ForEach(t.categories.filter { $0.id != c.id }) { o in
+                                    Button(o.name) { Task { await post("api/native/categories/\(c.id)/merge", ["targetId": o.id]) } }
+                                }
+                            }
+                        }
+                    }
+                    Button(c.excludeFromSpending == true ? "Include in spending" : "Exclude from spending") {
+                        Task { await patch("api/native/categories/\(c.id)", ["excludeFromSpending": c.excludeFromSpending != true]) }
+                    }
+                    Button("Delete", role: .destructive) { Task { await remove("api/native/categories/\(c.id)") } }
+                } label: { Image(systemName: "ellipsis") }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
             }
         }
     }
 
     private func load() async {
         do {
-            groups = try await api.get("api/native/categories")
+            let fetched: [CategoryGroup] = try await api.get("api/native/categories")
+            groups = fetched.alphabetical
+            CategoryStyles.shared.update(fetched)
             loaded = true
             error = nil
         } catch APIError.unauthorized {
@@ -181,37 +213,83 @@ struct CategoriesView: View {
 
 struct IconPickerSheet: View {
     let target: IconTarget
-    let onPick: (String?) async -> Void
+    /// Called with the icon and colour as they should now be saved (nil = automatic).
+    let onApply: (_ icon: String?, _ colorHex: String?) async -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var icon: String?
+    @State private var colorHex: String?
+    @State private var pending: Task<Void, Never>?
+    @State private var search = ""
 
+    private var shownIcons: [String] {
+        Icons.search(search)
+    }
+
+    init(target: IconTarget, onApply: @escaping (String?, String?) async -> Void) {
+        self.target = target
+        self.onApply = onApply
+        _icon = State(initialValue: target.current)
+        _colorHex = State(initialValue: target.currentColor)
+    }
+
+    private static let swatches = ["#0A84FF", "#5E5CE6", "#BF5AF2", "#FF375F", "#FF453A", "#FF9F0A", "#FFD60A", "#30D158", "#40C8E0", "#8E8E93"]
     private let columns = [GridItem(.adaptive(minimum: 48), spacing: 8)]
+
+    private var customColor: Binding<Color> {
+        Binding(get: { colorHex.flatMap(Color.init(hex:)) ?? .accentColor }, set: { colorHex = $0.hexString; schedule(after: 350) })
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
+                CategoryBadge(icon: icon, size: 40, colorHex: colorHex)
                 Text("Icon for \(target.name)").font(.title3.weight(.semibold))
                 Spacer()
                 Button("Done") { dismiss() }
             }
+            if !target.isGroup {
+                HStack(spacing: 10) {
+                    ForEach(Self.swatches, id: \.self) { hex in
+                        Button { colorHex = hex; schedule(after: 0) } label: {
+                            Circle().fill(Color(hex: hex) ?? .gray).frame(width: 26, height: 26)
+                                .overlay(Circle().stroke(Color.primary.opacity(0.9), lineWidth: colorHex?.uppercased() == hex ? 2 : 0).padding(-3))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Color \(hex)")
+                    }
+                    ColorPicker("Custom color", selection: customColor, supportsOpacity: false).labelsHidden()
+                    Spacer()
+                }
+            }
+            TextField("Search icons", text: $search).textFieldStyle(.roundedBorder)
             ScrollView {
+                if shownIcons.isEmpty { Text("No icons match").foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(24) }
                 LazyVGrid(columns: columns, spacing: 8) {
-                    ForEach(Icons.pickable, id: \.self) { name in
-                        Button {
-                            Task { await onPick(name); dismiss() }
-                        } label: {
-                            CategoryBadge(icon: name, size: 44)
-                                .overlay(Circle().stroke(Color.accentColor, lineWidth: name == target.current ? 2 : 0))
+                    ForEach(shownIcons, id: \.self) { name in
+                        Button { icon = name; schedule(after: 0) } label: {
+                            CategoryBadge(icon: name, size: 44, colorHex: colorHex)
+                                .overlay(Circle().stroke(Color.accentColor, lineWidth: name == icon ? 2 : 0).padding(-3))
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel(name.replacingOccurrences(of: "-", with: " "))
                     }
                 }
-                .padding(.vertical, 4)
+                .padding(4)
             }
-            Button("Use default icon") { Task { await onPick(nil); dismiss() } }
-                .disabled(target.current == nil)
+            Button(target.isGroup ? "Use default icon" : "Use default icon and color") { icon = nil; colorHex = nil; schedule(after: 0) }
+                .disabled(icon == nil && colorHex == nil)
         }
         .padding(20)
+        .frame(minWidth: 420, minHeight: 460)
+    }
+
+    private func schedule(after ms: Int) {
+        pending?.cancel()
+        pending = Task {
+            if ms > 0 { try? await Task.sleep(for: .milliseconds(ms)) }
+            guard !Task.isCancelled else { return }
+            await onApply(icon, colorHex)
+        }
     }
 }
 
@@ -400,7 +478,7 @@ struct RuleEditor: View {
             Spacer()
         }
         .padding(20)
-        .task { if let g: [CategoryGroup] = try? await api.get("api/native/categories") { groups = g } }
+        .task { if let g: [CategoryGroup] = try? await api.get("api/native/categories") { groups = g.alphabetical } }
     }
 
     private func save() async {

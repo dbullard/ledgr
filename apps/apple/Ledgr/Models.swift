@@ -44,6 +44,12 @@ struct Txn: Codable, Identifiable, Hashable {
     var reviewed: Bool
     let accountName: String
     let merchantName: String?
+    /// The bank's own description, kept so a rename can be undone.
+    let originalName: String?
+    /// Set when the user renamed this transaction; syncs keep it.
+    let customName: String?
+    /// Plaid logo URL, or a cached favicon as a `data:` URI. Absent for merchants with no logo.
+    let merchantLogoUrl: String?
     var categoryId: String?
     var categoryName: String?
     let categoryIcon: String?
@@ -134,10 +140,23 @@ struct CategoryGroup: Codable, Identifiable {
     let categories: [Category]
 }
 
+extension Array where Element == CategoryGroup {
+    /// Groups A–Z, and each group's categories A–Z (natural, case-insensitive).
+    var alphabetical: [CategoryGroup] {
+        map { g in
+            CategoryGroup(id: g.id, name: g.name, icon: g.icon, isSystem: g.isSystem,
+                          categories: g.categories.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending })
+        }
+        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+}
+
 struct Category: Codable, Identifiable, Hashable {
     let id: String
     let name: String
     let icon: String?
+    /// "#RRGGBB" the user picked; nil means the automatic colour.
+    let color: String?
     let isIncome: Bool
     let isSystem: Bool?
     let excludeFromSpending: Bool?
@@ -258,7 +277,7 @@ enum Fmt {
 
 /// Category icons are Lucide names on the web; map the common ones to SF Symbols.
 enum Icons {
-    private static let map: [String: String] = [
+    private static let base: [String: String] = [
         "dollar-sign": "dollarsign.circle", "banknote": "banknote", "laptop": "laptopcomputer",
         "trending-up": "chart.line.uptrend.xyaxis", "shopping-cart": "cart", "shopping-bag": "bag",
         "utensils": "fork.knife", "coffee": "cup.and.saucer", "car": "car", "fuel": "fuelpump",
@@ -286,7 +305,172 @@ enum Icons {
         "hand-heart": "hand.raised", "pizza": "fork.knife", "sandwich": "fork.knife", "apple": "carrot",
         "popcorn": "film", "clapperboard": "film", "circle-dollar-sign": "dollarsign.circle",
         "dices": "dice", "flower-2": "leaf", "party-popper": "party.popper", "layers-2": "square.3.layers.3d",
+        // Home & appliances
+        "bath": "bathtub", "shower-head": "shower", "washing-machine": "washer", "refrigerator": "refrigerator",
+        "microwave": "microwave", "monitor": "desktopcomputer", "printer": "printer", "keyboard": "keyboard",
+        "mouse": "computermouse", "speaker": "hifispeaker", "fan": "fan", "air-vent": "air.conditioner.horizontal",
+        "door-open": "door.left.hand.open", "armchair": "chair.lounge", "lock": "lock", "tool-case": "toolbox",
+        "paint-roller": "paintbrush.pointed", "shovel": "shovel", "trash-2": "trash", "archive": "archivebox",
+        // Nature, weather, animals
+        "sun": "sun.max", "moon": "moon", "cloud": "cloud", "snowflake": "snowflake", "wind": "wind",
+        "thermometer": "thermometer.medium", "leaf": "leaf", "fish": "fish", "bird": "bird", "rabbit": "hare",
+        "turtle": "tortoise", "bug": "ant", "waves": "water.waves", "sunrise": "sunrise",
+        // People & health
+        "users": "person.2", "user-plus": "person.badge.plus", "footprints": "figure.walk",
+        "person-standing": "figure.stand", "accessibility": "figure.roll", "brain": "brain",
+        "eye": "eye", "ear": "ear", "bandage": "cross.case", "activity": "waveform.path.ecg",
+        "bone": "figure.arms.open", "tooth": "mouth", "smile": "face.smiling", "baby-bottle": "waterbottle",
+        // Food & drink
+        "cookie": "birthday.cake", "ice-cream-cone": "takeoutbag.and.cup.and.straw", "soup": "takeoutbag.and.cup.and.straw",
+        "cup-soda": "cup.and.saucer", "martini": "wineglass", "carrot": "carrot", "croissant": "fork.knife",
+        "store": "storefront", "shopping-basket": "basket", "egg": "oval", "salad": "leaf.circle",
+        // Travel & transport
+        "bus-front": "bus", "car-taxi-front": "car", "motorbike": "scooter", "rocket": "airplane.departure",
+        "map": "map", "compass": "safari", "navigation": "location", "luggage": "suitcase", "hotel": "building.2",
+        "sailboat": "sailboat", "fuel-pump": "fuelpump", "ev-charger": "bolt.car", "parking": "parkingsign",
+        // Money & work
+        "badge-dollar-sign": "dollarsign.square", "hand-coins": "banknote", "receipt-text": "doc.text",
+        "calculator": "plus.forwardslash.minus", "chart-pie": "chart.pie", "chart-bar": "chart.bar",
+        "file-text": "doc.text", "clipboard": "list.clipboard", "paperclip": "paperclip", "stamp": "seal",
+        "building": "building", "factory": "building.2.crop.circle", "landmark-2": "building.columns",
+        // Fun & misc
+        "star": "star", "bell": "bell", "bookmark": "bookmark", "flag": "flag", "trophy": "trophy",
+        "medal": "medal", "palette": "paintpalette", "brush": "paintbrush", "pen": "pencil", "newspaper": "newspaper",
+        "podcast": "mic", "mic": "mic", "radio": "radio", "video": "video", "image": "photo", "ticket-percent": "ticket",
+        "bomb": "burst", "skull": "exclamationmark.triangle", "circle-help": "questionmark.circle", "infinity": "infinity",
+        "puzzle": "puzzlepiece", "wand-sparkles": "wand.and.stars", "crown": "crown", "anchor": "water.waves",
     ]
+
+    private static let map: [String: String] = base.merging(extra) { a, _ in a }
+
+    /// More icons, grouped by theme. Names follow Lucide where one exists so the web app can draw them too.
+    private static let extra: [String: String] = [
+        // Beauty & personal care
+        "lipstick": "mouth", "sparkle": "sparkle", "comb": "comb", "spray-can": "bubbles.and.sparkles",
+        "hand-sparkles": "hands.sparkles", "bubbles": "bubbles.and.sparkles", "toilet": "toilet", "sink": "sink",
+        "bath-tub": "bathtub", "flower": "camera.macro", "razor": "scissors", "sun-medium": "sun.min", "heart-circle": "heart.circle",
+        // Faith & giving
+        "church": "cross", "cross": "cross.fill", "star-and-crescent": "star.and.crescent", "moon-star": "moon.stars",
+        "hands-clapping": "hands.clap", "hand-helping": "hand.raised", "handshake": "hands.sparkles", "gift-card": "giftcard",
+        "candle": "flame.circle", "book-heart": "books.vertical",
+        // Clothing & accessories
+        "hanger": "hanger", "handbag": "handbag", "sunglasses": "sunglasses", "ring": "circle.circle", "backpack": "backpack",
+        "footprints-shoe": "shoeprints.fill", "socks": "figure.stand.dress", "umbrella-closed": "umbrella.fill",
+        // Kids & family
+        "teddy-bear": "teddybear", "stroller": "stroller", "toy-brick": "cube", "school-bag": "backpack.fill",
+        "ruler": "ruler", "pencil-ruler": "pencil.and.ruler", "abc": "abc", "book-closed": "book.closed",
+        "crayon": "pencil.tip", "family": "figure.2.and.child.holdinghands", "couple": "person.2.fill",
+        // Pets & animals
+        "bird-flying": "bird.fill", "ladybug": "ladybug", "dog-bone": "pawprint.fill", "fish-bowl": "fish.fill",
+        "hare": "hare.fill", "tortoise": "tortoise.fill", "horse": "figure.equestrian.sports", "cow": "tortoise.circle",
+        // Sports & fitness
+        "run": "figure.run", "yoga": "figure.yoga", "golf": "figure.golf", "tennis": "figure.tennis",
+        "basketball": "basketball", "soccer": "soccerball", "football": "football", "baseball": "baseball",
+        "volleyball": "volleyball", "swim": "figure.pool.swim", "hiking": "figure.hiking", "ski": "figure.skiing.downhill",
+        "bowling": "figure.bowling", "climbing": "figure.climbing", "boxing": "figure.boxing", "surf": "figure.surfing",
+        "sports-court": "sportscourt", "trophy-star": "trophy.fill", "stopwatch": "stopwatch", "timer": "timer",
+        "dumbbell-heavy": "figure.strengthtraining.traditional", "skateboard": "skateboard", "target": "target",
+        // Entertainment & hobbies
+        "drama": "theatermasks", "piano": "pianokeys", "mic-vocal": "music.mic", "play": "play.rectangle",
+        "books": "books.vertical", "palette-brush": "paintpalette.fill", "camera-lens": "camera.aperture",
+        "binoculars": "binoculars", "telescope": "scope", "cards": "suit.spade", "chess": "checkerboard.rectangle",
+        "puzzle-piece": "puzzlepiece.fill", "magic-wand": "wand.and.rays", "balloon": "balloon", "confetti": "party.popper.fill",
+        "disc": "opticaldisc", "vinyl": "record.circle", "radio-tower": "antenna.radiowaves.left.and.right",
+        // Tech & subscriptions
+        "tablet": "ipad", "monitor-smartphone": "display", "hard-drive": "externaldrive", "server": "server.rack",
+        "cloud-upload": "icloud", "network": "network", "qr-code": "qrcode", "fax": "faxmachine", "scanner": "scanner",
+        "airpods": "airpodspro", "smart-speaker": "homepod", "watch-smart": "applewatch.watchface", "tv-play": "play.tv",
+        "app-window": "app.badge", "code": "chevron.left.forwardslash.chevron.right", "terminal": "terminal",
+        "bluetooth": "dot.radiowaves.left.and.right", "satellite-dish": "dot.radiowaves.forward", "battery": "battery.100",
+        // Home & garden
+        "screwdriver": "screwdriver", "fan-blades": "fanblades", "garage": "door.garage.closed", "oven": "oven",
+        "stove": "cooktop", "dishwasher": "dishwasher", "dryer": "dryer", "lamp-floor": "lamp.floor", "chair": "chair",
+        "bed-single": "bed.double.fill", "hose": "spigot", "water-tap": "spigot.fill", "solar-panel": "sun.max.fill",
+        "thermostat": "thermometer.sun", "smoke": "smoke", "fire-extinguisher": "flame.fill", "mailbox": "mail.stack",
+        "paint-bucket": "paintbrush.fill", "ladder": "figure.stairs", "plant": "leaf.fill", "tree-deciduous": "tree.fill",
+        // Food & drink
+        "coffee-bean": "cup.and.saucer.fill", "takeout": "takeoutbag.and.cup.and.straw.fill", "bottle": "waterbottle.fill",
+        "bakery": "birthday.cake.fill", "grill": "flame.circle.fill", "fork": "fork.knife.circle", "tea": "mug.fill",
+        "cocktail": "wineglass.fill", "grocery": "basket.fill", "storefront-2": "storefront.fill", "apple-fruit": "carrot.fill",
+        // Health & medical
+        "lungs": "lungs", "tooth-clean": "mouth.fill", "allergens": "allergens", "cross-vial": "cross.vial",
+        "thermometer-med": "medical.thermometer", "star-of-life": "staroflife", "pill-bottle": "pills.fill",
+        "heart-pulse-2": "heart.circle.fill", "wheelchair": "figure.roll", "mask": "facemask", "dna": "atom",
+        "ear-hearing": "ear.fill", "eye-care": "eye.fill", "microscope": "testtube.2", "test-tube": "testtube.2",
+        // Money & documents
+        "bitcoin": "bitcoinsign.circle", "euro": "eurosign.circle", "pound-sterling": "sterlingsign.circle",
+        "japanese-yen": "yensign.circle", "refresh-cash": "dollarsign.arrow.circlepath", "signature": "signature",
+        "seal": "seal", "file-check": "doc.text.fill", "folder-open": "folder.fill", "mail-stack": "tray.full",
+        "inbox": "tray", "id-card": "person.text.rectangle", "passport": "person.crop.rectangle", "gavel": "hammer.fill",
+        "shield-check": "checkmark.shield", "lock-keyhole": "lock.fill", "key-round": "key.fill", "piggy": "banknote.fill",
+        // Travel & places
+        "beach": "beach.umbrella", "palm-tree": "tree", "map-trifold": "map.fill", "signpost": "signpost.right",
+        "road": "road.lanes", "plane-takeoff": "airplane.departure", "plane-landing": "airplane.arrival",
+        "train": "train.side.front.car", "sailing": "sailboat.fill", "tram-front": "tram.fill", "camping": "tent.fill",
+        "earth": "globe.americas", "compass-rose": "location.north", "backpacking": "figure.walk.motion", "hotel-bed": "bed.double",
+        "castle": "building.columns.fill", "stadium": "sportscourt.fill", "museum": "building.columns.circle",
+        "hospital-building": "building.2.crop.circle.fill", "library": "books.vertical.fill", "fountain": "drop.circle",
+    ]
+
+    /// Extra words each icon answers to in the picker's search ("makeup" finds the lips icon, "tithe" the church).
+    private static let keywords: [String: [String]] = [
+        "church": ["faith", "religion", "worship", "chapel", "tithe", "offering", "mass", "temple"],
+        "cross": ["faith", "religion", "christian", "medical"],
+        "lipstick": ["makeup", "cosmetics", "beauty", "lips", "salon"],
+        "sparkle": ["beauty", "clean", "new"], "sparkles": ["beauty", "clean", "magic"],
+        "comb": ["hair", "haircut", "barber", "salon"], "scissors": ["hair", "haircut", "barber", "salon", "craft"],
+        "spray-can": ["cleaning", "perfume", "hairspray", "beauty"], "hand-sparkles": ["cleaning", "sanitizer", "spa"],
+        "bath": ["spa", "bathroom"], "bath-tub": ["spa", "bathroom"], "shower-head": ["bathroom"],
+        "toilet": ["bathroom", "plumbing"], "washing-machine": ["laundry", "laundromat"], "dryer": ["laundry"],
+        "hanger": ["clothes", "clothing", "dry cleaning"], "shirt": ["clothes", "clothing", "apparel"],
+        "handbag": ["purse", "fashion"], "sunglasses": ["fashion", "eyewear"], "glasses": ["eyewear", "vision", "optometrist"],
+        "hand-heart": ["charity", "donation", "giving", "nonprofit"], "gift": ["present", "birthday", "holiday"],
+        "baby": ["kids", "child", "daycare", "diapers"], "teddy-bear": ["kids", "toys", "baby"],
+        "school": ["tuition", "education", "college"], "graduation-cap": ["tuition", "school", "college", "education"],
+        "dog": ["pet", "vet", "groomer"], "cat": ["pet", "vet"], "paw-print": ["pet", "vet", "animal"],
+        "fish": ["pet", "seafood", "aquarium"], "dumbbell": ["gym", "fitness", "workout"], "run": ["gym", "fitness", "jogging"],
+        "yoga": ["gym", "fitness", "wellness"], "golf": ["sports", "club"], "tennis": ["sports", "club"],
+        "basketball": ["sports"], "soccer": ["sports"], "football": ["sports"], "baseball": ["sports"],
+        "drama": ["theater", "theatre", "concert", "show", "tickets"], "ticket": ["event", "concert", "movie"],
+        "film": ["movies", "cinema", "streaming"], "tv": ["streaming", "cable", "subscription"],
+        "music": ["spotify", "streaming", "concert"], "guitar": ["music", "lessons", "instrument"],
+        "gamepad-2": ["gaming", "video games", "xbox", "playstation"], "dices": ["games", "gambling", "casino"],
+        "camera": ["photo", "photography"], "book-open": ["books", "reading", "library", "kindle"],
+        "wifi": ["internet", "isp", "router"], "phone": ["mobile", "cell", "carrier"], "smartphone": ["mobile", "cell", "carrier"],
+        "zap": ["electric", "power", "utilities"], "flame": ["gas", "heating", "propane"], "droplet": ["water", "sewer", "utilities"],
+        "trash-2": ["garbage", "waste", "utilities"], "recycle": ["garbage", "waste", "recycling"],
+        "wrench": ["repairs", "maintenance", "mechanic"], "hammer": ["repairs", "diy", "contractor", "home improvement"],
+        "car": ["auto", "vehicle", "payment"], "fuel": ["gas", "gasoline", "petrol"], "fuel-pump": ["gas", "gasoline"],
+        "square-parking": ["parking", "garage", "meter"], "bus": ["transit", "commute"], "train-front": ["transit", "commute", "rail"],
+        "plane": ["flights", "airfare", "travel"], "luggage": ["travel", "trip", "vacation"], "hotel": ["lodging", "travel", "airbnb"],
+        "pill": ["pharmacy", "medication", "prescription", "drugs"], "pills": ["pharmacy", "medication"], "stethoscope": ["doctor", "medical", "physician"],
+        "hospital": ["medical", "er", "clinic"], "syringe": ["vaccine", "medical", "shots"], "heart-pulse": ["health", "cardio", "medical"],
+        "tooth-clean": ["dentist", "dental"], "mask": ["medical", "health"], "eye-care": ["vision", "optometrist"],
+        "landmark": ["bank", "government", "irs", "taxes"], "banknote": ["cash", "income", "paycheck"], "coins": ["change", "savings"],
+        "piggy-bank": ["savings", "save"], "credit-card": ["card", "fees", "interest"], "percent": ["interest", "tax", "fees"],
+        "receipt": ["bill", "invoice", "tax"], "briefcase": ["work", "business", "job"], "laptop": ["work", "freelance", "computer"],
+        "bitcoin": ["crypto"], "gavel": ["legal", "attorney", "court", "fees"], "shield": ["insurance", "protection"],
+        "shield-check": ["insurance", "protection", "security"], "umbrella": ["insurance", "rain"],
+        "utensils": ["restaurant", "dining", "food"], "coffee": ["cafe", "coffee shop", "starbucks"], "pizza": ["restaurant", "takeout"],
+        "beer": ["bar", "alcohol", "brewery"], "wine": ["bar", "alcohol", "liquor"], "cocktail": ["bar", "alcohol", "drinks"],
+        "shopping-cart": ["groceries", "supermarket", "store"], "shopping-bag": ["retail", "clothing", "shopping"],
+        "store": ["shop", "retail", "market"], "package": ["shipping", "delivery", "amazon"], "truck": ["shipping", "delivery", "moving"],
+        "home": ["rent", "mortgage", "house"], "house": ["rent", "mortgage", "home"], "key": ["rent", "lock", "locksmith"],
+        "sofa": ["furniture", "living room"], "bed": ["furniture", "mattress", "bedroom"], "lamp": ["furniture", "decor"],
+        "tent": ["camping", "outdoors"], "mountain": ["hiking", "outdoors", "ski"], "beach": ["vacation", "travel", "pool"],
+        "calendar": ["subscription", "annual", "dues"], "mail": ["postage", "usps", "post office"], "printer": ["office", "supplies", "printing"],
+        "cloud-upload": ["storage", "icloud", "subscription", "software"], "code": ["software", "dev", "subscription"],
+    ]
+
+    /// Picker icons matching `query` by name or by a related word.
+    static func search(_ query: String) -> [String] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return pickable }
+        let dashed = q.replacingOccurrences(of: " ", with: "-")
+        return pickable.filter { name in
+            name.contains(dashed) || (keywords[name] ?? []).contains { $0.contains(q) }
+        }
+    }
 
     /// Names offered in the icon picker: every mapped icon whose SF Symbol exists on this OS,
     /// de-duplicated by symbol so each choice looks distinct.

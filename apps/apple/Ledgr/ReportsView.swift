@@ -174,7 +174,7 @@ struct ReportsView: View {
             Card("By category", trailing: s.comparisonLabel.map { AnyView(Text($0).font(.caption).foregroundStyle(.secondary)) }) {
                 ForEach(s.rows.sorted { $0.total > $1.total }) { r in
                     HStack(spacing: 12) {
-                        CategoryBadge(icon: r.categoryIcon, size: 32)
+                        CategoryBadge(icon: r.categoryIcon, size: 32, categoryId: r.categoryId)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(r.categoryName).font(.body)
                             if let g = r.groupName { Text(g).font(.caption).foregroundStyle(.secondary) }
@@ -232,7 +232,7 @@ struct ReportsView: View {
                 Card(title) {
                     ForEach(rows) { r in
                         HStack(spacing: 12) {
-                            CategoryBadge(icon: r.categoryIcon, size: 32)
+                            CategoryBadge(icon: r.categoryIcon, size: 32, categoryId: r.categoryId)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(r.categoryName)
                                 Text("\(Fmt.moneyWhole(r.monthlyAverage))/mo avg").font(.caption).foregroundStyle(.secondary)

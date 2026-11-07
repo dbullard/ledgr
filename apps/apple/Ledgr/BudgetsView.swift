@@ -216,7 +216,7 @@ struct BudgetsView: View {
     private func categoryRow(_ c: BudgetCategoryModel) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
-                CategoryBadge(icon: c.categoryIcon, size: 30)
+                CategoryBadge(icon: c.categoryIcon, size: 30, categoryId: c.categoryId)
                 Text(c.categoryName).font(.body.weight(.medium))
                 Spacer()
                 Text(c.remaining >= 0 ? "\(Fmt.moneyWhole(c.remaining)) left" : "\(Fmt.moneyWhole(-c.remaining)) over")

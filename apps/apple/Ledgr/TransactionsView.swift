@@ -152,6 +152,9 @@ struct TransactionDetailView: View {
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var attaching = false
     @State private var showCategories = false
+    @State private var kindDraft: Kind?
+    @State private var nameDraft = ""
+    @FocusState private var nameFocused: Bool
     @State private var receiptToDelete: ReceiptSummary?
     @ObservedObject private var suggester = CategorySuggester.shared
 
@@ -166,8 +169,15 @@ struct TransactionDetailView: View {
                 if !txn.isTransfer { reviewButton }
 
                 Card {
-                    categoryRow
-                    suggestionRow
+                    typeRow
+                    Divider()
+                    if kind == .transfer {
+                        Label("Transfers between your own accounts don't count as spending or income.", systemImage: "arrow.left.arrow.right")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    } else {
+                        categoryRow
+                        suggestionRow
+                    }
                     Divider()
                     TextField("Add a note", text: $notes, axis: .vertical)
                         .textFieldStyle(.plain)
@@ -354,6 +364,7 @@ struct TransactionDetailView: View {
         }
         .task {
             notes = initial.notes ?? ""
+            nameDraft = initial.name
             async let cats: Void = loadCategories()
             await load()
             await cats
@@ -364,11 +375,24 @@ struct TransactionDetailView: View {
     private var hero: some View {
         Card {
             VStack(spacing: 10) {
-                CategoryBadge(icon: txn.isTransfer ? "arrow-left-right" : txn.categoryIcon, size: 64)
-                Text(txn.name)
+                MerchantAvatar(txn: txn, size: 64)
+                TextField("Name", text: $nameDraft)
+                    .textFieldStyle(.plain)
                     .font(.headline)
                     .multilineTextAlignment(.center)
-                    .lineLimit(2)
+                    .focused($nameFocused)
+                    .onSubmit { Task { await saveName() } }
+                    .onChange(of: nameFocused) { _, focused in if !focused { Task { await saveName() } } }
+                    .onChange(of: txn.name) { _, new in if !nameFocused { nameDraft = new } }
+                if txn.customName != nil {
+                    HStack(spacing: 6) {
+                        Text("Renamed").foregroundStyle(.secondary)
+                        Button("Reset") { Task { await resetName() } }
+                            .buttonStyle(.plain).foregroundStyle(Color.accentColor)
+                    }
+                    .font(.caption)
+                    .help(txn.originalName.map { "Bank name: \($0)" } ?? "")
+                }
                 Text(Fmt.money(txn.normalizedAmount))
                     .font(.system(size: 44, weight: .bold, design: .rounded))
                     .monospacedDigit()
@@ -404,6 +428,50 @@ struct TransactionDetailView: View {
             .foregroundStyle(color)
             .padding(.horizontal, 9).padding(.vertical, 3)
             .background(color.opacity(0.14), in: Capsule())
+    }
+
+    // MARK: Transaction type
+
+    enum Kind: String, CaseIterable, Identifiable {
+        case expense = "Expense", income = "Income", transfer = "Transfer"
+        var id: String { rawValue }
+    }
+
+    private func category(_ id: String?) -> Category? {
+        guard let id else { return nil }
+        return groups.lazy.flatMap(\.categories).first { $0.id == id }
+    }
+
+    /// Transfer is stored on the transaction; income vs spending follows the category
+    /// (or the amount's sign until one is chosen).
+    private var kind: Kind {
+        if txn.isTransfer { return .transfer }
+        if let cat = category(txn.categoryId) { return cat.isIncome ? .income : .expense }
+        return kindDraft ?? (txn.normalizedAmount > 0 ? .income : .expense)
+    }
+
+    private var typeRow: some View {
+        Picker("Type", selection: Binding(get: { kind }, set: { k in Task { await setKind(k) } })) {
+            ForEach(Kind.allCases) { Text($0.rawValue).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .sensoryFeedback(.selection, trigger: kind)
+    }
+
+    private func setKind(_ new: Kind) async {
+        guard new != kind else { return }
+        if new == .transfer {
+            kindDraft = nil
+            await patch(["isTransfer": true])
+            return
+        }
+        kindDraft = new
+        var body: [String: Any] = [:]
+        if txn.isTransfer { body["isTransfer"] = false }
+        // A category from the other side (an income category on spending, or the reverse) no longer fits.
+        if let cat = category(txn.categoryId), cat.isIncome != (new == .income) { body["categoryId"] = NSNull() }
+        if !body.isEmpty { await patch(body) }
     }
 
     private var reviewButton: some View {
@@ -452,7 +520,7 @@ struct TransactionDetailView: View {
         }
         .buttonStyle(.plain)
         .popover(isPresented: $showCategories, arrowEdge: .bottom) {
-            CategoryPicker(groups: groups, currentId: txn.categoryId, loading: loadingCategories, failed: categoriesFailed, retry: { Task { await loadCategories() } }) { id in
+            CategoryPicker(groups: groups, incomeOnly: kind == .income, currentId: txn.categoryId, loading: loadingCategories, failed: categoriesFailed, retry: { Task { await loadCategories() } }) { id in
                 showCategories = false
                 Task { await setCategory(id) }
             }
@@ -510,8 +578,9 @@ struct TransactionDetailView: View {
         defer { loadingCategories = false }
         do {
             let g: [CategoryGroup] = try await api.get("api/native/categories")
-            groups = g
-            CategoryCache.groups = g
+            groups = g.alphabetical
+            CategoryCache.groups = groups
+            CategoryStyles.shared.update(g)
             categoriesFailed = false
         } catch APIError.unauthorized {
         } catch { categoriesFailed = true }
@@ -527,6 +596,23 @@ struct TransactionDetailView: View {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    private func saveName() async {
+        let trimmed = nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { nameDraft = txn.name; return }
+        guard trimmed != txn.name else { return }
+        await patch(["name": trimmed])
+        if error == nil && txn.name != trimmed {
+            // The server accepted the request but kept the old name: it predates rename support.
+            error = "Your Ledgr server doesn't support renaming yet. Update it to keep custom names."
+        }
+        nameDraft = txn.name
+    }
+
+    private func resetName() async {
+        await patch(["name": NSNull()])
+        nameDraft = txn.name
     }
 
     private func setCategory(_ id: String?) async {
@@ -572,6 +658,8 @@ enum CategoryCache { static var groups: [CategoryGroup] = [] }
 /// Searchable category dropdown, grouped, with the current choice checked.
 struct CategoryPicker: View {
     let groups: [CategoryGroup]
+    /// Income shows only income categories; spending shows only the rest.
+    var incomeOnly = false
     let currentId: String?
     var loading = false
     var failed = false
@@ -581,10 +669,17 @@ struct CategoryPicker: View {
     @FocusState private var searchFocused: Bool
 
     private var filtered: [CategoryGroup] {
-        let q = query.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return groups }
-        return groups.compactMap { g in
-            let cats = g.categories.filter { $0.name.localizedCaseInsensitiveContains(q) }
+        // Every word must match the group name or the category name, ignoring case and accents,
+        // so "food cof" finds Coffee Shops under Food & Dining, and a group name alone lists the whole group.
+        let words = query.split(whereSeparator: \.isWhitespace).map(String.init)
+        func fold(_ s: String) -> String { s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current) }
+        return groups.alphabetical.compactMap { g in
+            let group = fold(g.name)
+            let cats = g.categories.filter { c in
+                guard c.isIncome == incomeOnly else { return false }
+                let name = fold(c.name)
+                return words.allSatisfy { w in let f = fold(w); return group.contains(f) || name.contains(f) }
+            }
             return cats.isEmpty ? nil : CategoryGroup(id: g.id, name: g.name, icon: g.icon, isSystem: g.isSystem, categories: cats)
         }
     }
@@ -637,7 +732,7 @@ struct CategoryPicker: View {
     private func row(_ id: String?, _ name: String, icon: String?) -> some View {
         Button { onPick(id) } label: {
             HStack(spacing: 10) {
-                CategoryBadge(icon: icon, size: 26)
+                CategoryBadge(icon: icon, size: 26, categoryId: id)
                 Text(name).foregroundStyle(Color.primary)
                 Spacer()
                 if id == currentId { Image(systemName: "checkmark").font(.footnote.weight(.bold)).foregroundStyle(Color.accentColor) }

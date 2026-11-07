@@ -77,9 +77,30 @@ struct ErrorState: View {
     }
 }
 
+/// User-chosen category colours by category id, shared so every badge in the app can look one up.
+@MainActor @Observable
+final class CategoryStyles {
+    static let shared = CategoryStyles()
+    private(set) var colors: [String: String] = [:]
+
+    func update(_ groups: [CategoryGroup]) {
+        colors = groups.flatMap(\.categories).reduce(into: [:]) { out, c in if let hex = c.color { out[c.id] = hex } }
+    }
+
+    func set(_ categoryId: String, _ hex: String?) { colors[categoryId] = hex }
+
+    func refresh(_ api: API) async {
+        if let groups: [CategoryGroup] = try? await api.get("api/native/categories") { update(groups) }
+    }
+}
+
 struct CategoryBadge: View {
     let icon: String?
     var size: CGFloat = 38
+    /// Looks up the category's chosen colour; nil keeps the automatic one.
+    var categoryId: String?
+    /// Explicit "#RRGGBB" (the picker's live preview); wins over the lookup.
+    var colorHex: String?
 
     private static let palette: [Color] = [
         Color(red: 0.01, green: 0.39, blue: 0.77), Color(red: 0.13, green: 0.65, blue: 0.38),
@@ -88,6 +109,7 @@ struct CategoryBadge: View {
         Color(red: 0.69, green: 0.50, blue: 0.0),
     ]
     private var tint: Color {
+        if let hex = colorHex ?? categoryId.flatMap({ CategoryStyles.shared.colors[$0] }), let custom = Color(hex: hex) { return custom }
         guard let icon else { return .gray }
         return Self.palette[abs(icon.unicodeScalars.reduce(0) { $0 &* 31 &+ Int($1.value) }) % Self.palette.count]
     }
@@ -101,6 +123,64 @@ struct CategoryBadge: View {
     }
 }
 
+/// The merchant's logo when we have one, otherwise the category badge.
+/// Logos arrive either as an https URL (Plaid) or a base64 `data:` URI
+/// (favicon cached by the server), so both are handled.
+struct MerchantAvatar: View {
+    let txn: Txn
+    var size: CGFloat = 38
+
+    private static let cache = NSCache<NSString, PlatformImage>()
+
+    private static func decoded(_ dataURI: String) -> PlatformImage? {
+        if let hit = cache.object(forKey: dataURI as NSString) { return hit }
+        guard let comma = dataURI.firstIndex(of: ","),
+              let data = Data(base64Encoded: String(dataURI[dataURI.index(after: comma)...])),
+              let image = PlatformImage(data: data) else { return nil }
+        cache.setObject(image, forKey: dataURI as NSString)
+        return image
+    }
+
+    private var fallback: some View {
+        CategoryBadge(icon: txn.isTransfer ? "arrow-left-right" : txn.categoryIcon, size: size, categoryId: txn.isTransfer ? nil : txn.categoryId)
+    }
+
+    private func logo(_ image: Image) -> some View {
+        image
+            .resizable()
+            .scaledToFit()
+            .padding(size * 0.16)
+            .frame(width: size, height: size)
+            .background(Color.white, in: Circle())
+            .clipShape(Circle())
+    }
+
+    var body: some View {
+        if txn.isTransfer {
+            fallback
+        } else if let raw = txn.merchantLogoUrl, !raw.isEmpty {
+            if raw.hasPrefix("data:") {
+                if let image = Self.decoded(raw) { logo(Image(platformImage: image)) } else { fallback }
+            } else if let url = URL(string: raw) {
+                AsyncImage(url: url) { phase in
+                    if let image = phase.image { logo(image) } else { fallback }
+                }
+            } else {
+                fallback
+            }
+        } else {
+            fallback
+        }
+    }
+}
+
+// `PlatformImage` (NSImage / UIImage) is declared in ImageTools.swift.
+#if os(iOS)
+extension Image { init(platformImage: PlatformImage) { self.init(uiImage: platformImage) } }
+#else
+extension Image { init(platformImage: PlatformImage) { self.init(nsImage: platformImage) } }
+#endif
+
 struct TxnRow: View {
     let txn: Txn
     /// On-device suggestion shown (with a sparkle) until the user confirms it.
@@ -108,7 +188,7 @@ struct TxnRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            CategoryBadge(icon: txn.isTransfer ? "arrow-left-right" : txn.categoryIcon)
+            MerchantAvatar(txn: txn)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     if !txn.reviewed && !txn.isTransfer {
@@ -117,7 +197,10 @@ struct TxnRow: View {
                     Text(txn.name).font(.body.weight(.medium)).lineLimit(1)
                 }
                 HStack(spacing: 4) {
-                    if let cat = txn.categoryName {
+                    if txn.isTransfer {
+                        // Transfers aren't categorized, so never flag them as missing one.
+                        Label("Transfer", systemImage: "arrow.left.arrow.right").lineLimit(1).fixedSize()
+                    } else if let cat = txn.categoryName {
                         Text(cat).lineLimit(1).fixedSize()
                     } else if let s = suggestion {
                         Label(s.name, systemImage: "sparkles").foregroundStyle(Color.accentColor).lineLimit(1).fixedSize()
@@ -151,4 +234,20 @@ func tightDomain(_ values: [Double]) -> ClosedRange<Double> {
 
 extension View {
     func tightYScale(_ values: [Double]) -> some View { chartYScale(domain: tightDomain(values)) }
+}
+
+extension Color {
+    /// "#RRGGBB" (the "#" is optional).
+    init?(hex: String) {
+        var h = hex.trimmingCharacters(in: .whitespaces)
+        if h.hasPrefix("#") { h.removeFirst() }
+        guard h.count == 6, let v = UInt32(h, radix: 16) else { return nil }
+        self.init(red: Double((v >> 16) & 0xFF) / 255, green: Double((v >> 8) & 0xFF) / 255, blue: Double(v & 0xFF) / 255)
+    }
+
+    var hexString: String {
+        let c = resolve(in: EnvironmentValues())
+        func byte(_ f: Float) -> Int { Int((min(max(f, 0), 1) * 255).rounded()) }
+        return String(format: "#%02X%02X%02X", byte(c.red), byte(c.green), byte(c.blue))
+    }
 }

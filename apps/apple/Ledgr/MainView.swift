@@ -111,6 +111,7 @@ struct MainView: View {
             .task(id: "\(connection.active?.absoluteString ?? "")|\(queue.items.count)|\(queue.uploading)|\(section == .receipts)") {
                 await refreshWaiting()
             }
+            .task(id: connection.active) { await CategoryStyles.shared.refresh(api) }
     }
 
     @ViewBuilder private var content: some View {

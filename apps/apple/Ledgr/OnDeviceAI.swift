@@ -185,7 +185,7 @@ final class CategorySuggester: ObservableObject {
         let batch = lookup
         lookup = []
         lookupTask = nil
-        if groups.isEmpty, let g: [CategoryGroup] = try? await api.get("api/native/categories") { groups = g; CategoryCache.groups = g }
+        if groups.isEmpty, let g: [CategoryGroup] = try? await api.get("api/native/categories") { groups = g.alphabetical; CategoryCache.groups = groups }
         var cached: [String: String?]?
         for chunk in stride(from: 0, to: batch.count, by: 100).map({ Array(batch[$0..<min($0 + 100, batch.count)]) }) {
             let ids = chunk.map(\.id).joined(separator: ",")
