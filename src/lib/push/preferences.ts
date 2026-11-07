@@ -6,10 +6,22 @@ import { getPushScanSettings, type PushScanSettings } from "./scan-settings";
 
 /** What the settings screen shows and edits. Always fully resolved (no nulls). */
 export interface PushPreferences {
+  /** Master switch for everything below. */
+  enabled: boolean;
+  deposits: boolean;
+  /** Deposits at or above this many cents are announced. */
+  depositCents: number;
+  /** Daily nudge when several transactions still need a category. */
+  review: boolean;
+  /** Sunday-morning recap of the week. */
+  weekly: boolean;
   bills: boolean;
   largeCharges: boolean;
   budgets: boolean;
   connections: boolean;
+  lowBalance: boolean;
+  /** Checking/savings balances under this many cents trigger an alert. */
+  lowBalanceCents: number;
   /** Charges at or above this many cents count as large. */
   largeChargeCents: number;
   quietEnabled: boolean;
@@ -27,7 +39,7 @@ export function parsePreferencesPatch(raw: unknown): PushPreferencesPatch | null
   if (!raw || typeof raw !== "object") return null;
   const b = raw as Record<string, unknown>;
   const out: PushPreferencesPatch = {};
-  for (const k of ["bills", "largeCharges", "budgets", "connections", "quietEnabled"] as const) {
+  for (const k of ["enabled", "bills", "largeCharges", "budgets", "connections", "lowBalance", "deposits", "review", "weekly", "quietEnabled"] as const) {
     if (b[k] === undefined) continue;
     if (typeof b[k] !== "boolean") return null;
     out[k] = b[k] as boolean;
@@ -36,6 +48,16 @@ export function parsePreferencesPatch(raw: unknown): PushPreferencesPatch | null
     const n = b.largeChargeCents;
     if (typeof n !== "number" || !Number.isInteger(n) || n < 100 || n > 100_000_000) return null;
     out.largeChargeCents = n;
+  }
+  if (b.depositCents !== undefined) {
+    const n = b.depositCents;
+    if (typeof n !== "number" || !Number.isInteger(n) || n < 100 || n > 100_000_000) return null;
+    out.depositCents = n;
+  }
+  if (b.lowBalanceCents !== undefined) {
+    const n = b.lowBalanceCents;
+    if (typeof n !== "number" || !Number.isInteger(n) || n < 0 || n > 100_000_000) return null;
+    out.lowBalanceCents = n;
   }
   for (const k of ["quietStartHour", "quietEndHour"] as const) {
     if (b[k] === undefined) continue;
@@ -58,10 +80,17 @@ export async function getPushPreferences(
   );
   const base = getPushScanSettings(env);
   return {
+    enabled: row?.enabled ?? true,
+    deposits: row?.deposits ?? false,
+    depositCents: row?.depositCents ?? 50_000,
+    review: row?.review ?? false,
+    weekly: row?.weekly ?? false,
     bills: row?.bills ?? true,
     largeCharges: row?.largeCharges ?? true,
     budgets: row?.budgets ?? true,
     connections: row?.connections ?? true,
+    lowBalance: row?.lowBalance ?? false,
+    lowBalanceCents: row?.lowBalanceCents ?? 10_000,
     largeChargeCents: row?.largeChargeCents ?? base.largeTxnCents,
     quietEnabled: row?.quietEnabled ?? true,
     quietStartHour: row?.quietStartHour ?? base.quietStartHour,
@@ -94,6 +123,18 @@ export function applyPreferences(base: PushScanSettings, p: PushPreferences): Pu
     largeTxnCents: p.largeChargeCents,
     quietStartHour: p.quietStartHour,
     quietEndHour: p.quietEnabled ? p.quietEndHour : p.quietStartHour, // equal hours = no quiet window
-    types: { bills: p.bills, largeCharges: p.largeCharges, budgets: p.budgets, connections: p.connections },
+    lowBalanceCents: p.lowBalanceCents,
+    depositCents: p.depositCents,
+    enabled: p.enabled,
+    types: {
+      bills: p.bills,
+      largeCharges: p.largeCharges,
+      budgets: p.budgets,
+      connections: p.connections,
+      lowBalance: p.lowBalance,
+      deposits: p.deposits,
+      review: p.review,
+      weekly: p.weekly,
+    },
   };
 }

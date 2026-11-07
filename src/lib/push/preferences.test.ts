@@ -24,10 +24,17 @@ describe("parsePreferencesPatch", () => {
 
 describe("applyPreferences", () => {
   const prefs: PushPreferences = {
+    enabled: true,
+    deposits: false,
+    depositCents: 50000,
+    review: false,
+    weekly: false,
     bills: true,
     largeCharges: false,
     budgets: true,
     connections: true,
+    lowBalance: true,
+    lowBalanceCents: 20000,
     largeChargeCents: 10000,
     quietEnabled: true,
     quietStartHour: 22,

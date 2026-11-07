@@ -69,11 +69,22 @@ export const pushPreferences = pgTable(
     householdId: text("household_id")
       .primaryKey()
       .references(() => households.id, { onDelete: "cascade" }),
+    // Master switch. Off = the scan still runs and records events (so turning it
+    // back on doesn't replay a backlog) but nothing is sent.
+    enabled: boolean("enabled").notNull().default(true),
     bills: boolean("bills").notNull().default(true),
     largeCharges: boolean("large_charges").notNull().default(true),
     budgets: boolean("budgets").notNull().default(true),
     connections: boolean("connections").notNull().default(true),
     largeChargeCents: integer("large_charge_cents"),
+    // Off until chosen: alert when a checking/savings balance falls below lowBalanceCents.
+    // Opt-in extras.
+    deposits: boolean("deposits").notNull().default(false),
+    depositCents: integer("deposit_cents").notNull().default(50000),
+    review: boolean("review").notNull().default(false),
+    weekly: boolean("weekly").notNull().default(false),
+    lowBalance: boolean("low_balance").notNull().default(false),
+    lowBalanceCents: integer("low_balance_cents").notNull().default(10000),
     quietEnabled: boolean("quiet_enabled").notNull().default(true),
     quietStartHour: integer("quiet_start_hour"),
     quietEndHour: integer("quiet_end_hour"),

@@ -1,6 +1,6 @@
-import { and, eq, gte, inArray, isNull } from "drizzle-orm";
+import { and, count, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { db as defaultDb, type LedgrDb } from "@/db";
-import { bankConnections, households, pushEvents, transactions } from "@/db/schema";
+import { accounts, bankConnections, households, pushEvents, transactions } from "@/db/schema";
 import { withHousehold } from "@/lib/household-context";
 import { getBudgetForMonth, type BudgetMonth } from "@/queries/budgets";
 import { getUpcomingBills, type BillRow } from "@/queries/recurring";
@@ -16,7 +16,7 @@ import { notifyHousehold } from "./notify";
 
 export { getPushScanSettings, isQuietHour, type PushScanSettings } from "./scan-settings";
 
-export type PushType = "bills" | "largeCharges" | "budgets" | "connections";
+export type PushType = "bills" | "largeCharges" | "budgets" | "connections" | "lowBalance" | "deposits" | "review" | "weekly";
 
 /**
  * Periodic scan that turns Ledgr state into push notifications:
@@ -160,6 +160,79 @@ export function connectionCandidates(rows: ConnectionRow[]): PushCandidate[] {
   return out;
 }
 
+export interface BalanceRow {
+  id: string;
+  name: string;
+  currentBalance: number | null;
+}
+
+/** Accounts whose balance is under the limit. Keyed per account; cleared when it recovers. */
+export function lowBalanceCandidates(rows: BalanceRow[], limitCents: number): PushCandidate[] {
+  return rows
+    .filter((a) => a.currentBalance !== null && a.currentBalance < limitCents)
+    .map((a) => ({
+      type: "lowBalance" as const,
+      key: `lowbal:${a.id}`,
+      message: {
+        title: `Low balance: ${a.name}`,
+        body: `${centsToDisplay(a.currentBalance as number)} (under ${centsToDisplay(limitCents)})`,
+        threadId: "balances",
+        data: { kind: "balance", id: a.id },
+      },
+    }));
+}
+
+/** Money in: keyed on the transaction. `rows` use the Plaid sign (negative = income). */
+export function depositCandidates(rows: LargeTxnRow[]): PushCandidate[] {
+  return rows.map((t) => ({
+    type: "deposits" as const,
+    key: `dep:${t.id}`,
+    message: {
+      title: `Deposit: ${centsToDisplay(Math.abs(t.amount))}`,
+      body: t.name,
+      threadId: "transactions",
+      data: { kind: "transaction", id: t.id },
+    },
+  }));
+}
+
+/** At most one nudge a day, and only when enough has piled up to be worth a look. */
+export function reviewCandidates(count: number, now: Date, minimum = 5): PushCandidate[] {
+  if (count < minimum) return [];
+  return [
+    {
+      type: "review",
+      key: `review:${localDate(now)}`,
+      message: {
+        title: `${count} transactions need a category`,
+        body: "A minute now keeps your budgets and reports accurate.",
+        threadId: "review",
+        data: { kind: "review" },
+      },
+    },
+  ];
+}
+
+export interface WeekSummary {
+  spentCents: number;
+  incomeCents: number;
+  charges: number;
+}
+
+/** Sunday-morning recap, once per week. Returns nothing on other days or before 9am. */
+export function weeklyCandidates(week: WeekSummary, now: Date): PushCandidate[] {
+  if (now.getDay() !== 0 || now.getHours() < 9) return [];
+  const parts = [`Spent ${centsToDisplay(week.spentCents)} across ${week.charges} charge${week.charges === 1 ? "" : "s"}`];
+  if (week.incomeCents > 0) parts.push(`${centsToDisplay(week.incomeCents)} came in`);
+  return [
+    {
+      type: "weekly",
+      key: `weekly:${localDate(now)}`,
+      message: { title: "Your week in Ledgr", body: parts.join(" · "), threadId: "weekly", data: { kind: "weekly" } },
+    },
+  ];
+}
+
 // ── Orchestration ────────────────────────────────────────────────────
 
 export interface ScanDeps {
@@ -182,12 +255,12 @@ export async function collectCandidates(
   db: LedgrDb,
   now: Date,
   settings: PushScanSettings,
-): Promise<{ candidates: PushCandidate[]; healthyConnectionIds: string[] }> {
+): Promise<{ candidates: PushCandidate[]; staleKeys: string[] }> {
   const month = getCurrentMonth();
   const since = new Date(now.getTime() - 48 * 3_600_000);
   const oldestDate = localDate(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7));
 
-  const [bills, budget, large, conns] = await Promise.all([
+  const [bills, budget, large, conns, balances, deposits, backlog, week] = await Promise.all([
     withHousehold(householdId, (tx) => getUpcomingBills(householdId, {}, tx), db),
     withHousehold(householdId, (tx) => getBudgetForMonth(householdId, month, tx), db),
     withHousehold(
@@ -223,6 +296,98 @@ export async function collectCandidates(
       })
       .from(bankConnections)
       .where(eq(bankConnections.householdId, householdId)),
+    // Only looked at when the alert is on, so switching it on later reports
+    // accounts that are already low instead of silently claiming them.
+    settings.types.lowBalance
+      ? withHousehold(
+          householdId,
+          (tx) =>
+            tx
+              .select({ id: accounts.id, name: accounts.name, currentBalance: accounts.currentBalance })
+              .from(accounts)
+              .where(
+                and(
+                  eq(accounts.householdId, householdId),
+                  inArray(accounts.type, ["checking", "savings"]),
+                  eq(accounts.isHidden, false),
+                  isNull(accounts.deletedAt),
+                ),
+              ),
+          db,
+        )
+      : Promise.resolve([] as BalanceRow[]),
+    settings.types.deposits
+      ? withHousehold(
+          householdId,
+          (tx) =>
+            tx
+              .select({ id: transactions.id, name: transactions.name, amount: transactions.amount, date: transactions.date })
+              .from(transactions)
+              .where(
+                and(
+                  eq(transactions.householdId, householdId),
+                  gte(transactions.createdAt, since),
+                  gte(transactions.date, oldestDate),
+                  // Negative = money in.
+                  lte(transactions.amount, -settings.depositCents),
+                  eq(transactions.pending, false),
+                  eq(transactions.isTransfer, false),
+                  eq(transactions.isHidden, false),
+                  isNull(transactions.deletedAt),
+                ),
+              ),
+          db,
+        )
+      : Promise.resolve([] as LargeTxnRow[]),
+    settings.types.review
+      ? withHousehold(
+          householdId,
+          async (tx) => {
+            const [r] = await tx
+              .select({ n: count() })
+              .from(transactions)
+              .where(
+                and(
+                  eq(transactions.householdId, householdId),
+                  isNull(transactions.categoryId),
+                  gte(transactions.date, localDate(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30))),
+                  eq(transactions.pending, false),
+                  eq(transactions.isTransfer, false),
+                  eq(transactions.isHidden, false),
+                  isNull(transactions.deletedAt),
+                ),
+              );
+            return r?.n ?? 0;
+          },
+          db,
+        )
+      : Promise.resolve(0),
+    settings.types.weekly && now.getDay() === 0
+      ? withHousehold(
+          householdId,
+          async (tx): Promise<WeekSummary> => {
+            const [r] = await tx
+              .select({
+                spent: sql<number>`coalesce(sum(case when ${transactions.amount} > 0 then ${transactions.amount} else 0 end), 0)::int`,
+                income: sql<number>`coalesce(-sum(case when ${transactions.amount} < 0 then ${transactions.amount} else 0 end), 0)::int`,
+                charges: sql<number>`count(*) filter (where ${transactions.amount} > 0)::int`,
+              })
+              .from(transactions)
+              .where(
+                and(
+                  eq(transactions.householdId, householdId),
+                  gte(transactions.date, localDate(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7))),
+                  eq(transactions.pending, false),
+                  eq(transactions.isTransfer, false),
+                  eq(transactions.isHidden, false),
+                  isNull(transactions.deletedAt),
+                ),
+              );
+            return { spentCents: r?.spent ?? 0, incomeCents: r?.income ?? 0, charges: r?.charges ?? 0 };
+          },
+          db,
+        )
+      : Promise.resolve(null),
   ]);
 
   return {
@@ -231,8 +396,18 @@ export async function collectCandidates(
       ...billCandidates(bills, now),
       ...budgetCandidates(month, budget),
       ...largeTxnCandidates(large),
+      ...lowBalanceCandidates(balances, settings.lowBalanceCents),
+      ...depositCandidates(deposits),
+      ...reviewCandidates(backlog, now),
+      ...(week ? weeklyCandidates(week, now) : []),
     ],
-    healthyConnectionIds: conns.filter((c) => c.status === "active").map((c) => c.id),
+    // Keys to forget so a recovered bank / topped-up account is announced again if it recurs.
+    staleKeys: [
+      ...conns.filter((c) => c.status === "active").flatMap((c) => UNHEALTHY.map((st) => `conn:${c.id}:${st}`)),
+      ...balances
+        .filter((a) => a.currentBalance === null || a.currentBalance >= settings.lowBalanceCents)
+        .map((a) => `lowbal:${a.id}`),
+    ],
   };
 }
 
@@ -254,22 +429,22 @@ export async function scanHousehold(householdId: string, deps: ScanDeps = {}): P
     (tx) => tx.select({ k: pushEvents.eventKey }).from(pushEvents).where(eq(pushEvents.householdId, householdId)).limit(1),
     db,
   );
-  outcome.silent = !anyEvent;
+  // Master switch off behaves like the first scan: events are recorded, nothing is sent,
+  // so turning it back on later does not replay everything that happened meanwhile.
+  outcome.silent = !anyEvent || !settings.enabled;
 
   if (!outcome.silent && isQuietHour(now.getHours(), settings)) {
     outcome.skippedQuiet = true;
     return outcome;
   }
 
-  const { candidates, healthyConnectionIds } = await collectCandidates(householdId, db, now, settings);
+  const { candidates, staleKeys } = await collectCandidates(householdId, db, now, settings);
   outcome.candidates = candidates.length;
 
-  // A bank that recovered should be announced again if it breaks again later.
-  if (healthyConnectionIds.length > 0) {
-    const stale = healthyConnectionIds.flatMap((id) => UNHEALTHY.map((s) => `conn:${id}:${s}`));
+  if (staleKeys.length > 0) {
     await withHousehold(
       householdId,
-      (tx) => tx.delete(pushEvents).where(and(eq(pushEvents.householdId, householdId), inArray(pushEvents.eventKey, stale))),
+      (tx) => tx.delete(pushEvents).where(and(eq(pushEvents.householdId, householdId), inArray(pushEvents.eventKey, staleKeys))),
       db,
     );
   }

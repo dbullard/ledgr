@@ -1,0 +1,2 @@
+ALTER TABLE "push_preferences" ADD COLUMN "low_balance" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "push_preferences" ADD COLUMN "low_balance_cents" integer DEFAULT 10000 NOT NULL;

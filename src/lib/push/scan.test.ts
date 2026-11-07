@@ -6,6 +6,10 @@ import {
   getPushScanSettings,
   isQuietHour,
   largeTxnCandidates,
+  lowBalanceCandidates,
+  depositCandidates,
+  reviewCandidates,
+  weeklyCandidates,
 } from "./scan";
 import type { BillRow } from "@/queries/recurring";
 import type { BudgetMonth } from "@/queries/budgets";
@@ -177,5 +181,49 @@ describe("getPushScanSettings", () => {
       largeTxnCents: 25000,
       quietEndHour: 8,
     });
+  });
+});
+
+describe("lowBalanceCandidates", () => {
+  it("flags balances under the limit, one key per account", () => {
+    const out = lowBalanceCandidates(
+      [
+        { id: "a", name: "Checking", currentBalance: 4_200 },
+        { id: "b", name: "Savings", currentBalance: 50_000 },
+        { id: "c", name: "Unsynced", currentBalance: null },
+        { id: "d", name: "Overdrawn", currentBalance: -1_500 },
+      ],
+      10_000,
+    );
+    expect(out.map((c) => c.key)).toEqual(["lowbal:a", "lowbal:d"]);
+    expect(out[0].message).toMatchObject({ title: "Low balance: Checking", body: "$42.00 (under $100.00)" });
+  });
+});
+
+describe("depositCandidates", () => {
+  it("announces money in using the absolute amount", () => {
+    const [c] = depositCandidates([{ id: "t1", name: "ACME PAYROLL", amount: -245000, date: "2026-11-07" }]);
+    expect(c.key).toBe("dep:t1");
+    expect(c.message).toMatchObject({ title: "Deposit: $2,450.00", body: "ACME PAYROLL" });
+  });
+});
+
+describe("reviewCandidates", () => {
+  it("needs a pile-up and is keyed per day", () => {
+    expect(reviewCandidates(4, NOW)).toEqual([]);
+    const [c] = reviewCandidates(7, NOW);
+    expect(c.key).toBe("review:2026-11-07");
+    expect(c.message.title).toBe("7 transactions need a category");
+  });
+});
+
+describe("weeklyCandidates", () => {
+  const week = { spentCents: 41250, incomeCents: 200000, charges: 18 };
+  it("only fires on Sunday from 9am", () => {
+    expect(weeklyCandidates(week, NOW)).toEqual([]); // Saturday
+    expect(weeklyCandidates(week, new Date(2026, 10, 8, 8, 0))).toEqual([]);
+    const [c] = weeklyCandidates(week, new Date(2026, 10, 8, 9, 30));
+    expect(c.key).toBe("weekly:2026-11-08");
+    expect(c.message.body).toBe("Spent $412.50 across 18 charges · $2,000.00 came in");
   });
 });

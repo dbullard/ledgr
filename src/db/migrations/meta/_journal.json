@@ -211,6 +211,20 @@
       "when": 1794091597015,
       "tag": "0029_push_preferences",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1794092130322,
+      "tag": "0030_push_low_balance",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1794092252096,
+      "tag": "0031_push_more_types",
+      "breakpoints": true
     }
   ]
 }

@@ -140,82 +140,259 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotification
 
 /// Which notifications the household gets and when (stored on the server, so it applies to every device).
 struct PushPrefs: Codable, Equatable {
+    var enabled = true
     var bills = true
     var largeCharges = true
-    var budgets = true
-    var connections = true
     var largeChargeCents = 25_000
+    var deposits = false
+    var depositCents = 50_000
+    var lowBalance = false
+    var lowBalanceCents = 10_000
+    var budgets = true
+    var weekly = false
+    var review = false
+    var connections = true
     var quietEnabled = true
     var quietStartHour = 21
     var quietEndHour = 8
+
+    /// How many of the eight alert types are switched on.
+    var activeTypes: Int {
+        [bills, largeCharges, deposits, lowBalance, budgets, weekly, review, connections].filter { $0 }.count
+    }
 }
 
-/// Settings card: turn notifications on, choose which kinds to receive, set quiet hours, send a test.
+/// Loads and saves the household's notification choices. Edits apply instantly on screen and are
+/// sent to the server in the background; a failure rolls the screen back to what the server has.
+@MainActor
+final class PushPrefsStore: ObservableObject {
+    @Published private(set) var prefs: PushPrefs?
+    @Published private(set) var error: String?
+
+    func load(using api: API) async {
+        do { prefs = try await api.get("api/native/push/preferences"); error = nil }
+        catch { if prefs == nil { self.error = "Couldn't load notification settings." } }
+    }
+
+    func update(_ change: (inout PushPrefs) -> Void, using api: API) {
+        guard var next = prefs else { return }
+        change(&next)
+        prefs = next
+        Task {
+            do {
+                let body: [String: Any] = [
+                    "enabled": next.enabled, "bills": next.bills, "largeCharges": next.largeCharges,
+                    "largeChargeCents": next.largeChargeCents, "deposits": next.deposits,
+                    "depositCents": next.depositCents, "lowBalance": next.lowBalance,
+                    "lowBalanceCents": next.lowBalanceCents, "budgets": next.budgets, "weekly": next.weekly,
+                    "review": next.review, "connections": next.connections, "quietEnabled": next.quietEnabled,
+                    "quietStartHour": next.quietStartHour, "quietEndHour": next.quietEndHour,
+                ]
+                prefs = try await api.patch("api/native/push/preferences", body: body)
+                error = nil
+            } catch {
+                self.error = "Couldn't save that change."
+                await load(using: api)
+            }
+        }
+    }
+}
+
+#if os(iOS)
+/// The one row in Settings. Everything else lives a tap deeper, like iOS's own Notifications settings.
 struct NotificationsCard: View {
     @EnvironmentObject var api: API
     @ObservedObject private var push = PushManager.shared
-    @State private var testResult: String?
-    @State private var sending = false
-    @State private var prefs: PushPrefs?
-    @State private var prefsError: String?
+    @StateObject private var store = PushPrefsStore()
 
-    private static let thresholds = [5_000, 10_000, 25_000, 50_000, 100_000, 250_000]
+    private var summary: String {
+        guard push.isEnabled else { return "Off on this device" }
+        guard let prefs = store.prefs else { return "On" }
+        guard prefs.enabled else { return "Paused" }
+        return "\(prefs.activeTypes) of 8 alert types"
+    }
 
     var body: some View {
-        Group {
-        Card("Notifications") {
-            if push.isEnabled {
-                Label("On for this device", systemImage: "bell.badge.fill").foregroundStyle(.green)
-            } else {
-                Button("Turn on notifications") { Task { await push.enable() } }.buttonStyle(.bordered)
-            }
-            if let message = push.message { Text(message).font(.caption).foregroundStyle(.red) }
-        }
-        if let prefs {
-            Card("Notify me about") {
-                toggle("Bills due", "Today and tomorrow", \.bills)
-                toggle("Large charges", "Single charges over the amount below", \.largeCharges)
-                if prefs.largeCharges {
-                    Picker("Large means", selection: binding(\.largeChargeCents)) {
-                        ForEach(options(prefs.largeChargeCents), id: \.self) { Text("$\($0 / 100)+").tag($0) }
-                    }
-                }
-                toggle("Budgets", "At 80% and when a category goes over", \.budgets)
-                toggle("Bank connections", "When a bank needs you to sign in again", \.connections)
-            }
-            Card("Quiet hours") {
-                Toggle("Hold notifications overnight", isOn: binding(\.quietEnabled))
-                if prefs.quietEnabled {
-                    Picker("From", selection: binding(\.quietStartHour)) { hours }
-                    Picker("Until", selection: binding(\.quietEndHour)) { hours }
-                }
-                Text("Alerts that come up during quiet hours are sent at the first check after they end.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        } else if let prefsError {
-            Text(prefsError).font(.caption).foregroundStyle(.red)
-        }
-        if push.isEnabled {
+        NavigationLink {
+            NotificationSettingsView(store: store)
+        } label: {
             Card {
-                Button(sending ? "Sending…" : "Send a test notification") {
+                HStack(spacing: 12) {
+                    NotificationIcon(symbol: "bell.badge.fill", color: .red)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Notifications").font(.body.weight(.medium)).foregroundStyle(.primary)
+                        Text(summary).font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .task {
+            await push.refreshPermission()
+            await store.load(using: api)
+        }
+    }
+}
+
+/// Rounded-square symbol tile, as in iOS Settings.
+struct NotificationIcon: View {
+    let symbol: String
+    let color: Color
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 30, height: 30)
+            .background(color.gradient, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .accessibilityHidden(true)
+    }
+}
+
+/// Everything about notifications: a master switch, the alert types grouped by what they are about,
+/// the amounts that trigger them, and quiet hours.
+struct NotificationSettingsView: View {
+    @ObservedObject var store: PushPrefsStore
+    @EnvironmentObject var api: API
+    @ObservedObject private var push = PushManager.shared
+    @Environment(\.openURL) private var openURL
+    @State private var testResult: String?
+    @State private var sending = false
+
+    private var prefs: PushPrefs { store.prefs ?? PushPrefs() }
+    private var live: Bool { store.prefs != nil && prefs.enabled }
+
+    var body: some View {
+        List {
+            deliverySection
+            Group {
+                moneySection
+                spendingSection
+                accountsSection
+                quietSection
+            }
+            .disabled(!live)
+            .opacity(live ? 1 : 0.45)
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("Notifications")
+        .navigationBarTitleDisplayMode(.inline)
+        .animation(.snappy(duration: 0.3), value: prefs)
+        .sensoryFeedback(.selection, trigger: prefs)
+        .task {
+            await push.refreshPermission()
+            await store.load(using: api)
+        }
+    }
+
+    // MARK: Sections
+
+    private var deliverySection: some View {
+        Section {
+            Toggle(isOn: bind(\.enabled)) {
+                row("Allow Notifications", "Pause everything without losing your choices", "bell.badge.fill", .red)
+            }
+            if !push.isEnabled {
+                if push.permission == .denied {
+                    Button("Open iPhone Settings") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                    }
+                } else {
+                    Button("Turn On for This iPhone") { Task { await push.enable() } }
+                }
+            } else {
+                Button {
                     Task {
                         sending = true
                         testResult = await push.sendTest(using: api)
                         sending = false
                     }
+                } label: {
+                    HStack {
+                        Text(sending ? "Sending…" : "Send a Test Notification")
+                        if sending { Spacer(); ProgressView() }
+                    }
                 }
-                .buttonStyle(.bordered)
                 .disabled(sending)
-                if let testResult { Text(testResult).font(.caption).foregroundStyle(.secondary) }
-                Text("Your server decides what to send and delivers it through Apple's push service. Nothing goes through anyone else.")
-                    .font(.caption).foregroundStyle(.secondary)
+            }
+        } footer: {
+            VStack(alignment: .leading, spacing: 4) {
+                if let testResult { Text(testResult) }
+                if let message = push.message { Text(message).foregroundStyle(.red) }
+                if let error = store.error { Text(error).foregroundStyle(.red) }
+                Text("Your Ledgr server decides what to send and delivers it through Apple's push service. These choices apply to every device on your account.")
             }
         }
+    }
+
+    private var moneySection: some View {
+        Section("Money") {
+            Toggle(isOn: bind(\.bills)) { row("Bills Due", "Today and tomorrow", "calendar", .red) }
+            Toggle(isOn: bind(\.deposits)) { row("Deposits", "Paychecks and other money in", "arrow.down.circle.fill", .green) }
+            if prefs.deposits {
+                amount("Notify at or above", bind(\.depositCents), [10_000, 25_000, 50_000, 100_000, 250_000])
+            }
+            Toggle(isOn: bind(\.largeCharges)) { row("Large Charges", "A single big purchase", "creditcard.fill", .orange) }
+            if prefs.largeCharges {
+                amount("Notify at or above", bind(\.largeChargeCents), [5_000, 10_000, 25_000, 50_000, 100_000, 250_000])
+            }
+            Toggle(isOn: bind(\.lowBalance)) { row("Low Balance", "Checking or savings running low", "exclamationmark.triangle.fill", .yellow) }
+            if prefs.lowBalance {
+                amount("Notify when under", bind(\.lowBalanceCents), [2_500, 5_000, 10_000, 25_000, 50_000, 100_000])
+            }
         }
-        .task {
-            await push.refreshPermission()
-            await loadPrefs()
+    }
+
+    private var spendingSection: some View {
+        Section("Spending") {
+            Toggle(isOn: bind(\.budgets)) { row("Budgets", "At 80% and when a category goes over", "chart.pie.fill", .blue) }
+            Toggle(isOn: bind(\.weekly)) { row("Weekly Recap", "Sunday mornings", "chart.bar.fill", .indigo) }
+            Toggle(isOn: bind(\.review)) { row("Needs a Category", "Once a day when 5 or more pile up", "tag.fill", .teal) }
         }
+    }
+
+    private var accountsSection: some View {
+        Section("Accounts") {
+            Toggle(isOn: bind(\.connections)) {
+                row("Bank Connections", "When a bank needs you to sign in again", "building.columns.fill", .gray)
+            }
+        }
+    }
+
+    private var quietSection: some View {
+        Section {
+            Toggle(isOn: bind(\.quietEnabled)) { row("Quiet Hours", "Hold alerts overnight", "moon.fill", .purple) }
+            if prefs.quietEnabled {
+                Picker("From", selection: bind(\.quietStartHour)) { hours }
+                Picker("Until", selection: bind(\.quietEndHour)) { hours }
+            }
+        } footer: {
+            Text("Anything that comes up during quiet hours is sent at the first check after they end.")
+        }
+    }
+
+    // MARK: Pieces
+
+    private func row(_ title: String, _ detail: String, _ symbol: String, _ color: Color) -> some View {
+        HStack(spacing: 12) {
+            NotificationIcon(symbol: symbol, color: color)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                Text(detail).font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func amount(_ title: String, _ selection: Binding<Int>, _ base: [Int]) -> some View {
+        Picker(title, selection: selection) {
+            ForEach(Array(Set(base + [selection.wrappedValue])).sorted(), id: \.self) { cents in
+                Text(cents.formatted(.currency(code: "USD").precision(.fractionLength(0)).scale(0.01))).tag(cents)
+            }
+        }
+        .padding(.leading, 42) // lines up under the label, past the icon tile
+        .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
     private var hours: some View {
@@ -225,49 +402,11 @@ struct NotificationsCard: View {
         }
     }
 
-    private func options(_ current: Int) -> [Int] {
-        Array(Set(Self.thresholds + [current])).sorted()
-    }
-
-    private func toggle(_ title: String, _ detail: String, _ key: WritableKeyPath<PushPrefs, Bool>) -> some View {
-        Toggle(isOn: binding(key)) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                Text(detail).font(.caption).foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private func binding<V>(_ key: WritableKeyPath<PushPrefs, V>) -> Binding<V> {
+    private func bind<V>(_ key: WritableKeyPath<PushPrefs, V>) -> Binding<V> {
         Binding(
-            get: { (prefs ?? PushPrefs())[keyPath: key] },
-            set: { value in
-                guard var next = prefs else { return }
-                next[keyPath: key] = value
-                prefs = next
-                Task { await save(next) }
-            }
+            get: { prefs[keyPath: key] },
+            set: { value in store.update({ $0[keyPath: key] = value }, using: api) }
         )
     }
-
-    private func loadPrefs() async {
-        do { prefs = try await api.get("api/native/push/preferences"); prefsError = nil }
-        catch { if prefs == nil { prefsError = "Couldn't load notification settings." } }
-    }
-
-    private func save(_ next: PushPrefs) async {
-        do {
-            let body: [String: Any] = [
-                "bills": next.bills, "largeCharges": next.largeCharges, "budgets": next.budgets,
-                "connections": next.connections, "largeChargeCents": next.largeChargeCents,
-                "quietEnabled": next.quietEnabled, "quietStartHour": next.quietStartHour,
-                "quietEndHour": next.quietEndHour,
-            ]
-            prefs = try await api.patch("api/native/push/preferences", body: body)
-            prefsError = nil
-        } catch {
-            prefsError = "Couldn't save that change."
-            await loadPrefs()
-        }
-    }
 }
+#endif
