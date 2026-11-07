@@ -18,6 +18,7 @@ export interface CategoryGroup {
   id: string;
   name: string;
   icon: string | null;
+  color?: string | null;
   sortOrder: number;
   isSystem: boolean;
   categories: CategoryOption[];
@@ -62,6 +63,7 @@ export async function getCategories(
     id: g.id,
     name: g.name,
     icon: g.icon,
+    color: g.color ?? null,
     sortOrder: g.sortOrder ?? 0,
     isSystem: g.isSystem ?? false,
     categories: catsByGroup.get(g.id) ?? [],

@@ -10,6 +10,8 @@ export const categoryGroups = pgTable(
       .references(() => households.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     icon: text("icon"),
+    // "#RRGGBB" inherited by every category in the group that has no colour of its own.
+    color: text("color"),
     sortOrder: integer("sort_order").default(0),
     isSystem: boolean("is_system").default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

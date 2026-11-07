@@ -45,6 +45,7 @@ import {
   renameCategory,
   renameCategoryGroup,
   updateCategoryExclusion,
+  updateCategoryGroupColor,
   updateCategoryGroupIcon,
   updateCategoryColor,
   updateCategoryIcon,
@@ -123,7 +124,7 @@ export const dynamic = "force-dynamic";
  *   POST   /api/native/categories        { name, groupId, isIncome? }
  *   PATCH  /api/native/categories/:id    { name } | { icon?: lucideName | null, color?: "#RRGGBB" | null }   DELETE /api/native/categories/:id
  *   POST   /api/native/category-groups   { name }
- *   PATCH  /api/native/category-groups/:id { name } | { icon: lucideName | null }   DELETE /api/native/category-groups/:id
+ *   PATCH  /api/native/category-groups/:id { name } | { icon?: lucideName | null, color?: "#RRGGBB" | null }   DELETE /api/native/category-groups/:id
  *   GET    /api/native/category-rules
  *   POST   /api/native/category-rules    { categoryId, matchField, matchPattern, priority }
  *   PATCH  /api/native/category-rules/:id  (same fields)  DELETE /api/native/category-rules/:id
@@ -349,7 +350,7 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
   }
 
   if (head === "category-groups") {
-    const body = (await req.json().catch(() => null)) as { name?: string; targetId?: string; icon?: string | null } | null;
+    const body = (await req.json().catch(() => null)) as { name?: string; targetId?: string; icon?: string | null; color?: string | null } | null;
     if (id && segs[2] === "merge" && method === "POST") {
       if (!body?.targetId) return fail("Invalid input");
       return fin(await mergeCategoryGroups(id, body.targetId));
@@ -359,8 +360,18 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
       return fin(await createCategoryGroup(body.name));
     }
     if (id && method === "PATCH") {
-      if (body && "icon" in body && (body.icon === null || typeof body.icon === "string")) {
-        return fin(await updateCategoryGroupIcon(id, body.icon));
+      const hasIcon = !!body && "icon" in body && (body.icon === null || typeof body.icon === "string");
+      const hasColor = !!body && "color" in body && (body.color === null || typeof body.color === "string");
+      if (hasIcon || hasColor) {
+        if (hasIcon) {
+          const res = await updateCategoryGroupIcon(id, body!.icon as string | null);
+          if ("error" in res) return fail(res.error);
+        }
+        if (hasColor) {
+          const res = await updateCategoryGroupColor(id, body!.color as string | null);
+          if ("error" in res) return fail(res.error);
+        }
+        return ok({ success: true });
       }
       if (!body?.name) return fail("Invalid input");
       return fin(await renameCategoryGroup(id, body.name));

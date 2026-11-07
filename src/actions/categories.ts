@@ -432,6 +432,36 @@ export async function updateCategoryGroupIconScoped(
   return { success: true };
 }
 
+export async function updateCategoryGroupColorScoped(
+  householdId: string,
+  groupId: string,
+  color: string | null,
+  db: LedgrDb = defaultDb,
+): Promise<ActionResult> {
+  const parsedId = idSchema.safeParse(groupId);
+  const parsedColor = colorSchema.safeParse(color);
+  if (!parsedId.success || !parsedColor.success) return { error: "Invalid input." };
+  const scoped = scopedQuery(householdId, db);
+  const updated = await db
+    .update(categoryGroups)
+    .set({ color: parsedColor.data })
+    .where(scoped.where(categoryGroups, eq(categoryGroups.id, parsedId.data)))
+    .returning({ id: categoryGroups.id });
+  if (updated.length === 0) return { error: "Category group not found." };
+  revalidateCategoryConsumers();
+  return { success: true };
+}
+
+export async function updateCategoryGroupColor(
+  groupId: string,
+  color: string | null,
+  db: LedgrDb = defaultDb,
+): Promise<ActionResult> {
+  const auth = await authorizeAction();
+  if ("error" in auth) return auth;
+  return updateCategoryGroupColorScoped(auth.householdId, groupId, color, db);
+}
+
 export async function updateCategoryGroupIcon(
   groupId: string,
   icon: string | null,
