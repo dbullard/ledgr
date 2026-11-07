@@ -122,4 +122,26 @@ describe("assessConnectionHealth", () => {
     );
     expect(mine.issue?.errorCode).toBe("BANK_REPORTED_ERROR");
   });
+
+  it("matches errlist conn_ids to account conn_ids despite the Bridge's MX- prefix (real Arvest response)", () => {
+    // Real shape: errlist says "MBR-…", accounts say "MX-MBR-…".
+    const response = {
+      accounts: [
+        acct("wf", "2026-11-06T21:00:00Z", "MX-MBR-wells"),
+        acct("loren", "2026-11-05T02:20:00Z", "MX-MBR-loren"),
+        acct("david", "2026-11-05T02:22:00Z", "MX-MBR-david"),
+      ],
+      errlist: [
+        { code: "con.auth", msg: "Connection to Arvest Bank Loren's Arvest may need attention. Auth required", conn_id: "MBR-loren" },
+        { code: "con.auth", msg: "Connection to Arvest Bank David's Arvest may need attention. Auth required", conn_id: "MBR-david" },
+      ],
+    };
+    const wells = assessConnectionHealth(response, new Set(["wf"]), now);
+    expect(wells.issue).toBeNull();
+    const loren = assessConnectionHealth(response, new Set(["loren"]), now);
+    expect(loren.issue).toMatchObject({ status: "reauth_required", errorCode: "BANK_AUTH_REQUIRED" });
+    expect(loren.issue?.message).toContain("Loren's");
+    const david = assessConnectionHealth(response, new Set(["david"]), now);
+    expect(david.issue?.message).toContain("David's");
+  });
 });

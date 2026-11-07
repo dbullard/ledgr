@@ -28,6 +28,14 @@ export function classifyPollError(err: unknown): {
  */
 export const STALE_DATA_HOURS = 36;
 
+/**
+ * The Bridge names a connection "MX-MBR-…" on accounts but "MBR-…" in errlist,
+ * so ids match when equal or when one is the other plus a "<prefix>-".
+ */
+export function sameConnId(a: string, b: string): boolean {
+  return a === b || a.endsWith(`-${b}`) || b.endsWith(`-${a}`);
+}
+
 export interface ConnectionIssue {
   status: Extract<ConnectionStatus, "reauth_required" | "error">;
   errorCode: "BANK_AUTH_REQUIRED" | "BANK_MFA_REQUIRED" | "BANK_REPORTED_ERROR" | "NO_RECENT_DATA";
@@ -67,13 +75,14 @@ export function assessConnectionHealth(
   // conn_id is absent here means the bridge dropped that connection's accounts
   // (typical when its login is broken), so we can't prove it isn't ours.
   const presentConnIds = new Set(response.accounts.map((a) => a.conn_id).filter((c): c is string => !!c));
+  const hasConn = (ids: ReadonlySet<string>, connId: string) => [...ids].some((id) => sameConnId(id, connId));
   const appliesToUs = (e: { conn_id?: string | null; account_id?: string | null }): boolean => {
     if (e.account_id) return ownedExternalAccountIds.has(e.account_id);
     if (!e.conn_id) return true;
-    if (ownedConnIds.has(e.conn_id)) return true;
+    if (hasConn(ownedConnIds, e.conn_id)) return true;
     // Our accounts carry no conn_id, or the error's connection has no accounts
     // in this response: surface it rather than silently reporting "healthy".
-    return ownedConnIds.size === 0 || !presentConnIds.has(e.conn_id);
+    return ownedConnIds.size === 0 || !hasConn(presentConnIds, e.conn_id);
   };
 
   const reported: { code: string; msg: string }[] = [

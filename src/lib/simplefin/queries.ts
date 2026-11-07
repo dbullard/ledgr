@@ -14,7 +14,9 @@ export type ActiveSimplefinConnectionRef = {
  * Lists SimpleFIN connections eligible for scheduled sync: status "active" or
  * "error" (transient: bank hiccup, SimpleFIN 5xx, stale data — these must keep
  * being retried or they never recover) and not in the demo household.
- * reauth_required/revoked are skipped: only the user can fix those. Used by the daily SimpleFIN sync
+ * "reauth_required" is polled too: the user re-authorizes at the SimpleFIN
+ * Bridge, not in Ledgr, so only a poll can notice it is fixed. "revoked"
+ * (403) needs a new Setup Token, so it is skipped. Used by the daily SimpleFIN sync
  * task — SimpleFIN has no webhooks, so this poll is the only sync trigger.
  */
 export async function listActiveSimplefinConnections(
@@ -25,7 +27,7 @@ export async function listActiveSimplefinConnections(
     .from(bankConnections)
     .where(
       and(
-        inArray(bankConnections.status, ["active", "error"]),
+        inArray(bankConnections.status, ["active", "error", "reauth_required"]),
         eq(bankConnections.provider, "simplefin"),
         ne(bankConnections.householdId, DEMO_HOUSEHOLD_ID),
       ),
