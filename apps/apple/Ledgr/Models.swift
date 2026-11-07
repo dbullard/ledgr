@@ -56,6 +56,13 @@ struct Txn: Codable, Identifiable, Hashable {
     var notes: String?
     let hasSplits: Bool?
     let isTransfer: Bool
+
+    /// What lists show: the user's own name, else the resolved merchant, else the bank's (often noisy) description.
+    var displayName: String {
+        if let c = customName, !c.isEmpty { return c }
+        if let m = merchantName, !m.isEmpty { return m }
+        return name
+    }
 }
 
 struct TxnPage: Codable {

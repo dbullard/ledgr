@@ -138,17 +138,65 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotification
 }
 #endif
 
-/// Settings card: turn notifications on, and send a test from the server.
+/// Which notifications the household gets and when (stored on the server, so it applies to every device).
+struct PushPrefs: Codable, Equatable {
+    var bills = true
+    var largeCharges = true
+    var budgets = true
+    var connections = true
+    var largeChargeCents = 25_000
+    var quietEnabled = true
+    var quietStartHour = 21
+    var quietEndHour = 8
+}
+
+/// Settings card: turn notifications on, choose which kinds to receive, set quiet hours, send a test.
 struct NotificationsCard: View {
     @EnvironmentObject var api: API
     @ObservedObject private var push = PushManager.shared
     @State private var testResult: String?
     @State private var sending = false
+    @State private var prefs: PushPrefs?
+    @State private var prefsError: String?
+
+    private static let thresholds = [5_000, 10_000, 25_000, 50_000, 100_000, 250_000]
 
     var body: some View {
+        Group {
         Card("Notifications") {
             if push.isEnabled {
                 Label("On for this device", systemImage: "bell.badge.fill").foregroundStyle(.green)
+            } else {
+                Button("Turn on notifications") { Task { await push.enable() } }.buttonStyle(.bordered)
+            }
+            if let message = push.message { Text(message).font(.caption).foregroundStyle(.red) }
+        }
+        if let prefs {
+            Card("Notify me about") {
+                toggle("Bills due", "Today and tomorrow", \.bills)
+                toggle("Large charges", "Single charges over the amount below", \.largeCharges)
+                if prefs.largeCharges {
+                    Picker("Large means", selection: binding(\.largeChargeCents)) {
+                        ForEach(options(prefs.largeChargeCents), id: \.self) { Text("$\($0 / 100)+").tag($0) }
+                    }
+                }
+                toggle("Budgets", "At 80% and when a category goes over", \.budgets)
+                toggle("Bank connections", "When a bank needs you to sign in again", \.connections)
+            }
+            Card("Quiet hours") {
+                Toggle("Hold notifications overnight", isOn: binding(\.quietEnabled))
+                if prefs.quietEnabled {
+                    Picker("From", selection: binding(\.quietStartHour)) { hours }
+                    Picker("Until", selection: binding(\.quietEndHour)) { hours }
+                }
+                Text("Alerts that come up during quiet hours are sent at the first check after they end.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        } else if let prefsError {
+            Text(prefsError).font(.caption).foregroundStyle(.red)
+        }
+        if push.isEnabled {
+            Card {
                 Button(sending ? "Sending…" : "Send a test notification") {
                     Task {
                         sending = true
@@ -158,14 +206,68 @@ struct NotificationsCard: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(sending)
-            } else {
-                Button("Turn on notifications") { Task { await push.enable() } }.buttonStyle(.bordered)
+                if let testResult { Text(testResult).font(.caption).foregroundStyle(.secondary) }
+                Text("Your server decides what to send and delivers it through Apple's push service. Nothing goes through anyone else.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            if let testResult { Text(testResult).font(.caption).foregroundStyle(.secondary) }
-            if let message = push.message { Text(message).font(.caption).foregroundStyle(.red) }
-            Text("Your server sends bills due, large charges, budgets at 80% and 100%, and bank connections that need attention. Nothing goes through anyone but Apple's delivery service.")
-                .font(.caption).foregroundStyle(.secondary)
         }
-        .task { await push.refreshPermission() }
+        }
+        .task {
+            await push.refreshPermission()
+            await loadPrefs()
+        }
+    }
+
+    private var hours: some View {
+        ForEach(0..<24, id: \.self) { h in
+            Text(Calendar.current.date(bySettingHour: h, minute: 0, second: 0, of: Date())?
+                .formatted(.dateTime.hour()) ?? "\(h):00").tag(h)
+        }
+    }
+
+    private func options(_ current: Int) -> [Int] {
+        Array(Set(Self.thresholds + [current])).sorted()
+    }
+
+    private func toggle(_ title: String, _ detail: String, _ key: WritableKeyPath<PushPrefs, Bool>) -> some View {
+        Toggle(isOn: binding(key)) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                Text(detail).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func binding<V>(_ key: WritableKeyPath<PushPrefs, V>) -> Binding<V> {
+        Binding(
+            get: { (prefs ?? PushPrefs())[keyPath: key] },
+            set: { value in
+                guard var next = prefs else { return }
+                next[keyPath: key] = value
+                prefs = next
+                Task { await save(next) }
+            }
+        )
+    }
+
+    private func loadPrefs() async {
+        do { prefs = try await api.get("api/native/push/preferences"); prefsError = nil }
+        catch { if prefs == nil { prefsError = "Couldn't load notification settings." } }
+    }
+
+    private func save(_ next: PushPrefs) async {
+        do {
+            let body: [String: Any] = [
+                "bills": next.bills, "largeCharges": next.largeCharges, "budgets": next.budgets,
+                "connections": next.connections, "largeChargeCents": next.largeChargeCents,
+                "quietEnabled": next.quietEnabled, "quietStartHour": next.quietStartHour,
+                "quietEndHour": next.quietEndHour,
+            ]
+            prefs = try await api.patch("api/native/push/preferences", body: body)
+            prefsError = nil
+        } catch {
+            prefsError = "Couldn't save that change."
+            await loadPrefs()
+        }
     }
 }

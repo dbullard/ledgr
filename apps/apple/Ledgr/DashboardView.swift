@@ -7,6 +7,10 @@ struct DashboardView: View {
     @State private var data: DashboardResponse?
     @State private var range = "6M"
     @State private var error: String?
+    @State private var uncategorized: [Txn] = []
+    @State private var uncategorizedMore = false
+    @State private var groups: [CategoryGroup] = CategoryCache.groups
+    @State private var width: CGFloat = 0
     private let ranges = ["1M", "3M", "6M", "1Y", "all"]
 
     var body: some View {
@@ -16,9 +20,10 @@ struct DashboardView: View {
                     netWorth(data)
                     tiles(data.summary)
                     spending(data.spending)
-                    recent(data.recent)
+                    feeds(data.recent)
                 }
                 .padding()
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             } else if let error {
                 ErrorState(message: error) { Task { await load() } }
             } else {
@@ -31,11 +36,15 @@ struct DashboardView: View {
         .task(id: connection.active) { await load() }
         .onChange(of: range) { _, _ in Task { await load() } }
         .onChange(of: api.changedTxn) { _, t in
+            guard let t else { return }
             // Show the edit immediately in "Recent", then refresh totals in the background.
-            guard let t, var d = data, let i = d.recent.firstIndex(where: { $0.id == t.id }) else { return }
-            d.recent[i] = t
-            data = d
+            if var d = data, let i = d.recent.firstIndex(where: { $0.id == t.id }) { d.recent[i] = t; data = d }
+            // A transaction that now has a category (or became a transfer) leaves "Needs a category".
+            if let i = uncategorized.firstIndex(where: { $0.id == t.id }) {
+                if t.categoryId != nil || t.isTransfer { uncategorized.remove(at: i) } else { uncategorized[i] = t }
+            }
         }
+        .task { await loadGroups() }
         .onChange(of: api.dataVersion) { _, _ in Task { await load() } }
     }
 
@@ -43,6 +52,11 @@ struct DashboardView: View {
         do {
             data = try await api.get("api/native/dashboard", query: ["range": range])
             error = nil
+            if let page: TxnPage = try? await api.get("api/native/transactions", query: ["uncategorized": "1", "limit": "8"]) {
+                // Also filtered here so a server that predates the "uncategorized" filter can't fill the card with everything.
+                uncategorized = page.rows.filter { $0.categoryId == nil && !$0.isTransfer }
+                uncategorizedMore = page.nextCursor != nil && uncategorized.count == page.rows.count
+            }
         } catch APIError.unauthorized {
         } catch {
             if data == nil { self.error = error.localizedDescription }
@@ -97,6 +111,60 @@ struct DashboardView: View {
                 }
             }
         }
+    }
+
+    private func loadGroups() async {
+        guard groups.isEmpty else { return }
+        if let g: [CategoryGroup] = try? await api.get("api/native/categories") {
+            groups = g.alphabetical
+            CategoryCache.groups = groups
+            CategoryStyles.shared.update(g)
+        }
+    }
+
+    private func quickSetCategory(_ txn: Txn, _ id: String?) {
+        Task {
+            if let updated: Txn = try? await api.patch("api/native/transactions/\(txn.id)", body: ["categoryId": id ?? NSNull()]) {
+                api.noteChanged(updated)
+            }
+        }
+    }
+
+    /// "Needs a category" sits beside "Recent transactions" when there's room, above it otherwise.
+    @ViewBuilder
+    private func feeds(_ recentRows: [Txn]) -> some View {
+        if uncategorized.isEmpty {
+            recent(recentRows)
+        } else if width >= 760 {
+            HStack(alignment: .top, spacing: 16) {
+                uncategorizedCard
+                recent(recentRows)
+            }
+        } else {
+            uncategorizedCard
+            recent(recentRows)
+        }
+    }
+
+    private var uncategorizedCard: some View {
+        Card("Needs a category", trailing: AnyView(
+            Text(uncategorizedMore ? "\(uncategorized.count)+" : "\(uncategorized.count)")
+                .font(.caption.weight(.semibold)).foregroundStyle(Color.alert)
+                .padding(.horizontal, 8).padding(.vertical, 2)
+                .background(Color.alert.opacity(0.14), in: Capsule())
+        )) {
+            ForEach(uncategorized) { txn in
+                NavigationLink(value: txn) {
+                    TxnRow(txn: txn, groups: groups) { id in quickSetCategory(txn, id) }
+                }
+                .buttonStyle(.plain)
+                if txn.id != uncategorized.last?.id { Divider() }
+            }
+            if uncategorizedMore {
+                Text("Showing the 8 most recent. The rest are in Transactions.").font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     private func recent(_ rows: [Txn]) -> some View {

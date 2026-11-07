@@ -8,8 +8,15 @@ import { describeConnectionIssue } from "@/lib/connection-issue";
 import { getCurrentMonth } from "@/lib/date-utils";
 import { centsToDisplay } from "@/lib/money";
 import { getApnsConfig, type PushMessage } from "./apns";
+import { applyPreferences, getPushPreferences } from "./preferences";
+import { getPushScanSettings, isQuietHour, type PushScanSettings } from "./scan-settings";
+
 import { listDevices } from "./devices";
 import { notifyHousehold } from "./notify";
+
+export { getPushScanSettings, isQuietHour, type PushScanSettings } from "./scan-settings";
+
+export type PushType = "bills" | "largeCharges" | "budgets" | "connections";
 
 /**
  * Periodic scan that turns Ledgr state into push notifications:
@@ -23,41 +30,11 @@ import { notifyHousehold } from "./notify";
  */
 
 export interface PushCandidate {
+  type: PushType;
   key: string;
   message: PushMessage;
   /** Other keys to mark as handled without announcing (e.g. the 80% key when 100% fires). */
   alsoClaim?: string[];
-}
-
-export interface PushScanSettings {
-  /** Charges at or above this many cents are "large". */
-  largeTxnCents: number;
-  /** No notifications before this local hour (0-23)... */
-  quietEndHour: number;
-  /** ...or from this local hour on. */
-  quietStartHour: number;
-  /** Individual notifications per scan before the rest are folded into one. */
-  maxIndividual: number;
-}
-
-export function getPushScanSettings(env: Record<string, string | undefined> = process.env): PushScanSettings {
-  const int = (v: string | undefined, d: number, min: number, max: number) => {
-    const n = Number.parseInt(v ?? "", 10);
-    return Number.isFinite(n) && n >= min && n <= max ? n : d;
-  };
-  return {
-    largeTxnCents: int(env.PUSH_LARGE_TXN_CENTS, 25_000, 1, 1_000_000_00),
-    quietEndHour: int(env.PUSH_QUIET_END_HOUR, 8, 0, 23),
-    quietStartHour: int(env.PUSH_QUIET_START_HOUR, 21, 0, 23),
-    maxIndividual: 4,
-  };
-}
-
-export function isQuietHour(hour: number, s: Pick<PushScanSettings, "quietEndHour" | "quietStartHour">): boolean {
-  if (s.quietStartHour === s.quietEndHour) return false;
-  return s.quietStartHour > s.quietEndHour
-    ? hour >= s.quietStartHour || hour < s.quietEndHour // e.g. 21:00 → 08:00
-    : hour >= s.quietStartHour && hour < s.quietEndHour;
 }
 
 // ── Candidate builders (pure) ────────────────────────────────────────
@@ -75,6 +52,7 @@ export function billCandidates(bills: BillRow[], now: Date): PushCandidate[] {
     if (b.nextDate !== today && b.nextDate !== tomorrow) continue;
     const amount = b.lastAmount ?? b.averageAmount;
     out.push({
+      type: "bills",
       key: `bill:${b.id}:${b.nextDate}`,
       message: {
         title: b.nextDate === today ? "Bill due today" : "Bill due tomorrow",
@@ -96,6 +74,7 @@ export function budgetCandidates(month: string, budget: BudgetMonth): PushCandid
       const base = `budget:${month}:${c.categoryId}`;
       if (c.spent >= c.limitAmount) {
         out.push({
+          type: "budgets",
           key: `${base}:100`,
           alsoClaim: [`${base}:80`],
           message: {
@@ -107,6 +86,7 @@ export function budgetCandidates(month: string, budget: BudgetMonth): PushCandid
         });
       } else if (c.spent >= c.limitAmount * 0.8) {
         out.push({
+          type: "budgets",
           key: `${base}:80`,
           message: {
             title: `${c.categoryName} is at 80% of budget`,
@@ -130,6 +110,7 @@ export interface LargeTxnRow {
 
 export function largeTxnCandidates(rows: LargeTxnRow[]): PushCandidate[] {
   return rows.map((t) => ({
+    type: "largeCharges" as const,
     key: `txn:${t.id}`,
     message: {
       title: `Large charge: ${centsToDisplay(t.amount)}`,
@@ -166,6 +147,7 @@ export function connectionCandidates(rows: ConnectionRow[]): PushCandidate[] {
           ? "Access was revoked. Reconnect to resume syncing"
           : "The last sync reported an error";
     out.push({
+      type: "connections",
       key: `conn:${c.id}:${c.status}`,
       message: {
         title: `${c.institutionName ?? "A bank"}: ${described?.label ?? "needs attention"}`,
@@ -257,7 +239,8 @@ export async function collectCandidates(
 export async function scanHousehold(householdId: string, deps: ScanDeps = {}): Promise<ScanOutcome> {
   const db = deps.db ?? defaultDb;
   const now = deps.now ?? new Date();
-  const settings = deps.settings ?? getPushScanSettings();
+  // Per-household choices (types on/off, threshold, quiet hours) layer over the env defaults.
+  const settings = deps.settings ?? applyPreferences(getPushScanSettings(), await getPushPreferences(householdId, db));
   const notify = deps.notify ?? notifyHousehold;
   const outcome: ScanOutcome = { candidates: 0, announced: 0, silent: false, skippedQuiet: false };
 
@@ -307,10 +290,13 @@ export async function scanHousehold(householdId: string, deps: ScanDeps = {}): P
     if (claimed.some((r) => r.k === c.key)) fresh.push(c);
   }
 
-  if (outcome.silent || fresh.length === 0) return outcome;
+  // Switched-off types are still claimed above, so turning one on later only
+  // announces what is new from then on rather than replaying old events.
+  const wanted = fresh.filter((c) => settings.types[c.type]);
+  if (outcome.silent || wanted.length === 0) return outcome;
 
-  const individual = fresh.slice(0, settings.maxIndividual);
-  const rest = fresh.slice(settings.maxIndividual);
+  const individual = wanted.slice(0, settings.maxIndividual);
+  const rest = wanted.slice(settings.maxIndividual);
   for (const c of individual) {
     await notify(householdId, c.message, { db });
     outcome.announced++;

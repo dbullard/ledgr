@@ -1,4 +1,4 @@
-import { index, pgPolicy, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { boolean, index, integer, pgPolicy, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { households } from "./households";
 
@@ -50,6 +50,36 @@ export const pushEvents = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.householdId, table.eventKey] }),
+    pgPolicy("household_isolation", {
+      for: "all",
+      using: sql`household_id = current_setting('app.household_id', true)`,
+      withCheck: sql`household_id = current_setting('app.household_id', true)`,
+    }),
+  ],
+).enableRLS();
+
+/**
+ * Which notifications a household wants, and when. One row per household; a
+ * missing row means "all defaults" (everything on, $250, quiet 21:00-08:00).
+ * Null threshold / hours fall back to the server env defaults.
+ */
+export const pushPreferences = pgTable(
+  "push_preferences",
+  {
+    householdId: text("household_id")
+      .primaryKey()
+      .references(() => households.id, { onDelete: "cascade" }),
+    bills: boolean("bills").notNull().default(true),
+    largeCharges: boolean("large_charges").notNull().default(true),
+    budgets: boolean("budgets").notNull().default(true),
+    connections: boolean("connections").notNull().default(true),
+    largeChargeCents: integer("large_charge_cents"),
+    quietEnabled: boolean("quiet_enabled").notNull().default(true),
+    quietStartHour: integer("quiet_start_hour"),
+    quietEndHour: integer("quiet_end_hour"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  () => [
     pgPolicy("household_isolation", {
       for: "all",
       using: sql`household_id = current_setting('app.household_id', true)`,

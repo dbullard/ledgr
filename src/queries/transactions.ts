@@ -23,6 +23,8 @@ export interface TransactionFilters {
   amountMin?: number;
   amountMax?: number;
   transactionType?: "expense" | "credits" | "transfer";
+  /** Leaves out transfers (which are never categorized), e.g. for "needs a category" lists. */
+  excludeTransfers?: boolean;
   /** `true` shows only hidden rows (an audit view); omitted excludes them — never additive. */
   hidden?: boolean;
 }
@@ -190,6 +192,9 @@ function buildTransactionConditions(
   }
   if (filters.amountMax !== undefined) {
     conditions.push(sql`abs(${transactions.normalizedAmount}) <= ${filters.amountMax}`);
+  }
+  if (filters.excludeTransfers) {
+    conditions.push(eq(transactions.isTransfer, false));
   }
   if (filters.transactionType === "expense") {
     // Same population as the summary's expense total and the Reports spending

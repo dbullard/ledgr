@@ -27,10 +27,10 @@ struct TransactionsView: View {
     var body: some View {
         List {
             ForEach(sections, id: \.0) { header, items in
-                Section(header) {
+                Section {
                     ForEach(items) { txn in
                         NavigationLink(value: txn) {
-                            TxnRow(txn: txn, suggestion: suggester.suggestions[txn.id], groups: listGroups) { id in quickSetCategory(txn, id) }
+                            TxnRow(txn: txn, suggestion: suggester.suggestions[txn.id], groups: listGroups, onCategory: { id in quickSetCategory(txn, id) }, compact: compactRows)
                         }
                             .receiptDropTarget(transactionId: txn.id, inset: 4) { dropMessage = $0 }
                             .listRowBackground(Color.card)
@@ -38,6 +38,12 @@ struct TransactionsView: View {
                                 suggester.enqueue(txn, api: api)
                                 if txn.id == rows.last?.id { Task { await loadMore() } }
                             }
+                    }
+                } header: {
+                    HStack {
+                        Text(header)
+                        Spacer()
+                        if let spent = daySpend(items) { Text(spent).monospacedDigit() }
                     }
                 }
             }
@@ -86,6 +92,20 @@ struct TransactionsView: View {
             guard !Task.isCancelled else { return }
             await reload()
         }
+    }
+
+    private var compactRows: Bool {
+        #if os(macOS)
+        true
+        #else
+        false
+        #endif
+    }
+
+    /// What was spent that day (transfers and income aren't spending).
+    private func daySpend(_ items: [Txn]) -> String? {
+        let total = items.filter { !$0.isTransfer && $0.normalizedAmount < 0 }.reduce(0) { $0 + $1.normalizedAmount }
+        return total == 0 ? nil : Fmt.money(total)
     }
 
     private var sections: [(String, [Txn])] {
@@ -232,6 +252,7 @@ struct TransactionDetailView: View {
                             detailRow(s.categoryName ?? "Uncategorized", Fmt.money(s.amount))
                         }
                     }
+                    .transition(cardTransition)
                 }
 
                 if let detail, !detail.items.isEmpty {
@@ -256,6 +277,7 @@ struct TransactionDetailView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
+                    .transition(cardTransition)
                 }
 
                 Card("Receipts") {
@@ -324,6 +346,8 @@ struct TransactionDetailView: View {
                     Text(error).foregroundStyle(.red).font(.footnote).frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
+            // Items, splits and receipts arrive after the page opens; ease them in instead of popping.
+            .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.4, dampingFraction: 1), value: sectionsKey)
             .padding()
             .frame(maxWidth: 640)
             .frame(maxWidth: .infinity)
@@ -332,9 +356,6 @@ struct TransactionDetailView: View {
             // Critically damped spring: no bounce. Reduce Motion gets a plain fade.
             .offset(x: slideIn || reduceMotion ? 0 : 56)
             .opacity(slideIn ? 1 : 0)
-            .onAppear {
-                withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.4, dampingFraction: 1)) { slideIn = true }
-            }
             #endif
         }
         .background(Color.canvas)
@@ -400,8 +421,12 @@ struct TransactionDetailView: View {
         .task {
             notes = initial.notes ?? ""
             nameDraft = initial.name
+            // Slide the whole page in once its data is here (items, splits and receipts included) so
+            // everything arrives together. Don't wait more than a moment if the server is slow.
+            Task { try? await Task.sleep(for: .milliseconds(350)); reveal() }
             async let cats: Void = loadCategories()
             await load()
+            reveal()
             await cats
             suggester.enqueue(txn, api: api)
         }
@@ -507,6 +532,21 @@ struct TransactionDetailView: View {
         // A category from the other side (an income category on spending, or the reverse) no longer fits.
         if let cat = category(txn.categoryId), cat.isIncome != (new == .income) { body["categoryId"] = NSNull() }
         if !body.isEmpty { await patch(body) }
+    }
+
+    /// Starts the Mac slide-in (a no-op elsewhere, and after the first call).
+    private func reveal() {
+        guard !slideIn else { return }
+        withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.4, dampingFraction: 1)) { slideIn = true }
+    }
+
+    private var cardTransition: AnyTransition {
+        reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.97, anchor: .top))
+    }
+
+    /// Changes whenever a late-loading section appears, disappears or grows.
+    private var sectionsKey: [Int] {
+        [detail?.items.count ?? 0, detail?.splits.count ?? 0, detail?.receipts.count ?? 0]
     }
 
     private var reviewButton: some View {

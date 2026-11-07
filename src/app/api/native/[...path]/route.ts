@@ -67,6 +67,7 @@ import {
   unregisterDevice,
 } from "@/lib/push/devices";
 import { notifyHousehold } from "@/lib/push/notify";
+import { getPushPreferences, parsePreferencesPatch, updatePushPreferences } from "@/lib/push/preferences";
 import {
   copyBudgetFromMonth,
   createBudget,
@@ -96,7 +97,7 @@ export const dynamic = "force-dynamic";
  * the native screens see exactly what the web app does.
  *
  *   GET    /api/native/dashboard?range=1M|3M|6M|1Y|all
- *   GET    /api/native/transactions?search&needsReview&categoryId&cursor&limit
+ *   GET    /api/native/transactions?search&needsReview&categoryId&uncategorized&cursor&limit
  *   GET    /api/native/transactions/:id
  *   PATCH  /api/native/transactions/:id   { categoryId?, reviewed?, notes?, name?, iconOverride?, iconColor?, isTransfer? }
  *   GET    /api/native/category-suggestions?ids=a,b   cached on-device AI picks { [txnId]: categoryId | null }
@@ -142,6 +143,8 @@ export const dynamic = "force-dynamic";
  *   GET    /api/native/push                          ({ configured, devices }: is APNs set up on the server)
  *   POST   /api/native/push/register     { token, environment: "sandbox"|"production" }   (this device's APNs token)
  *   DELETE /api/native/push/register     { token }   (call on sign-out)
+ *   GET    /api/native/push/preferences              (which notifications are on, large-charge threshold, quiet hours)
+ *   PATCH  /api/native/push/preferences  { bills?, largeCharges?, budgets?, connections?, largeChargeCents?, quietEnabled?, quietStartHour?, quietEndHour? }
  *   POST   /api/native/push/test                     (send a test notification to this household's devices)
  */
 
@@ -565,6 +568,7 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
     if (search) filters.search = search;
     if (q.get("needsReview") === "1") filters.needsReview = true;
     if (q.get("categoryId")) filters.categoryId = q.get("categoryId");
+    if (q.get("uncategorized") === "1") { filters.categoryId = null; filters.excludeTransfers = true; }
     if (q.get("accountId")) filters.accountId = q.get("accountId") ?? undefined;
     if (q.get("dateFrom")) filters.dateFrom = q.get("dateFrom") ?? undefined;
     if (q.get("dateTo")) filters.dateTo = q.get("dateTo") ?? undefined;
@@ -699,6 +703,14 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
     if (!id && method === "GET") {
       const devices = await listDevices(householdId);
       return ok({ configured: !!getApnsConfig(), devices: devices.length });
+    }
+    if (id === "preferences" && method === "GET") {
+      return ok(await getPushPreferences(householdId));
+    }
+    if (id === "preferences" && method === "PATCH") {
+      const patch = parsePreferencesPatch(await req.json().catch(() => null));
+      if (!patch) return fail("Invalid input");
+      return ok(await updatePushPreferences(householdId, patch));
     }
     if (id === "register" && method === "POST") {
       const body = (await req.json().catch(() => null)) as { token?: unknown; environment?: unknown } | null;

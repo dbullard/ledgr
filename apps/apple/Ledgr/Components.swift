@@ -192,6 +192,16 @@ extension Image { init(platformImage: PlatformImage) { self.init(uiImage: platfo
 extension Image { init(platformImage: PlatformImage) { self.init(nsImage: platformImage) } }
 #endif
 
+/// Instant press feedback for the category pill: dims and settles back as the pointer lifts.
+struct PillPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.6 : 1)
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .animation(.snappy(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
 struct TxnRow: View {
     let txn: Txn
     /// On-device suggestion shown (with a sparkle) until the user confirms it.
@@ -199,7 +209,10 @@ struct TxnRow: View {
     /// With these, the category pill opens a quick picker that calls `onCategory`.
     var groups: [CategoryGroup] = []
     var onCategory: ((String?) -> Void)?
+    /// One dense line per transaction (Mac list): name and account, then the category pill, amount and review dot in columns.
+    var compact = false
     @State private var showPicker = false
+    @State private var hovering = false
 
     private var interactive: Bool { onCategory != nil && !txn.isTransfer }
 
@@ -209,6 +222,35 @@ struct TxnRow: View {
     }
 
     var body: some View {
+        if compact { compactBody } else { regularBody }
+    }
+
+    private var compactBody: some View {
+        HStack(spacing: 10) {
+            CategoryBadge(icon: txn.isTransfer ? "arrow-left-right" : txn.categoryIcon, size: 26, categoryId: txn.isTransfer ? nil : txn.categoryId)
+            HStack(spacing: 8) {
+                Text(txn.displayName).font(.body).lineLimit(1).layoutPriority(1)
+                // The account trails the name and is the first thing to truncate.
+                Text(txn.accountName).font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+            }
+            Spacer(minLength: 12)
+            categoryPill.frame(width: 176, alignment: .trailing)
+            HStack(spacing: 6) {
+                if txn.pending { Image(systemName: "clock").font(.caption).foregroundStyle(.secondary).help("Pending") }
+                Text(Fmt.money(txn.normalizedAmount))
+                    .font(.body.monospacedDigit())
+                    .fontWeight(.medium)
+                    .foregroundStyle(txn.normalizedAmount > 0 ? Color.income : Color.primary)
+            }
+            .frame(width: 112, alignment: .trailing)
+            // Blue dot = not reviewed yet; the column stays reserved so amounts line up.
+            Circle().fill(!txn.reviewed && !txn.isTransfer ? Color.accentColor : Color.clear).frame(width: 7, height: 7)
+        }
+        .padding(.vertical, 1)
+        .contentShape(Rectangle())
+    }
+
+    private var regularBody: some View {
         HStack(spacing: 12) {
             // The category's icon leads the list; the merchant logo is on the detail page.
             CategoryBadge(icon: txn.isTransfer ? "arrow-left-right" : txn.categoryIcon, categoryId: txn.isTransfer ? nil : txn.categoryId)
@@ -217,7 +259,7 @@ struct TxnRow: View {
                     if !txn.reviewed && !txn.isTransfer {
                         Circle().fill(Color.accentColor).frame(width: 7, height: 7)
                     }
-                    Text(txn.name).font(.body.weight(.medium)).lineLimit(1)
+                    Text(txn.displayName).font(.body.weight(.medium)).lineLimit(1)
                 }
                 HStack(spacing: 6) {
                     categoryPill
@@ -241,7 +283,12 @@ struct TxnRow: View {
             pill("Transfer", systemImage: "arrow.left.arrow.right", tint: .secondary, chevron: false)
         } else if interactive {
             Button { showPicker = true } label: { pillContent }
-                .buttonStyle(.borderless)
+                .buttonStyle(PillPressStyle())
+                // A larger hit area than the pill draws, without taking more room in the row.
+                .padding(.vertical, 6).contentShape(Rectangle()).padding(.vertical, -6)
+                .onHover { hovering = $0 }
+                .accessibilityLabel("Category: \(txn.categoryName ?? "none"). Change category")
+                .sensoryFeedback(.selection, trigger: txn.categoryId)
                 .popover(isPresented: $showPicker, arrowEdge: .bottom) {
                     CategoryPicker(groups: groups, incomeOnly: incomeOnly, currentId: txn.categoryId, loading: groups.isEmpty) { id in
                         showPicker = false
@@ -255,7 +302,7 @@ struct TxnRow: View {
 
     @ViewBuilder private var pillContent: some View {
         if let cat = txn.categoryName {
-            pill(cat, tint: CategoryBadge.tint(icon: txn.categoryIcon, categoryId: txn.categoryId), chevron: interactive)
+            pill(cat, systemImage: compact ? Icons.symbol(txn.categoryIcon) : nil, tint: CategoryBadge.tint(icon: txn.categoryIcon, categoryId: txn.categoryId), chevron: interactive)
         } else if let s = suggestion {
             pill(s.name, systemImage: "sparkles", tint: .accentColor, chevron: interactive)
         } else {
@@ -265,14 +312,21 @@ struct TxnRow: View {
 
     private func pill(_ text: String, systemImage: String? = nil, tint: Color, chevron: Bool) -> some View {
         HStack(spacing: 4) {
-            if let systemImage { Image(systemName: systemImage).font(.system(size: 9, weight: .semibold)) }
+            if let systemImage { Image(systemName: systemImage).font(.caption2.weight(.semibold)).imageScale(.small) }
             Text(text).lineLimit(1)
-            if chevron { Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).opacity(0.7) }
+            // The chevron appears on hover (Mac); the pill shape alone signals "tappable" elsewhere.
+            #if os(macOS)
+            if chevron && hovering { Image(systemName: "chevron.down").font(.caption2.weight(.bold)).imageScale(.small).opacity(0.8) }
+            #endif
         }
         .font(.caption.weight(.medium))
-        .foregroundStyle(tint)
+        // Text is nudged toward the primary label colour so tinted pills stay readable on dark backgrounds.
+        .foregroundStyle(tint.mix(with: .primary, by: 0.35))
         .padding(.horizontal, 8).padding(.vertical, 3)
-        .background(tint.opacity(0.14), in: Capsule())
+        .background(tint.opacity(chevron && hovering ? 0.26 : 0.16), in: Capsule())
+        .contentTransition(.opacity)
+        .animation(.snappy(duration: 0.2), value: text)
+        .animation(.snappy(duration: 0.15), value: hovering)
         .fixedSize()
     }
 }
