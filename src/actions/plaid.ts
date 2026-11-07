@@ -7,7 +7,7 @@ import { Products, CountryCode } from "plaid";
 import { getPlaidClient } from "@/lib/plaid/client";
 import { encrypt, decrypt } from "@/lib/encryption";
 import { plaidAmountToCents, plaidBalanceToCents } from "@/lib/money";
-import { mapPlaidAccountType, extractPlaidErrorCode, extractPlaidErrorMessage } from "@/lib/plaid/utils";
+import { mapPlaidAccountType, extractPlaidErrorCode, extractPlaidErrorMessage, describePlaidErrorForLog } from "@/lib/plaid/utils";
 import { todayDateString } from "@/lib/date-utils";
 import { getHouseholdId } from "@/lib/auth/session";
 import { authorizeAction } from "@/lib/auth/authorize-action";
@@ -45,7 +45,7 @@ export async function createLinkToken() {
     });
     return { linkToken: response.data.link_token };
   } catch (e: unknown) {
-    console.error("Failed to create link token:", e);
+    console.error("Failed to create link token:", describePlaidErrorForLog(e));
     return { error: extractPlaidErrorMessage(e) ?? "Failed to initialize bank connection" };
   }
 }
@@ -202,7 +202,7 @@ export async function exchangeAndStoreAccounts(
 
     return { success: true, accountCount: plaidAccounts.length, plaidItemId };
   } catch (e: unknown) {
-    console.error("Exchange failed:", e);
+    console.error("Exchange failed:", describePlaidErrorForLog(e));
     const errorCode = extractPlaidErrorCode(e);
     if (
       errorCode === "INSTITUTION_DOWN" ||
@@ -226,7 +226,7 @@ export async function exchangePublicToken(publicToken: string) {
       await syncInstitution(itemId, householdId, defaultDb);
       syncInvestments(itemId, householdId, defaultDb).catch(() => {});
     } catch (err) {
-      console.error("[plaid] Auto-sync after link failed:", err);
+      console.error("[plaid] Auto-sync after link failed:", describePlaidErrorForLog(err));
     }
     revalidatePath("/");
     revalidatePath("/accounts");

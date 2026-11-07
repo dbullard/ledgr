@@ -43,6 +43,28 @@ export function extractPlaidErrorMessage(err: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * A log-safe description of an error from a Plaid call. Plaid SDK errors are
+ * axios errors whose `config`/`request` carry the request headers, including
+ * PLAID-SECRET, so logging the raw object writes the secret into the logs.
+ * Keep only what diagnoses the failure.
+ */
+export function describePlaidErrorForLog(err: unknown): string {
+  if (err && typeof err === "object" && "response" in err) {
+    const res = (err as { response?: { status?: number; data?: Record<string, unknown> } }).response;
+    const d = res?.data ?? {};
+    return JSON.stringify({
+      status: res?.status,
+      error_type: d.error_type,
+      error_code: d.error_code,
+      error_message: d.error_message,
+      request_id: d.request_id,
+    });
+  }
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
 // ─── Shared sync utilities ──────────────────────────────────────────────────
 
 export const REAUTH_ERROR_CODES = new Set([

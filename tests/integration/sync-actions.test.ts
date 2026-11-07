@@ -63,7 +63,7 @@ describe("triggerSync", () => {
 
     expect(errorSpy).toHaveBeenCalled();
     const loggedError = errorSpy.mock.calls.find((call) =>
-      call.some((arg) => arg instanceof Error && arg.message === "investments API down")
+      call.some((arg) => typeof arg === "string" && arg.includes("investments API down"))
     );
     expect(loggedError).toBeDefined();
   });

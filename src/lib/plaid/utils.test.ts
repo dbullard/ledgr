@@ -7,6 +7,7 @@ import {
   REAUTH_ERROR_CODES,
   TRANSIENT_ERROR_CODES,
   SKIP_ERROR_CODES,
+  describePlaidErrorForLog,
 } from "./utils";
 
 describe("mapPlaidAccountType", () => {
@@ -121,5 +122,36 @@ describe("retryWithBackoff", () => {
     await vi.runAllTimersAsync();
     await assertion;
     expect(fn).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("describePlaidErrorForLog", () => {
+  const axiosLike = {
+    message: "Request failed with status code 400",
+    config: { headers: { "PLAID-CLIENT-ID": "client-123", "PLAID-SECRET": "super-secret-value" }, data: '{"client_user_id":"u"}' },
+    request: { _header: "PLAID-SECRET: super-secret-value" },
+    response: {
+      status: 400,
+      data: {
+        error_type: "INVALID_REQUEST",
+        error_code: "INVALID_FIELD",
+        error_message: "OAuth redirect URI must be configured in the developer dashboard.",
+        request_id: "req-1",
+      },
+    },
+  };
+
+  test("keeps the diagnosis but never the request headers or secret", () => {
+    const out = describePlaidErrorForLog(axiosLike);
+    expect(out).toContain("INVALID_FIELD");
+    expect(out).toContain("OAuth redirect URI must be configured");
+    expect(out).toContain("req-1");
+    expect(out).not.toContain("super-secret-value");
+    expect(out).not.toContain("PLAID-SECRET");
+  });
+
+  test("handles ordinary errors and non-errors", () => {
+    expect(describePlaidErrorForLog(new Error("boom"))).toContain("boom");
+    expect(describePlaidErrorForLog("weird")).toContain("weird");
   });
 });

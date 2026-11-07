@@ -16,6 +16,7 @@ import {
   accounts,
   merchants,
 } from "@/db/schema";
+import { describePlaidErrorForLog } from "./utils";
 
 type Frequency = "weekly" | "biweekly" | "semimonthly" | "monthly" | "yearly";
 
@@ -209,7 +210,7 @@ export async function syncRecurringTransactions(
   } catch (err) {
     console.error(
       `[recurring] Failed to sync recurring for item ${plaidItemId}:`,
-      err,
+      describePlaidErrorForLog(err),
     );
     return { upserted: 0, deactivated: 0 };
   }

@@ -11,6 +11,7 @@ import { syncInvestments } from "@/lib/plaid/investments";
 import { syncConnection } from "@/lib/simplefin/sync";
 import type { SyncResult as PlaidSyncResult } from "@/lib/plaid/sync";
 import type { SyncResult as SimplefinSyncResult } from "@/lib/simplefin/sync";
+import { describePlaidErrorForLog } from "@/lib/plaid/utils";
 
 export async function triggerSync(
   connectionId: string,
@@ -40,7 +41,7 @@ export async function triggerSync(
   if (item.provider === "plaid") {
     // Fire-and-forget investment sync — skips silently if item has no investment accounts
     syncInvestments(connectionId, householdId, db).catch((err) => {
-      console.error("[sync] investment sync failed", err);
+      console.error("[sync] investment sync failed", describePlaidErrorForLog(err));
     });
   }
 
