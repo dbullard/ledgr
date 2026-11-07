@@ -88,26 +88,51 @@ export async function exchangeAndStoreAccounts(
       }
     }
 
+    const accountsRes = await getPlaidClient().accountsGet({
+      access_token: accessToken,
+    });
+    const plaidAccounts = accountsRes.data.accounts;
+
+    // One household can legitimately hold several logins at the same bank (two
+    // spouses at one credit union), so "same institution" is not a duplicate.
+    // It is a duplicate only when this Item adds nothing: every account in it
+    // (matched by subtype + last four) already belongs to a connection we hold
+    // at that institution. Anything we cannot prove is a duplicate is allowed.
     if (institutionId) {
-      const [existing] = await db
-        .select({ id: bankConnections.id })
+      const existingHere = await db
+        .select({ id: bankConnections.id, credential: bankConnections.credential })
         .from(bankConnections)
         .where(
           and(
             eq(bankConnections.householdId, householdId),
             eq(bankConnections.plaidInstitutionId, institutionId)
           )
-        )
-        .limit(1);
-      if (existing) {
-        return { success: false, error: "This institution is already connected" };
+        );
+      const accountKey = (a: { subtype?: string | null; mask?: string | null }) =>
+        a.mask ? `${a.subtype ?? ""}:${a.mask}` : null;
+      const newKeys = plaidAccounts.map(accountKey);
+      if (existingHere.length > 0 && newKeys.length > 0 && newKeys.every((k) => k !== null)) {
+        const known = new Set<string>();
+        for (const conn of existingHere) {
+          try {
+            const res = await getPlaidClient().accountsGet({ access_token: decrypt(conn.credential) });
+            for (const a of res.data.accounts) {
+              const k = accountKey(a);
+              if (k) known.add(k);
+            }
+          } catch (e) {
+            console.error("[plaid] could not list accounts for duplicate check:", describePlaidErrorForLog(e));
+          }
+        }
+        if (newKeys.every((k) => k !== null && known.has(k))) {
+          // Stop tracking the redundant Item at Plaid rather than leaving it orphaned.
+          await getPlaidClient()
+            .itemRemove({ access_token: accessToken })
+            .catch((e) => console.error("[plaid] could not remove duplicate item:", describePlaidErrorForLog(e)));
+          return { success: false, error: "This institution is already connected" };
+        }
       }
     }
-
-    const accountsRes = await getPlaidClient().accountsGet({
-      access_token: accessToken,
-    });
-    const plaidAccounts = accountsRes.data.accounts;
 
     const plaidItemId = uuid();
     const today = todayDateString();

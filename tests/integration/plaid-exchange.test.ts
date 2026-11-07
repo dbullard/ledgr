@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach, beforeAll, afterAll, vi, beforeEach } from "vitest";
 import { eq } from "drizzle-orm";
+import { http, HttpResponse } from "msw";
 import { createTestDb } from "./setup";
 import { server } from "../mocks/server";
 import { provisionHousehold } from "@/lib/auth/provision";
@@ -139,6 +140,74 @@ describe("plaid exchange flow", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("already connected");
+  });
+
+  // Two logins at one bank (e.g. spouses at the same credit union) share a joint
+  // account but each has their own: that is not a duplicate. Re-linking the
+  // same login is.
+  function mockLogins(logins: Record<string, { itemId: string; accounts: { id: string; mask: string; subtype: string }[] }>) {
+    let nextToken = 0;
+    const order = Object.keys(logins);
+    server.use(
+      http.post("https://sandbox.plaid.com/item/public_token/exchange", () =>
+        HttpResponse.json({ access_token: order[nextToken++ % order.length], item_id: "x", request_id: "r" }),
+      ),
+      http.post("https://sandbox.plaid.com/item/get", async ({ request }) => {
+        const { access_token } = (await request.json()) as { access_token: string };
+        return HttpResponse.json({
+          item: { item_id: logins[access_token].itemId, institution_id: "ins_arvest", webhook: "", available_products: [], billed_products: [], consent_expiration_time: null, error: null },
+          request_id: "r",
+        });
+      }),
+      http.post("https://sandbox.plaid.com/accounts/get", async ({ request }) => {
+        const { access_token } = (await request.json()) as { access_token: string };
+        return HttpResponse.json({
+          accounts: logins[access_token].accounts.map((a) => ({
+            account_id: a.id, name: "ESSENTIAL CHECKING", official_name: null, type: "depository", subtype: a.subtype, mask: a.mask,
+            balances: { current: 10, available: 10, limit: null, iso_currency_code: "USD" },
+          })),
+          request_id: "r",
+        });
+      }),
+      http.post("https://sandbox.plaid.com/item/remove", () => HttpResponse.json({ request_id: "r" })),
+    );
+  }
+
+  it("allows a second login at the same institution when its accounts are not all already connected", async () => {
+    await setup();
+    const hh = await provisionHousehold("user-two-logins", db);
+    mockLogins({
+      "tok-david": { itemId: "item-david", accounts: [{ id: "d-chk", mask: "1001", subtype: "checking" }, { id: "d-joint", mask: "9999", subtype: "checking" }] },
+      "tok-loren": { itemId: "item-loren", accounts: [{ id: "l-chk", mask: "2002", subtype: "checking" }, { id: "l-joint", mask: "9999", subtype: "checking" }] },
+    });
+
+    const first = await exchangeAndStoreAccounts("pub-1", hh, db);
+    const second = await exchangeAndStoreAccounts("pub-2", hh, db);
+
+    expect(first.success).toBe(true);
+    expect(second.success).toBe(true);
+    const conns = await db.select().from(bankConnections).where(eq(bankConnections.householdId, hh));
+    expect(conns).toHaveLength(2);
+  });
+
+  it("still rejects re-linking the same login (same accounts under a new Item) and removes the extra Item", async () => {
+    await setup();
+    const hh = await provisionHousehold("user-relink-same", db);
+    let removed = 0;
+    mockLogins({
+      "tok-a": { itemId: "item-a", accounts: [{ id: "a-chk", mask: "1001", subtype: "checking" }, { id: "a-joint", mask: "9999", subtype: "checking" }] },
+      "tok-a2": { itemId: "item-a2", accounts: [{ id: "a2-chk", mask: "1001", subtype: "checking" }, { id: "a2-joint", mask: "9999", subtype: "checking" }] },
+    });
+    server.use(http.post("https://sandbox.plaid.com/item/remove", () => { removed++; return HttpResponse.json({ request_id: "r" }); }));
+
+    expect((await exchangeAndStoreAccounts("pub-1", hh, db)).success).toBe(true);
+    const dup = await exchangeAndStoreAccounts("pub-2", hh, db);
+
+    expect(dup.success).toBe(false);
+    expect(dup.error).toContain("already connected");
+    expect(removed).toBe(1);
+    const conns = await db.select().from(bankConnections).where(eq(bankConnections.householdId, hh));
+    expect(conns).toHaveLength(1);
   });
 
   it("maps account types correctly", () => {
