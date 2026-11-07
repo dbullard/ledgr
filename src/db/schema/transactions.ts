@@ -52,6 +52,15 @@ export const transactions = pgTable(
     originalDate: text("original_date"),
     originalName: text("original_name").notNull(),
     name: text("name").notNull(),
+    // A name the user typed. While set, `name` mirrors it and sync leaves `name`
+    // alone, so a rename survives every refresh from the bank (rows are paired
+    // with the bank's transaction id through `external_id`). NULL means sync owns `name`.
+    customName: text("custom_name"),
+    // Per-transaction badge overrides (a Lucide icon name and a #RRGGBB colour).
+    // NULL falls back to the category's icon and an automatic colour. Never
+    // touched by sync.
+    iconOverride: text("icon_override"),
+    iconColor: text("icon_color"),
     amount: integer("amount").notNull(),
     normalizedAmount: integer("normalized_amount").notNull(),
     currency: text("currency").default("USD"),

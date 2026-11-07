@@ -46,6 +46,7 @@ import {
   renameCategoryGroup,
   updateCategoryExclusion,
   updateCategoryGroupIcon,
+  updateCategoryColor,
   updateCategoryIcon,
 } from "@/actions/categories";
 import { getMcpSettings } from "@/queries/mcp-settings";
@@ -96,7 +97,7 @@ export const dynamic = "force-dynamic";
  *   GET    /api/native/dashboard?range=1M|3M|6M|1Y|all
  *   GET    /api/native/transactions?search&needsReview&categoryId&cursor&limit
  *   GET    /api/native/transactions/:id
- *   PATCH  /api/native/transactions/:id   { categoryId?, reviewed?, notes? }
+ *   PATCH  /api/native/transactions/:id   { categoryId?, reviewed?, notes?, name?, iconOverride?, iconColor?, isTransfer? }
  *   GET    /api/native/category-suggestions?ids=a,b   cached on-device AI picks { [txnId]: categoryId | null }
  *   PUT    /api/native/category-suggestions/:txnId    { categoryId: string | null }
  *   GET    /api/native/categories
@@ -120,7 +121,7 @@ export const dynamic = "force-dynamic";
  *   GET    /api/native/investments/holdings?view=consolidated|by-account&accountId
  *   GET    /api/native/investments/transactions?type&accountId&cursor
  *   POST   /api/native/categories        { name, groupId, isIncome? }
- *   PATCH  /api/native/categories/:id    { name } | { icon: lucideName | null }   DELETE /api/native/categories/:id
+ *   PATCH  /api/native/categories/:id    { name } | { icon?: lucideName | null, color?: "#RRGGBB" | null }   DELETE /api/native/categories/:id
  *   POST   /api/native/category-groups   { name }
  *   PATCH  /api/native/category-groups/:id { name } | { icon: lucideName | null }   DELETE /api/native/category-groups/:id
  *   GET    /api/native/category-rules
@@ -309,7 +310,7 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
   if (head === "categories" && method !== "GET") {
     const body = (await req.json().catch(() => null)) as {
       name?: string; groupId?: string; isIncome?: boolean; excludeFromSpending?: boolean; targetId?: string;
-      icon?: string | null;
+      icon?: string | null; color?: string | null;
     } | null;
     if (id && segs[2] === "merge" && method === "POST") {
       if (!body?.targetId) return fail("Invalid input");
@@ -326,8 +327,18 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
       }));
     }
     if (id && method === "PATCH") {
-      if (body && "icon" in body && (body.icon === null || typeof body.icon === "string")) {
-        return fin(await updateCategoryIcon(id, body.icon));
+      const hasIcon = !!body && "icon" in body && (body.icon === null || typeof body.icon === "string");
+      const hasColor = !!body && "color" in body && (body.color === null || typeof body.color === "string");
+      if (hasIcon || hasColor) {
+        if (hasIcon) {
+          const res = await updateCategoryIcon(id, body!.icon as string | null);
+          if ("error" in res) return fail(res.error);
+        }
+        if (hasColor) {
+          const res = await updateCategoryColor(id, body!.color as string | null);
+          if ("error" in res) return fail(res.error);
+        }
+        return ok({ success: true });
       }
       if (body?.groupId) return fin(await moveCategoryToGroup(id, body.groupId));
       if (typeof body?.excludeFromSpending === "boolean") return fin(await updateCategoryExclusion(id, body.excludeFromSpending));
@@ -587,8 +598,21 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
       categoryId?: string | null;
       reviewed?: boolean;
       notes?: string;
+      name?: string | null;
+      iconOverride?: string | null;
+      iconColor?: string | null;
+      isTransfer?: boolean;
     } | null;
     if (!body) return fail("Invalid input");
+    const fields: { name?: string | null; iconOverride?: string | null; iconColor?: string | null; isTransfer?: boolean } = {};
+    if (typeof body.isTransfer === "boolean") fields.isTransfer = body.isTransfer;
+    if (typeof body.name === "string" || body.name === null) fields.name = body.name;
+    if (typeof body.iconOverride === "string" || body.iconOverride === null) fields.iconOverride = body.iconOverride;
+    if (typeof body.iconColor === "string" || body.iconColor === null) fields.iconColor = body.iconColor;
+    if (Object.keys(fields).length > 0) {
+      const res = await updateTransactionFields(id, fields);
+      if ("error" in res) return fail(res.error);
+    }
     if ("categoryId" in body) {
       const res = await updateTransactionCategory(id, body.categoryId ?? null);
       if ("error" in res) return fail(res.error);

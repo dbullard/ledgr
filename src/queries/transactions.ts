@@ -33,6 +33,10 @@ export interface TransactionRow {
   /** The bank's date, set only when `date` has been moved by hand. */
   originalDate: string | null;
   name: string;
+  /** Set when the user renamed the transaction; sync won't overwrite `name` while this is set. */
+  customName: string | null;
+  iconOverride: string | null;
+  iconColor: string | null;
   originalName: string;
   amount: number;
   normalizedAmount: number;
@@ -69,6 +73,9 @@ const transactionSelectFields = {
   date: transactions.date,
   originalDate: transactions.originalDate,
   name: transactions.name,
+  customName: transactions.customName,
+  iconOverride: transactions.iconOverride,
+  iconColor: transactions.iconColor,
   originalName: transactions.originalName,
   amount: transactions.amount,
   normalizedAmount: transactions.normalizedAmount,

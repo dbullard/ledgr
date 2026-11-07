@@ -418,7 +418,9 @@ async function applyToDb(
             date: sql`CASE WHEN ${transactions.originalDate} IS NULL THEN ${row.date} ELSE ${transactions.date} END`,
             originalDate: sql`CASE WHEN ${transactions.originalDate} IS NULL THEN NULL ELSE ${row.date} END`,
             originalName: row.originalName,
-            name: row.name,
+            // A rename sticks: the row is matched by the bank's transaction id,
+            // so keep the user's name instead of the bank's on every refresh.
+            name: sql`COALESCE(${transactions.customName}, ${row.name})`,
             amount: row.amount,
             normalizedAmount: row.normalizedAmount,
             currency: row.currency,

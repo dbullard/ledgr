@@ -306,7 +306,7 @@ async function applyToDb(
             date: sql`CASE WHEN ${transactions.originalDate} IS NULL THEN ${row.date} ELSE ${transactions.date} END`,
             originalDate: sql`CASE WHEN ${transactions.originalDate} IS NULL THEN NULL ELSE ${row.date} END`,
             originalName: row.originalName,
-            name: row.name,
+            name: sql`COALESCE(${transactions.customName}, ${row.name})`,
             amount: row.amount,
             normalizedAmount: row.normalizedAmount,
             currency: row.currency,

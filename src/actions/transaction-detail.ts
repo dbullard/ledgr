@@ -11,12 +11,17 @@ import { authorizeAction } from "@/lib/auth/authorize-action";
 import { getHouseholdId } from "@/lib/auth/session";
 import { withHousehold } from "@/lib/household-context";
 import { getTransactionDetail, type TransactionDetail } from "@/queries/transactions";
+import { cleanTransactionName } from "@/lib/import/clean-name";
 
 const transactionIdSchema = z.string().min(1);
 
 const updateFieldsSchema = z
   .object({
-    name: z.string().min(1).max(255).optional(),
+    // A non-empty name is remembered as a custom name that sync won't overwrite;
+    // null clears it and returns the name to the bank's.
+    name: z.string().trim().min(1).max(255).nullable().optional(),
+    iconOverride: z.string().max(64).nullable().optional(),
+    iconColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
     notes: z.string().max(2000).optional(),
     date: z
       .string()
@@ -81,6 +86,7 @@ export async function updateTransactionFields(
         transferPairId: transactions.transferPairId,
         date: transactions.date,
         originalDate: transactions.originalDate,
+        originalName: transactions.originalName,
         pending: transactions.pending,
       })
       .from(transactions)
@@ -116,7 +122,22 @@ export async function updateTransactionFields(
     }
 
     const updates: Partial<typeof transactions.$inferInsert> = { updatedAt: new Date() };
-    if (fields.name !== undefined) updates.name = fields.name;
+    if (fields.name !== undefined) {
+      // A pending bank row is replaced by a new posted row when it settles,
+      // which would drop the rename — so wait for it to post.
+      if (existing.externalId && existing.pending) {
+        return { error: "Wait until this transaction posts to rename it" };
+      }
+      if (fields.name === null) {
+        updates.customName = null;
+        updates.name = cleanTransactionName(existing.originalName) || existing.originalName;
+      } else {
+        updates.customName = fields.name;
+        updates.name = fields.name;
+      }
+    }
+    if (fields.iconOverride !== undefined) updates.iconOverride = fields.iconOverride;
+    if (fields.iconColor !== undefined) updates.iconColor = fields.iconColor;
     if (fields.notes !== undefined) updates.notes = fields.notes;
     if (fields.date !== undefined && fields.date !== existing.date) {
       updates.date = fields.date;

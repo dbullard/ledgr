@@ -6,6 +6,7 @@ interface CategoryOption {
   id: string;
   name: string;
   icon: string | null;
+  color?: string | null;
   isIncome: boolean;
   includeTransferInSpending: boolean;
   excludeFromSpending: boolean;
@@ -47,6 +48,7 @@ export async function getCategories(
       id: cat.id,
       name: cat.name,
       icon: cat.icon,
+      color: cat.color ?? null,
       isIncome: cat.isIncome ?? false,
       includeTransferInSpending: cat.includeTransferInSpending ?? false,
       excludeFromSpending: cat.excludeFromSpending ?? false,

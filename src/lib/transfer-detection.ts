@@ -1,6 +1,6 @@
-import { eq, isNull, ne, or } from "drizzle-orm";
+import { and, eq, gt, isNull, ne, or } from "drizzle-orm";
 import { db as defaultDb, type LedgrDb } from "@/db";
-import { transactions, merchants } from "@/db/schema";
+import { transactions, merchants, accounts } from "@/db/schema";
 import { scopedQuery } from "@/lib/scoped-query";
 import { notDeleted } from "@/lib/query-helpers";
 import { withHousehold } from "@/lib/household-context";
@@ -177,6 +177,22 @@ export async function applyTransferDetection(
             .set({ transferSource: "suggested", updatedAt: new Date() })
             .where(eq(transactions.id, row.id));
         }
+      }
+
+      // Money arriving on a loan account is a payment toward the debt. The
+      // spending side (the draft from checking, "Car Payment") is already an
+      // expense elsewhere, so counting this leg as income would inflate
+      // income and show up as a confusing positive amount.
+      const loanPayments = await tx
+        .select({ id: transactions.id })
+        .from(transactions)
+        .innerJoin(accounts, eq(transactions.accountId, accounts.id))
+        .where(and(untagged(), eq(accounts.type, "loan"), gt(transactions.normalizedAmount, 0)));
+      for (const row of loanPayments) {
+        patternCount++;
+        await tx.update(transactions)
+          .set({ isTransfer: true, transferSource: "pattern", updatedAt: new Date() })
+          .where(eq(transactions.id, row.id));
       }
 
       return { pairs: pairs.length, patterns: patternCount, suggested: suggestedCount };

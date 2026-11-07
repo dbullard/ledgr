@@ -26,6 +26,7 @@ import {
   moveCategoryToGroupScoped,
   updateCategoryGroupIconScoped,
   updateCategoryIconScoped,
+  updateCategoryColorScoped,
   updateCategoryReportingScoped,
   updateCategoryExclusionScoped,
 } from "../../src/actions/categories";
@@ -324,6 +325,22 @@ describe("category actions", () => {
     expect(
       await updateCategoryIconScoped(otherHouseholdId, categoryId, "baby", db),
     ).toHaveProperty("error");
+  });
+
+  it("sets and clears a category colour, rejecting malformed values and other households", async () => {
+    const { groupId } = await insertCategoryGroup(db, householdId);
+    const { categoryId } = await insertCategory(db, householdId, groupId);
+
+    expect(await updateCategoryColorScoped(householdId, categoryId, "#FF9F0A", db)).toEqual({ success: true });
+    let [cat] = await db.select().from(categories).where(eq(categories.id, categoryId));
+    expect(cat.color).toBe("#FF9F0A");
+
+    expect(await updateCategoryColorScoped(householdId, categoryId, "orange", db)).toHaveProperty("error");
+    expect(await updateCategoryColorScoped(otherHouseholdId, categoryId, "#000000", db)).toHaveProperty("error");
+
+    expect(await updateCategoryColorScoped(householdId, categoryId, null, db)).toEqual({ success: true });
+    [cat] = await db.select().from(categories).where(eq(categories.id, categoryId));
+    expect(cat.color).toBeNull();
   });
 
   it("moves a category to another group", async () => {

@@ -29,6 +29,8 @@ export const categories = pgTable(
       .references(() => categoryGroups.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     icon: text("icon"),
+    // "#RRGGBB" the user picked for this category's badge; NULL keeps the automatic colour.
+    color: text("color"),
     isIncome: boolean("is_income").default(false),
     includeTransferInSpending: boolean("include_transfer_in_spending")
       .default(false)

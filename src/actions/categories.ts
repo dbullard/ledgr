@@ -350,6 +350,38 @@ const iconSchema = z
   .max(40)
   .nullable();
 
+const colorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable();
+
+export async function updateCategoryColorScoped(
+  householdId: string,
+  categoryId: string,
+  color: string | null,
+  db: LedgrDb = defaultDb,
+): Promise<ActionResult> {
+  const parsedId = idSchema.safeParse(categoryId);
+  const parsedColor = colorSchema.safeParse(color);
+  if (!parsedId.success || !parsedColor.success) return { error: "Invalid input." };
+  const scoped = scopedQuery(householdId, db);
+  const updated = await db
+    .update(categories)
+    .set({ color: parsedColor.data })
+    .where(scoped.where(categories, eq(categories.id, parsedId.data)))
+    .returning({ id: categories.id });
+  if (updated.length === 0) return { error: "Category not found." };
+  revalidateCategoryConsumers();
+  return { success: true };
+}
+
+export async function updateCategoryColor(
+  categoryId: string,
+  color: string | null,
+  db: LedgrDb = defaultDb,
+): Promise<ActionResult> {
+  const auth = await authorizeAction();
+  if ("error" in auth) return auth;
+  return updateCategoryColorScoped(auth.householdId, categoryId, color, db);
+}
+
 export async function updateCategoryIconScoped(
   householdId: string,
   categoryId: string,

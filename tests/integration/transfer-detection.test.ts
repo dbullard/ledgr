@@ -341,4 +341,41 @@ describe("applyTransferDetection — single-leg pattern pass", () => {
       await close();
     }
   });
+  it("treats money arriving on a loan account as a payment, not income", async () => {
+    const { db, close } = await createTestDb();
+    try {
+      const { householdId } = await insertHousehold(db);
+      const { accountId: loanId } = await insertAccount(db, householdId, { type: "loan" });
+      const { accountId: checkingId } = await insertAccount(db, householdId, { type: "checking" });
+      const { transactionId: paymentId } = await insertTransaction(db, householdId, loanId, {
+        name: "Automatic Loan Payment",
+        date: "2026-09-24",
+        normalizedAmount: 19957,
+        amount: -19957,
+      });
+      // A charge on the loan (negative) and a deposit elsewhere stay as they are.
+      const { transactionId: feeId } = await insertTransaction(db, householdId, loanId, {
+        name: "Late fee",
+        date: "2026-09-25",
+        normalizedAmount: -2500,
+        amount: 2500,
+      });
+      const { transactionId: payId } = await insertTransaction(db, householdId, checkingId, {
+        name: "Paycheck",
+        date: "2026-09-26",
+        normalizedAmount: 250000,
+        amount: -250000,
+      });
+
+      const result = await applyTransferDetection(householdId, db);
+      expect(result.patterns).toBe(1);
+
+      const rows = await db.select().from(transactions).where(eq(transactions.householdId, householdId));
+      expect(rows.find((r) => r.id === paymentId)!.isTransfer).toBe(true);
+      expect(rows.find((r) => r.id === feeId)!.isTransfer).toBe(false);
+      expect(rows.find((r) => r.id === payId)!.isTransfer).toBe(false);
+    } finally {
+      await close();
+    }
+  });
 });

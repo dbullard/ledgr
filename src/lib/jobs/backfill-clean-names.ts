@@ -1,4 +1,4 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { db as defaultDb, type LedgrDb } from "@/db";
 import { transactions, households } from "@/db/schema";
 import { cleanTransactionName } from "@/lib/import/clean-name";
@@ -42,7 +42,7 @@ async function backfillForHousehold(
   const rows = await db
     .select({ id: transactions.id, name: transactions.name, originalName: transactions.originalName })
     .from(transactions)
-    .where(and(eq(transactions.householdId, householdId), eq(transactions.name, transactions.originalName)));
+    .where(and(eq(transactions.householdId, householdId), eq(transactions.name, transactions.originalName), isNull(transactions.customName)));
 
   let updated = 0;
   for (const row of rows) {

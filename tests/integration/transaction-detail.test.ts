@@ -173,6 +173,32 @@ describe("updateTransactionFields", () => {
     expect(row!.notes).toBe("Morning coffee");
   });
 
+  it("remembers a rename as a custom name, and clears it on reset", async () => {
+    await updateTransactionFields(editTxnId, { name: "Morning Coffee" }, db);
+    let [row] = await db.select().from(transactions).where(eq(transactions.id, editTxnId));
+    expect(row!.name).toBe("Morning Coffee");
+    expect(row!.customName).toBe("Morning Coffee");
+
+    await updateTransactionFields(editTxnId, { name: null }, db);
+    [row] = await db.select().from(transactions).where(eq(transactions.id, editTxnId));
+    expect(row!.customName).toBeNull();
+    expect(row!.name).not.toBe("Morning Coffee");
+  });
+
+  it("stores an icon and colour override and rejects a malformed colour", async () => {
+    expect(await updateTransactionFields(editTxnId, { iconOverride: "coffee", iconColor: "#FF9F0A" }, db)).toEqual({ success: true });
+    const [row] = await db.select().from(transactions).where(eq(transactions.id, editTxnId));
+    expect(row!.iconOverride).toBe("coffee");
+    expect(row!.iconColor).toBe("#FF9F0A");
+
+    expect(await updateTransactionFields(editTxnId, { iconColor: "orange" }, db)).toEqual({ error: "Invalid input" });
+
+    await updateTransactionFields(editTxnId, { iconOverride: null, iconColor: null }, db);
+    const [cleared] = await db.select().from(transactions).where(eq(transactions.id, editTxnId));
+    expect(cleared!.iconOverride).toBeNull();
+    expect(cleared!.iconColor).toBeNull();
+  });
+
   it("rejects invalid date format", async () => {
     const result = await updateTransactionFields(
       editTxnId,

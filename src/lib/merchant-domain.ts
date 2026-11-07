@@ -21,7 +21,15 @@ const KNOWN_BRANDS: { pattern: RegExp; name: string; domain: string }[] = [
   { pattern: /\bgrubhub\b/, name: "Grubhub", domain: "grubhub.com" },
   { pattern: /\binstacart\b/, name: "Instacart", domain: "instacart.com" },
   { pattern: /\bamzn\b|\bamazon\b/, name: "Amazon", domain: "amazon.com" },
-  { pattern: /\bwalmart\b|\bwal[- ]mart\b/, name: "Walmart", domain: "walmart.com" },
+  { pattern: /\bsam'?s club\b|\bsamsclub\b/, name: "Sam's Club", domain: "samsclub.com" },
+  { pattern: /\bwalmart\b|\bwal[- ]mart\b|\bwm supercenter\b/, name: "Walmart", domain: "walmart.com" },
+  { pattern: /\bamerican eagle\b/, name: "American Eagle", domain: "ae.com" },
+  { pattern: /\bculver'?s\b/, name: "Culver's", domain: "culvers.com" },
+  { pattern: /\bhobby lobby\b/, name: "Hobby Lobby", domain: "hobbylobby.com" },
+  { pattern: /\bdollar general\b/, name: "Dollar General", domain: "dollargeneral.com" },
+  { pattern: /\bsonic drive\b/, name: "Sonic", domain: "sonicdrivein.com" },
+  { pattern: /\bkohl'?s\b/, name: "Kohl's", domain: "kohls.com" },
+  { pattern: /\bacademy sports\b/, name: "Academy Sports", domain: "academy.com" },
   { pattern: /\btarget\b/, name: "Target", domain: "target.com" },
   { pattern: /\bcostco\b/, name: "Costco", domain: "costco.com" },
   { pattern: /\bkroger\b/, name: "Kroger", domain: "kroger.com" },
@@ -90,6 +98,9 @@ function normalize(description: string): string {
   return description
     .toLowerCase()
     .replace(PROCESSOR_PREFIX, "")
+    // Bank feeds glue store numbers onto names ("Walmart200015503319262"),
+    // which defeats word-boundary matching — split letters from digits.
+    .replace(/([a-z])(\d)/g, "$1 $2")
     .replace(/[^a-z0-9&'+.\-\s*]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
