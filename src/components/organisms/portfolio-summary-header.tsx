@@ -37,8 +37,15 @@ export function PortfolioSummaryHeader({ summary }: PortfolioSummaryHeaderProps)
       // Spans only holdings that report a cost basis. Zero-basis positions
       // would otherwise contribute their entire value as gain.
       label: "Gain/Loss (with cost basis)",
-      value: centsToSignedDisplay(summary.totalGainLoss),
-      valueClassName: summary.totalGainLoss >= 0 ? "text-positive" : "text-destructive",
+      // With no cost basis anywhere there is nothing to compare against, so say
+      // so instead of a green "+$0.00" that reads as "no change".
+      value: summary.gainLossCoverage > 0 ? centsToSignedDisplay(summary.totalGainLoss) : "n/a",
+      valueClassName:
+        summary.gainLossCoverage > 0
+          ? summary.totalGainLoss >= 0
+            ? "text-positive"
+            : "text-destructive"
+          : undefined,
     },
   );
 

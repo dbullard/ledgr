@@ -23,10 +23,11 @@ export function registerInvestmentTools(server: McpServer, householdId: string) 
         totalValueDisplay: centsToDisplay(s.totalValue),
         dayChangeCents: s.dayChange,
         dayChangeDisplay: s.dayChange !== null ? centsToDisplay(s.dayChange) : null,
-        totalGainLossCents: s.totalGainLoss,
-        totalGainLossDisplay: centsToDisplay(s.totalGainLoss),
-        totalCostBasisCents: s.totalCostBasis,
-        totalCostBasisDisplay: centsToDisplay(s.totalCostBasis),
+        // Null (not $0) when no holding reports a cost basis: there is nothing to compare against.
+        totalGainLossCents: s.gainLossCoverage > 0 ? s.totalGainLoss : null,
+        totalGainLossDisplay: s.gainLossCoverage > 0 ? centsToDisplay(s.totalGainLoss) : null,
+        totalCostBasisCents: s.gainLossCoverage > 0 ? s.totalCostBasis : null,
+        totalCostBasisDisplay: s.gainLossCoverage > 0 ? centsToDisplay(s.totalCostBasis) : null,
       });
     },
   );

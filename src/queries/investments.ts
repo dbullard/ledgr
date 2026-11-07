@@ -609,7 +609,10 @@ export async function getHoldings(
         sector: sql<string | null>`MIN(${investmentHoldings.sector})`,
         quantity: sumCol(investmentHoldings.quantity),
         currentValue: sumCol(investmentHoldings.currentValue),
-        costBasis: sumCol(investmentHoldings.costBasis),
+        // Unknown unless EVERY lot has a basis: COALESCE(SUM, 0) turned "no basis
+        // reported" into a $0 cost (a gain of the whole position), and a partial
+        // sum would overstate the gain just the same.
+        costBasis: sql<number | null>`CASE WHEN COUNT(${investmentHoldings.costBasis}) = COUNT(*) THEN SUM(${investmentHoldings.costBasis}) ELSE NULL END`.mapWith((v) => (v === null || v === undefined ? null : Number(v))),
       })
       .from(investmentHoldings)
       .where(inArray(investmentHoldings.accountId, filteredAccIds))

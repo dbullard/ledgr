@@ -179,6 +179,44 @@ describe("investment queries", () => {
     });
   });
 
+  describe("getHoldings cost basis", () => {
+    it("reports an unknown cost basis as null, not $0, when no holding has one", async () => {
+      // GuideStone-style: the connector reports a position but no cost basis.
+      // Summing nulls to 0 made the consolidated view claim a $0 cost, i.e. a
+      // gain of the whole position.
+      await insertInvestmentHolding(db, accountId, { currentValue: 3200750, costBasis: null, ticker: "GMGZX", plaidSecurityId: "sec-gm" });
+
+      const [h] = await getHoldings(householdId, "consolidated", undefined, db);
+
+      expect(h.costBasis).toBeNull();
+      expect(h.gainLoss).toBeNull();
+      expect(h.gainLossPercent).toBeNull();
+    });
+
+    it("stays unknown when only some of a consolidated position's lots have a basis", async () => {
+      const other = await insertAccount(db, householdId, { type: "investment", name: "Other" });
+      await insertInvestmentHolding(db, accountId, { currentValue: 100000, costBasis: 80000, ticker: "VTI", plaidSecurityId: "sec-vti" });
+      await insertInvestmentHolding(db, other.accountId, { currentValue: 100000, costBasis: null, ticker: "VTI", plaidSecurityId: "sec-vti" });
+
+      const holdings = await getHoldings(householdId, "consolidated", undefined, db);
+      const vti = holdings.find((x) => x.ticker === "VTI")!;
+
+      expect(vti.currentValue).toBe(200000);
+      expect(vti.costBasis).toBeNull(); // a partial sum would overstate the gain
+    });
+
+    it("still sums cost basis when every lot has one", async () => {
+      const other = await insertAccount(db, householdId, { type: "investment", name: "Other" });
+      await insertInvestmentHolding(db, accountId, { currentValue: 100000, costBasis: 80000, ticker: "VOO", plaidSecurityId: "sec-voo" });
+      await insertInvestmentHolding(db, other.accountId, { currentValue: 150000, costBasis: 100000, ticker: "VOO", plaidSecurityId: "sec-voo" });
+
+      const voo = (await getHoldings(householdId, "consolidated", undefined, db)).find((x) => x.ticker === "VOO")!;
+
+      expect(voo.costBasis).toBe(180000);
+      expect(voo.gainLoss).toBe(70000);
+    });
+  });
+
   describe("getHoldings", () => {
     it("consolidated view merges by ticker", async () => {
       const acc2 = await insertAccount(db, householdId, { type: "investment", name: "401k" });
