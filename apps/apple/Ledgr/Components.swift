@@ -84,7 +84,15 @@ final class CategoryStyles {
     private(set) var colors: [String: String] = [:]
 
     func update(_ groups: [CategoryGroup]) {
-        colors = groups.flatMap(\.categories).reduce(into: [:]) { out, c in if let hex = c.color { out[c.id] = hex } }
+        // The group's colour applies to every category in it (icons stay per category).
+        // Excluded categories are the exception: they share the colour set on the "Excluded" section,
+        // which is saved on each of them, and fall back to their group's colour.
+        colors = groups.reduce(into: [:]) { out, g in
+            for c in g.categories {
+                let hex = c.excludeFromSpending == true ? (c.color ?? g.color) : (g.color ?? c.color)
+                if let hex { out[c.id] = hex }
+            }
+        }
     }
 
     func set(_ categoryId: String, _ hex: String?) { colors[categoryId] = hex }
@@ -108,10 +116,13 @@ struct CategoryBadge: View {
         Color(red: 0.86, green: 0.25, blue: 0.40), Color(red: 0.0, green: 0.60, blue: 0.70),
         Color(red: 0.69, green: 0.50, blue: 0.0),
     ]
-    private var tint: Color {
+    private var tint: Color { Self.tint(icon: icon, categoryId: categoryId, colorHex: colorHex) }
+
+    /// The badge colour for a category: the user's choice if any, else a stable colour from the icon name.
+    static func tint(icon: String?, categoryId: String?, colorHex: String? = nil) -> Color {
         if let hex = colorHex ?? categoryId.flatMap({ CategoryStyles.shared.colors[$0] }), let custom = Color(hex: hex) { return custom }
         guard let icon else { return .gray }
-        return Self.palette[abs(icon.unicodeScalars.reduce(0) { $0 &* 31 &+ Int($1.value) }) % Self.palette.count]
+        return palette[abs(icon.unicodeScalars.reduce(0) { $0 &* 31 &+ Int($1.value) }) % palette.count]
     }
 
     var body: some View {
@@ -185,32 +196,33 @@ struct TxnRow: View {
     let txn: Txn
     /// On-device suggestion shown (with a sparkle) until the user confirms it.
     var suggestion: Category?
+    /// With these, the category pill opens a quick picker that calls `onCategory`.
+    var groups: [CategoryGroup] = []
+    var onCategory: ((String?) -> Void)?
+    @State private var showPicker = false
+
+    private var interactive: Bool { onCategory != nil && !txn.isTransfer }
+
+    private var incomeOnly: Bool {
+        if let id = txn.categoryId, let cat = groups.lazy.flatMap(\.categories).first(where: { $0.id == id }) { return cat.isIncome }
+        return txn.normalizedAmount > 0
+    }
 
     var body: some View {
         HStack(spacing: 12) {
-            MerchantAvatar(txn: txn)
-            VStack(alignment: .leading, spacing: 2) {
+            // The category's icon leads the list; the merchant logo is on the detail page.
+            CategoryBadge(icon: txn.isTransfer ? "arrow-left-right" : txn.categoryIcon, categoryId: txn.isTransfer ? nil : txn.categoryId)
+            VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     if !txn.reviewed && !txn.isTransfer {
                         Circle().fill(Color.accentColor).frame(width: 7, height: 7)
                     }
                     Text(txn.name).font(.body.weight(.medium)).lineLimit(1)
                 }
-                HStack(spacing: 4) {
-                    if txn.isTransfer {
-                        // Transfers aren't categorized, so never flag them as missing one.
-                        Label("Transfer", systemImage: "arrow.left.arrow.right").lineLimit(1).fixedSize()
-                    } else if let cat = txn.categoryName {
-                        Text(cat).lineLimit(1).fixedSize()
-                    } else if let s = suggestion {
-                        Label(s.name, systemImage: "sparkles").foregroundStyle(Color.accentColor).lineLimit(1).fixedSize()
-                    } else {
-                        Text("Uncategorized").foregroundStyle(Color.alert).lineLimit(1).fixedSize()
-                    }
-                    Text("· \(txn.accountName)").lineLimit(1).truncationMode(.tail)
+                HStack(spacing: 6) {
+                    categoryPill
+                    Text(txn.accountName).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 2) {
@@ -222,6 +234,46 @@ struct TxnRow: View {
             }
         }
         .contentShape(Rectangle())
+    }
+
+    @ViewBuilder private var categoryPill: some View {
+        if txn.isTransfer {
+            pill("Transfer", systemImage: "arrow.left.arrow.right", tint: .secondary, chevron: false)
+        } else if interactive {
+            Button { showPicker = true } label: { pillContent }
+                .buttonStyle(.borderless)
+                .popover(isPresented: $showPicker, arrowEdge: .bottom) {
+                    CategoryPicker(groups: groups, incomeOnly: incomeOnly, currentId: txn.categoryId, loading: groups.isEmpty) { id in
+                        showPicker = false
+                        onCategory?(id)
+                    }
+                }
+        } else {
+            pillContent
+        }
+    }
+
+    @ViewBuilder private var pillContent: some View {
+        if let cat = txn.categoryName {
+            pill(cat, tint: CategoryBadge.tint(icon: txn.categoryIcon, categoryId: txn.categoryId), chevron: interactive)
+        } else if let s = suggestion {
+            pill(s.name, systemImage: "sparkles", tint: .accentColor, chevron: interactive)
+        } else {
+            pill("Uncategorized", tint: Color.alert, chevron: interactive)
+        }
+    }
+
+    private func pill(_ text: String, systemImage: String? = nil, tint: Color, chevron: Bool) -> some View {
+        HStack(spacing: 4) {
+            if let systemImage { Image(systemName: systemImage).font(.system(size: 9, weight: .semibold)) }
+            Text(text).lineLimit(1)
+            if chevron { Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).opacity(0.7) }
+        }
+        .font(.caption.weight(.medium))
+        .foregroundStyle(tint)
+        .padding(.horizontal, 8).padding(.vertical, 3)
+        .background(tint.opacity(0.14), in: Capsule())
+        .fixedSize()
     }
 }
 

@@ -32,6 +32,7 @@ struct CategoriesView: View {
     @State private var prompt: NamePrompt?
     @State private var message: String?
     @State private var iconTarget: IconTarget?
+    @State private var showExcludedColor = false
 
     var body: some View {
         ScrollView {
@@ -66,22 +67,28 @@ struct CategoriesView: View {
         .sheet(item: $iconTarget) { t in
             IconPickerSheet(target: t) { icon, color in
                 if t.isGroup {
-                    await patch("api/native/category-groups/\(t.id)", ["icon": icon ?? NSNull()])
+                    await patch("api/native/category-groups/\(t.id)", ["icon": icon ?? NSNull(), "color": color ?? NSNull()])
                 } else {
-                    CategoryStyles.shared.set(t.id, color)
-                    await patch("api/native/categories/\(t.id)", ["icon": icon ?? NSNull(), "color": color ?? NSNull()])
+                    // Subcategories only choose an icon; their colour comes from the group.
+                    await patch("api/native/categories/\(t.id)", ["icon": icon ?? NSNull()])
                 }
             }
             .presentationDetents([.large])
+        }
+        .sheet(isPresented: $showExcludedColor) {
+            ExcludedColorSheet(current: excludedColorHex) { hex in await setExcludedColor(hex) }
+                .presentationDetents([.height(260)])
         }
     }
 
     private func groupCard(_ g: CategoryGroup) -> some View {
         Card(g.name, trailing: AnyView(
+            HStack(spacing: 10) {
+            if g.icon != nil || g.color != nil { CategoryBadge(icon: g.icon, size: 24, colorHex: g.color) }
             Menu {
                 Button("Add category") { prompt = NamePrompt(title: "New category in \(g.name)", initial: "", kind: .newCategory(groupId: g.id, income: false)) }
                 Button("Add income category") { prompt = NamePrompt(title: "New income category", initial: "", kind: .newCategory(groupId: g.id, income: true)) }
-                Button("Change icon…") { iconTarget = IconTarget(id: g.id, name: g.name, current: g.icon, isGroup: true) }
+                Button("Change icon & color…") { iconTarget = IconTarget(id: g.id, name: g.name, current: g.icon, currentColor: g.color, isGroup: true) }
                 if g.isSystem != true {
                     Button("Rename group") { prompt = NamePrompt(title: "Rename group", initial: g.name, kind: .renameGroup(id: g.id)) }
                     Menu("Merge into…") {
@@ -94,6 +101,7 @@ struct CategoriesView: View {
             } label: { Image(systemName: "ellipsis.circle") }
             .menuStyle(.borderlessButton)
             .fixedSize()
+            }
         )) {
             let included = g.categories.filter { $0.excludeFromSpending != true }
             if g.categories.isEmpty { Text("No categories").foregroundStyle(.secondary) }
@@ -104,12 +112,34 @@ struct CategoriesView: View {
         }
     }
 
+    private var excludedColorHex: String? {
+        groups.flatMap(\.categories).first { $0.excludeFromSpending == true && $0.color != nil }?.color
+    }
+
+    private func setExcludedColor(_ hex: String?) async {
+        let ids = groups.flatMap(\.categories).filter { $0.excludeFromSpending == true }.map(\.id)
+        for id in ids {
+            do { let _: Ok = try await api.patch("api/native/categories/\(id)", body: ["color": hex ?? NSNull()]) }
+            catch { message = error.localizedDescription; break }
+        }
+        await load()
+    }
+
     /// Categories left out of spending and budgets, kept apart from the regular ones.
     @ViewBuilder
     private var excludedCard: some View {
         let excluded = groups.flatMap { g in g.categories.filter { $0.excludeFromSpending == true }.map { (g, $0) } }
         if !excluded.isEmpty {
-            Card("Excluded from spending") {
+            Card("Excluded from spending", trailing: AnyView(
+                Button { showExcludedColor = true } label: {
+                    HStack(spacing: 6) {
+                        Circle().fill(excludedColorHex.flatMap(Color.init(hex:)) ?? Color.secondary.opacity(0.4)).frame(width: 14, height: 14)
+                        Image(systemName: "paintpalette")
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("Change color for all excluded categories")
+            )) {
                 Text("These don't count toward spending or budgets, but stay visible in Transactions.")
                     .font(.footnote).foregroundStyle(.secondary)
                 ForEach(Array(excluded.enumerated()), id: \.element.1.id) { i, pair in
@@ -130,12 +160,12 @@ struct CategoriesView: View {
                         if c.isIncome { Text("Income").font(.caption2).padding(.horizontal, 6).padding(.vertical, 2).background(Color.income.opacity(0.15), in: Capsule()).foregroundStyle(Color.income) }
             Spacer()
             if c.isSystem == true {
-                Button { iconTarget = IconTarget(id: c.id, name: c.name, current: c.icon, currentColor: c.color, isGroup: false) } label: { Image(systemName: "face.smiling") }
+                Button { iconTarget = IconTarget(id: c.id, name: c.name, current: c.icon, currentColor: c.excludeFromSpending == true ? (c.color ?? g.color) : g.color, isGroup: false) } label: { Image(systemName: "face.smiling") }
                     .buttonStyle(.plain)
                     .help("Change icon")
             } else {
                 Menu {
-                    Button("Change icon…") { iconTarget = IconTarget(id: c.id, name: c.name, current: c.icon, currentColor: c.color, isGroup: false) }
+                    Button("Change icon…") { iconTarget = IconTarget(id: c.id, name: c.name, current: c.icon, currentColor: c.excludeFromSpending == true ? (c.color ?? g.color) : g.color, isGroup: false) }
                     Button("Rename") { prompt = NamePrompt(title: "Rename category", initial: c.name, kind: .renameCategory(id: c.id)) }
                     Menu("Move to group") {
                         ForEach(groups.filter { $0.id != g.id }) { t in
@@ -232,7 +262,7 @@ struct IconPickerSheet: View {
         _colorHex = State(initialValue: target.currentColor)
     }
 
-    private static let swatches = ["#0A84FF", "#5E5CE6", "#BF5AF2", "#FF375F", "#FF453A", "#FF9F0A", "#FFD60A", "#30D158", "#40C8E0", "#8E8E93"]
+    static let swatches = ["#0A84FF", "#5E5CE6", "#BF5AF2", "#FF375F", "#FF453A", "#FF9F0A", "#FFD60A", "#30D158", "#40C8E0", "#8E8E93"]
     private let columns = [GridItem(.adaptive(minimum: 48), spacing: 8)]
 
     private var customColor: Binding<Color> {
@@ -247,7 +277,8 @@ struct IconPickerSheet: View {
                 Spacer()
                 Button("Done") { dismiss() }
             }
-            if !target.isGroup {
+            if target.isGroup {
+                Text("This color applies to every category in the group.").font(.footnote).foregroundStyle(.secondary)
                 HStack(spacing: 10) {
                     ForEach(Self.swatches, id: \.self) { hex in
                         Button { colorHex = hex; schedule(after: 0) } label: {
@@ -276,8 +307,8 @@ struct IconPickerSheet: View {
                 }
                 .padding(4)
             }
-            Button(target.isGroup ? "Use default icon" : "Use default icon and color") { icon = nil; colorHex = nil; schedule(after: 0) }
-                .disabled(icon == nil && colorHex == nil)
+            Button(target.isGroup ? "Use default icon and color" : "Use default icon") { icon = nil; if target.isGroup { colorHex = nil }; schedule(after: 0) }
+                .disabled(icon == nil && (!target.isGroup || colorHex == nil))
         }
         .padding(20)
         .frame(minWidth: 420, minHeight: 460)
@@ -494,5 +525,60 @@ struct RuleEditor: View {
             await onDone()
             dismiss()
         } catch { self.error = error.localizedDescription }
+    }
+}
+
+/// One color for every excluded category.
+struct ExcludedColorSheet: View {
+    let current: String?
+    let onApply: (String?) async -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var colorHex: String?
+    @State private var pending: Task<Void, Never>?
+
+    init(current: String?, onApply: @escaping (String?) async -> Void) {
+        self.current = current
+        self.onApply = onApply
+        _colorHex = State(initialValue: current)
+    }
+
+    private var customColor: Binding<Color> {
+        Binding(get: { colorHex.flatMap(Color.init(hex:)) ?? .accentColor }, set: { colorHex = $0.hexString; schedule(after: 400) })
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Circle().fill(colorHex.flatMap(Color.init(hex:)) ?? Color.secondary.opacity(0.4)).frame(width: 28, height: 28)
+                Text("Color for excluded categories").font(.title3.weight(.semibold))
+                Spacer()
+                Button("Done") { dismiss() }
+            }
+            Text("Applies to every category in the Excluded section.").font(.footnote).foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                ForEach(IconPickerSheet.swatches, id: \.self) { hex in
+                    Button { colorHex = hex; schedule(after: 0) } label: {
+                        Circle().fill(Color(hex: hex) ?? .gray).frame(width: 26, height: 26)
+                            .overlay(Circle().stroke(Color.primary.opacity(0.9), lineWidth: colorHex?.uppercased() == hex ? 2 : 0).padding(-3))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Color \(hex)")
+                }
+                ColorPicker("Custom color", selection: customColor, supportsOpacity: false).labelsHidden()
+                Spacer()
+            }
+            Button("Use default colors") { colorHex = nil; schedule(after: 0) }
+                .disabled(colorHex == nil)
+        }
+        .padding(20)
+    }
+
+    private func schedule(after ms: Int) {
+        pending?.cancel()
+        pending = Task {
+            if ms > 0 { try? await Task.sleep(for: .milliseconds(ms)) }
+            guard !Task.isCancelled else { return }
+            await onApply(colorHex)
+        }
     }
 }

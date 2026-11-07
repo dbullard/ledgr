@@ -19,6 +19,7 @@ struct TransactionsView: View {
     @State private var search = ""
     @State private var filter: TxnFilter = .all
     @State private var dropMessage: String?
+    @State private var listGroups: [CategoryGroup] = CategoryCache.groups
     @ObservedObject private var suggester = CategorySuggester.shared
 
     private struct Key: Hashable { let search: String; let filter: TxnFilter; let base: URL? }
@@ -28,7 +29,9 @@ struct TransactionsView: View {
             ForEach(sections, id: \.0) { header, items in
                 Section(header) {
                     ForEach(items) { txn in
-                        NavigationLink(value: txn) { TxnRow(txn: txn, suggestion: suggester.suggestions[txn.id]) }
+                        NavigationLink(value: txn) {
+                            TxnRow(txn: txn, suggestion: suggester.suggestions[txn.id], groups: listGroups) { id in quickSetCategory(txn, id) }
+                        }
                             .receiptDropTarget(transactionId: txn.id, inset: 4) { dropMessage = $0 }
                             .listRowBackground(Color.card)
                             .onAppear {
@@ -77,6 +80,7 @@ struct TransactionsView: View {
             if filter == .needsReview && t.reviewed { rows.remove(at: i) } else { rows[i] = t }
         }
         .refreshable { await api.syncBanks(); await reload() }
+        .task { await loadGroups() }
         .task(id: Key(search: search, filter: filter, base: connection.active)) {
             if !search.isEmpty { try? await Task.sleep(for: .milliseconds(300)) }
             guard !Task.isCancelled else { return }
@@ -121,6 +125,26 @@ struct TransactionsView: View {
         }
     }
 
+    private func loadGroups() async {
+        guard listGroups.isEmpty else { return }
+        if let g: [CategoryGroup] = try? await api.get("api/native/categories") {
+            listGroups = g.alphabetical
+            CategoryCache.groups = listGroups
+            CategoryStyles.shared.update(g)
+        }
+    }
+
+    /// Changes a transaction's category straight from its row's pill.
+    private func quickSetCategory(_ txn: Txn, _ id: String?) {
+        Task {
+            do {
+                let updated: Txn = try await api.patch("api/native/transactions/\(txn.id)", body: ["categoryId": id ?? NSNull()])
+                api.noteChanged(updated)
+            } catch APIError.unauthorized {
+            } catch { dropMessage = error.localizedDescription }
+        }
+    }
+
     private func loadMore() async {
         guard let cursor, !loadingMore else { return }
         loadingMore = true
@@ -152,6 +176,8 @@ struct TransactionDetailView: View {
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var attaching = false
     @State private var showCategories = false
+    @State private var slideIn = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var kindDraft: Kind?
     @State private var nameDraft = ""
     @FocusState private var nameFocused: Bool
@@ -301,6 +327,15 @@ struct TransactionDetailView: View {
             .padding()
             .frame(maxWidth: 640)
             .frame(maxWidth: .infinity)
+            #if os(macOS)
+            // macOS swaps the screen instantly, so slide the content in from the right (iOS pushes natively).
+            // Critically damped spring: no bounce. Reduce Motion gets a plain fade.
+            .offset(x: slideIn || reduceMotion ? 0 : 56)
+            .opacity(slideIn ? 1 : 0)
+            .onAppear {
+                withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.4, dampingFraction: 1)) { slideIn = true }
+            }
+            #endif
         }
         .background(Color.canvas)
         .receiptDropTarget(transactionId: initial.id, inset: -8) { msg in
@@ -680,7 +715,7 @@ struct CategoryPicker: View {
                 let name = fold(c.name)
                 return words.allSatisfy { w in let f = fold(w); return group.contains(f) || name.contains(f) }
             }
-            return cats.isEmpty ? nil : CategoryGroup(id: g.id, name: g.name, icon: g.icon, isSystem: g.isSystem, categories: cats)
+            return cats.isEmpty ? nil : CategoryGroup(id: g.id, name: g.name, icon: g.icon, color: g.color, isSystem: g.isSystem, categories: cats)
         }
     }
 

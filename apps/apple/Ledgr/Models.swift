@@ -136,6 +136,8 @@ struct CategoryGroup: Codable, Identifiable {
     let id: String
     let name: String
     let icon: String?
+    /// "#RRGGBB" for the group; categories without their own colour inherit it.
+    let color: String?
     let isSystem: Bool?
     let categories: [Category]
 }
@@ -144,7 +146,7 @@ extension Array where Element == CategoryGroup {
     /// Groups A–Z, and each group's categories A–Z (natural, case-insensitive).
     var alphabetical: [CategoryGroup] {
         map { g in
-            CategoryGroup(id: g.id, name: g.name, icon: g.icon, isSystem: g.isSystem,
+            CategoryGroup(id: g.id, name: g.name, icon: g.icon, color: g.color, isSystem: g.isSystem,
                           categories: g.categories.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending })
         }
         .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
