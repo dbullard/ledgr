@@ -1,9 +1,11 @@
-import { eq, asc, ilike, isNull, isNotNull } from "drizzle-orm";
+import { eq, asc, ilike, isNull, isNotNull, gte } from "drizzle-orm";
 import { fetchTransactionPage, type TransactionRow } from "@/queries/transactions";
 import { notDeleted } from "@/lib/query-helpers";
 import { db as defaultDb, type LedgrDb } from "@/db";
 import { recurringTransactions, merchants, categories, accounts, transactions } from "@/db/schema";
 import { scopedQuery } from "@/lib/scoped-query";
+import { detectSubscriptionCandidates, type SubscriptionSuggestion } from "@/lib/recurring-suggestions";
+import { matchesRules, type MatchRules } from "@/lib/recurring-match";
 import { deriveBillStatus, relativeDateLabel, todayDateString, type BillStatus } from "@/lib/date-utils";
 
 export interface BillRow {
@@ -298,4 +300,67 @@ export async function getRecurringRules(
   return rows
     .filter((r): r is typeof r & { matchName: string } => !!r.matchName?.trim())
     .sort((a, b) => Number(a.lifecycle === "archived") - Number(b.lifecycle === "archived"));
+}
+
+/**
+ * Transactions a rule set would claim, for the live preview while the user
+ * edits it. Includes ones already linked to this item (flagged) so the list
+ * shows the full picture; ones linked elsewhere are left out.
+ */
+export async function previewRecurringMatches(
+  householdId: string,
+  recurringId: string,
+  rules: MatchRules,
+  isIncome = false,
+  db: LedgrDb = defaultDb,
+): Promise<(TransactionRow & { linked: boolean })[]> {
+  const needle = rules.matchName?.trim();
+  if (!needle) return [];
+  const escaped = needle.replace(/[\\%_]/g, "\\$&");
+  const page = await fetchTransactionPage(
+    householdId,
+    [
+      ilike(transactions.name, `%${escaped}%`),
+      notDeleted(transactions),
+      eq(transactions.pending, false),
+      eq(transactions.isTransfer, false),
+    ],
+    200,
+    null,
+    db,
+  );
+  return page.rows
+    .filter((r) => !r.recurringTransactionId || r.recurringTransactionId === recurringId)
+    .filter((r) => (isIncome ? r.normalizedAmount > 0 : r.normalizedAmount < 0))
+    .filter((r) => matchesRules(r, rules))
+    .map((r) => ({ ...r, linked: r.recurringTransactionId === recurringId }));
+}
+
+/** Repeating charges not yet tracked, for the "Suggested" list. */
+export async function getRecurringSuggestions(
+  householdId: string,
+  db: LedgrDb = defaultDb,
+): Promise<SubscriptionSuggestion[]> {
+  const scoped = scopedQuery(householdId, db);
+  const since = new Date(Date.now() - 400 * 86_400_000).toISOString().slice(0, 10);
+  const [page, items] = await Promise.all([
+    fetchTransactionPage(
+      householdId,
+      [
+        isNull(transactions.recurringTransactionId),
+        notDeleted(transactions),
+        eq(transactions.pending, false),
+        eq(transactions.isTransfer, false),
+        gte(transactions.date, since),
+      ],
+      3000,
+      null,
+      db,
+    ),
+    db
+      .select({ name: recurringTransactions.name, matchName: recurringTransactions.matchName })
+      .from(recurringTransactions)
+      .where(scoped.where(recurringTransactions)),
+  ]);
+  return detectSubscriptionCandidates(page.rows, items, todayDateString());
 }

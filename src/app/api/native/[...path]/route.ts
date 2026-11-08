@@ -55,13 +55,14 @@ import { revokeMcpClient, toggleMcpEndpoint } from "@/actions/mcp-settings";
 import { toggleDemoMode } from "@/actions/demo-mode";
 import { isDemoMode } from "@/lib/demo-mode";
 import { getAccountsForImport } from "@/queries/accounts";
-import { getRecurrings, getRecurringSummary, getRecurringTransactions } from "@/queries/recurring";
+import { getRecurrings, getRecurringSummary, getRecurringTransactions, getRecurringSuggestions, previewRecurringMatches } from "@/queries/recurring";
 import {
   createRecurringTransaction,
   linkTransactionToRecurring,
   makeTransactionRecurring,
   setRecurringStatus,
   unlinkTransactionFromRecurring,
+  updateRecurringRules,
 } from "@/actions/recurring";
 import { getBudgetForMonth } from "@/queries/budgets";
 import { getApnsConfig } from "@/lib/push/apns";
@@ -430,6 +431,10 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
   }
 
   if (head === "recurring") {
+    if (id === "suggestions" && !segs[2] && method === "GET") {
+      const rows = await withHousehold(householdId, (tx) => getRecurringSuggestions(householdId, tx));
+      return ok(rows);
+    }
     if (!id && method === "GET") {
       const [groups, summary] = await Promise.all([
         getRecurrings(householdId),
@@ -440,6 +445,55 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
     if (id && segs[2] === "transactions" && method === "GET") {
       const rows = await withHousehold(householdId, (tx) => getRecurringTransactions(householdId, id, tx));
       return ok(rows);
+    }
+    if (id && segs[2] === "rules" && method === "PUT") {
+      const body = (await req.json().catch(() => null)) as {
+        name?: string;
+        matchName?: string;
+        matchMinAmount?: number | null;
+        matchMaxAmount?: number | null;
+        matchDayOfMonth?: number | null;
+        frequency?: string;
+      } | null;
+      if (!body) return fail("Invalid input");
+      const result = await updateRecurringRules({
+        id,
+        name: body.name,
+        matchName: body.matchName ?? "",
+        matchMinAmount: body.matchMinAmount ?? null,
+        matchMaxAmount: body.matchMaxAmount ?? null,
+        matchDayOfMonth: body.matchDayOfMonth ?? null,
+        frequency: body.frequency as never,
+      });
+      return "error" in result ? fail(String(result.error)) : ok(result);
+    }
+    if (id && segs[2] === "preview" && method === "GET") {
+      const num = (k: string) => (q.get(k) ? Number(q.get(k)) : null);
+      const rows = await withHousehold(householdId, (tx) =>
+        previewRecurringMatches(
+          householdId,
+          id,
+          {
+            matchName: q.get("name"),
+            matchMinAmount: num("min"),
+            matchMaxAmount: num("max"),
+            matchDayOfMonth: num("day"),
+          },
+          false,
+          tx,
+        ),
+      );
+      return ok(rows);
+    }
+    if (id && segs[2] === "link" && method === "POST") {
+      const body = (await req.json().catch(() => null)) as { transactionId?: string } | null;
+      if (!body?.transactionId) return fail("Invalid input");
+      const result = await linkTransactionToRecurring(id, body.transactionId);
+      return "error" in result ? fail(String(result.error)) : ok(result);
+    }
+    if (id && segs[2] === "link" && segs[3] && method === "DELETE") {
+      const result = await unlinkTransactionFromRecurring(segs[3]);
+      return "error" in result ? fail(String(result.error)) : ok(result);
     }
     if (id && !segs[2] && method === "PATCH") {
       const body = (await req.json().catch(() => null)) as { status?: "active" | "paused" | "archived" } | null;
@@ -453,9 +507,15 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
         amount?: number;
         frequency?: string;
         nextDate?: string;
+        matchName?: string;
+        matchMinAmount?: number | null;
+        matchMaxAmount?: number | null;
       } | null;
       if (!body) return fail("Invalid input");
       const result = await createRecurringTransaction({
+        matchName: body.matchName,
+        matchMinAmount: body.matchMinAmount,
+        matchMaxAmount: body.matchMaxAmount,
         name: body.name ?? "",
         amount: body.amount ?? -1,
         frequency: body.frequency as never,
@@ -785,5 +845,6 @@ async function guarded(req: NextRequest, ctx: { params: Promise<{ path: string[]
 
 export const GET = guarded;
 export const PATCH = guarded;
+export const PUT = guarded;
 export const POST = guarded;
 export const DELETE = guarded;

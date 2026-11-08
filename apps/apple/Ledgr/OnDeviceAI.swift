@@ -50,6 +50,23 @@ enum OnDeviceAI {
         return nil
     }
 
+    /// Tidies a detected charge into a friendly name and judges whether it looks like a real
+    /// subscription or bill (versus habit spending such as a coffee shop). Nil when unavailable.
+    static func judgeSubscription(rawName: String, frequency: String, cents: Int) async -> (name: String, isSubscription: Bool)? {
+        #if canImport(FoundationModels)
+        if #available(iOS 27.0, macOS 27.0, *) {
+            let session = LanguageModelSession(
+                model: .default,
+                instructions: "You review repeating bank charges. Give the service's plain brand name (e.g. 'Netflix', 'Verizon') without store numbers or codes. Mark isSubscription true for subscriptions, memberships, utilities, insurance, rent, loans and phone or internet bills; false for habit spending at shops, restaurants, gas or groceries.")
+            let prompt = "Charge: \(rawName), about \(Fmt.money(cents)) \(frequency)."
+            guard let r = try? await session.respond(to: prompt, generating: SubscriptionVerdict.self) else { return nil }
+            let n = r.content.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (n.isEmpty ? rawName : n, r.content.isSubscription)
+        }
+        #endif
+        return nil
+    }
+
     /// Plain-language read of a budget month: what's on track, what's at risk,
     /// and where an unbudgeted category might deserve a limit.
     static func budgetAdvice(_ d: BudgetResponse) async -> String? {
@@ -88,6 +105,15 @@ enum OnDeviceAI {
 }
 
 #if canImport(FoundationModels)
+@available(iOS 27.0, macOS 27.0, *)
+@Generable
+struct SubscriptionVerdict {
+    @Guide(description: "Friendly brand or service name, no store numbers")
+    var name: String
+    @Guide(description: "True if this is a subscription, membership, utility, insurance, rent, loan or phone/internet bill")
+    var isSubscription: Bool
+}
+
 @available(iOS 27.0, macOS 27.0, *)
 @Generable
 struct CategoryPick {

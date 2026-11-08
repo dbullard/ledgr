@@ -183,6 +183,10 @@ const createSchema = z.object({
   nextDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   categoryId: z.string().min(1).nullable(),
   accountId: z.string().min(1).nullable(),
+  // Optional match rules; the name is the default match text.
+  matchName: z.string().transform((s) => s.trim()).pipe(z.string().min(1).max(200)).optional(),
+  matchMinAmount: z.number().int().min(0).nullable().optional(),
+  matchMaxAmount: z.number().int().min(0).nullable().optional(),
 });
 export type RecurringCreateInput = z.input<typeof createSchema>;
 
@@ -214,7 +218,9 @@ export async function createRecurringTransactionScoped(
     isIncome: false,
     status: "active",
     source: "manual",
-    matchName: d.name,
+    matchName: d.matchName ?? d.name,
+    matchMinAmount: d.matchMinAmount ?? null,
+    matchMaxAmount: d.matchMaxAmount ?? null,
     createdAt: now,
     updatedAt: now,
   });
