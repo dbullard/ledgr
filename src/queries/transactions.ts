@@ -151,6 +151,8 @@ const GUESSED_CATEGORY_SOURCES = ["ai", "ai_low_confidence"] as const;
 function needsReviewCondition(): SQL {
   return and(
     eq(transactions.reviewed, false),
+    // Transfers have no category to confirm and can't be marked reviewed, so they'd sit here forever.
+    eq(transactions.isTransfer, false),
     or(isNull(transactions.categoryId), inArray(transactions.categorySource, [...GUESSED_CATEGORY_SOURCES])),
   )!;
 }

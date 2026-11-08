@@ -108,18 +108,19 @@ struct MainView: View {
         if let list: [UnmatchedReceipt] = try? await api.get("api/native/receipts") { waiting = list.count }
     }
 
-    /// How many transactions still need a category (capped at 100 by the page size).
+    /// How many transactions still need a category.
     private func refreshUncategorized() async {
         guard badgeUncategorized else { uncategorized = 0; return }
-        if let page: TxnPage = try? await api.get("api/native/transactions", query: ["uncategorized": "1", "limit": "100"]) {
-            let n = page.rows.filter { $0.categoryName == nil && !$0.isTransfer }.count
-            uncategorized = page.nextCursor != nil ? max(n, 100) : n
+        if let page: TxnPage = try? await api.get("api/native/transactions", query: ["uncategorized": "1", "limit": "100", "count": "1"]) {
+            // Servers that predate `count` return only the rows themselves, which is exact up to one page.
+            let n = page.rows.filter { $0.categoryId == nil && !$0.isTransfer }.count
+            uncategorized = page.count ?? n
         }
     }
 
     private var uncategorizedBadge: Text? {
         guard badgeUncategorized, uncategorized > 0 else { return nil }
-        return Text(uncategorized >= 100 ? "99+" : "\(uncategorized)")
+        return Text(uncategorized > 999 ? "999+" : "\(uncategorized)")
     }
 
     var body: some View {

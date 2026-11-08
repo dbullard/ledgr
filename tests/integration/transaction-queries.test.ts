@@ -268,13 +268,15 @@ describe("getTransactions needsReview filter", () => {
     await row("Legacy, no source recorded", { categoryId });
     await row("AI guess already reviewed", { categoryId, categorySource: "ai", reviewed: true });
     await row("Uncategorized already reviewed", { reviewed: true });
+    // Transfers can't be categorized or reviewed, so they never queue.
+    await row("Transfer", { isTransfer: true });
   });
 
   afterAll(async () => {
     await close();
   });
 
-  it("queues only unreviewed rows that are uncategorized or AI-guessed", async () => {
+  it("queues only unreviewed, non-transfer rows that are uncategorized or AI-guessed", async () => {
     const page = await getTransactions(householdId, { needsReview: true }, 50, null, db);
     expect(page.rows.map((r) => r.name).sort()).toEqual([
       "AI guess",
@@ -285,6 +287,6 @@ describe("getTransactions needsReview filter", () => {
 
   it("leaves the raw reviewed filter alone", async () => {
     const page = await getTransactions(householdId, { reviewed: false }, 50, null, db);
-    expect(page.rows).toHaveLength(8);
+    expect(page.rows).toHaveLength(9);
   });
 });

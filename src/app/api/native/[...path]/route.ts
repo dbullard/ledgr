@@ -88,7 +88,7 @@ import { getAccountsByInstitution, getAccountSummary } from "@/queries/accounts"
 import { balanceHistory, bankConnections } from "@/db/schema";
 import { scopedQuery } from "@/lib/scoped-query";
 import { and, eq, gte, inArray } from "drizzle-orm";
-import { getTransactions, type TransactionFilters } from "@/queries/transactions";
+import { getTransactions, getTransactionSummary, type TransactionFilters } from "@/queries/transactions";
 import { getCategories } from "@/queries/categories";
 import { getItemSpendByCategory, getProductPriceHistory, getTopProducts } from "@/queries/receipt-items";
 import { fetchTransactionDetail, updateTransactionFields } from "@/actions/transaction-detail";
@@ -104,7 +104,7 @@ export const dynamic = "force-dynamic";
  * the native screens see exactly what the web app does.
  *
  *   GET    /api/native/dashboard?range=1M|3M|6M|1Y|all
- *   GET    /api/native/transactions?search&needsReview&categoryId&uncategorized&amount(cents, exact)&cursor&limit
+ *   GET    /api/native/transactions?search&needsReview&categoryId&uncategorized&amount(cents, exact)&cursor&limit&count(1 adds the true match count)
  *   GET    /api/native/transactions/:id
  *   PATCH  /api/native/transactions/:id   { categoryId?, reviewed?, notes?, name?, iconOverride?, iconColor?, isTransfer? }
  *   GET    /api/native/category-suggestions?ids=a,b   cached on-device AI picks { [txnId]: categoryId | null }
@@ -648,6 +648,11 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
     const page = await withHousehold(householdId, (tx) =>
       getTransactions(householdId, filters, limit, q.get("cursor"), tx),
     );
+    // count=1 adds the true number of matches (the page itself is capped), for badges.
+    if (q.get("count") === "1") {
+      const summary = await withHousehold(householdId, (tx) => getTransactionSummary(householdId, filters, tx));
+      return ok({ ...page, count: summary.count });
+    }
     return ok(page);
   }
 

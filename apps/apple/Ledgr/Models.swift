@@ -70,6 +70,8 @@ struct Txn: Codable, Identifiable, Hashable {
 struct TxnPage: Codable {
     let rows: [Txn]
     let nextCursor: String?
+    /// True number of matches, only when the request asked for it (`count=1`).
+    var count: Int? = nil
 }
 
 struct SplitRow: Codable, Identifiable, Hashable {
