@@ -63,6 +63,8 @@ export interface TransactionRow {
   isHidden: boolean;
   categorySource: CategorySource | null;
   externalId: string | null;
+  /** The recurring item this transaction belongs to, if any. */
+  recurringTransactionId?: string | null;
 }
 
 export interface TransactionPage {
@@ -101,6 +103,7 @@ const transactionSelectFields = {
   isHidden: transactions.isHidden,
   categorySource: transactions.categorySource,
   externalId: transactions.externalId,
+  recurringTransactionId: transactions.recurringTransactionId,
 };
 
 export function baseTransactionQuery(db: LedgrDb, householdId: string) {

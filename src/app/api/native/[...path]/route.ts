@@ -56,7 +56,13 @@ import { toggleDemoMode } from "@/actions/demo-mode";
 import { isDemoMode } from "@/lib/demo-mode";
 import { getAccountsForImport } from "@/queries/accounts";
 import { getRecurrings, getRecurringSummary, getRecurringTransactions } from "@/queries/recurring";
-import { createRecurringTransaction, setRecurringStatus } from "@/actions/recurring";
+import {
+  createRecurringTransaction,
+  linkTransactionToRecurring,
+  makeTransactionRecurring,
+  setRecurringStatus,
+  unlinkTransactionFromRecurring,
+} from "@/actions/recurring";
 import { getBudgetForMonth } from "@/queries/budgets";
 import { getApnsConfig } from "@/lib/push/apns";
 import {
@@ -97,7 +103,7 @@ export const dynamic = "force-dynamic";
  * the native screens see exactly what the web app does.
  *
  *   GET    /api/native/dashboard?range=1M|3M|6M|1Y|all
- *   GET    /api/native/transactions?search&needsReview&categoryId&uncategorized&cursor&limit
+ *   GET    /api/native/transactions?search&needsReview&categoryId&uncategorized&amount(cents, exact)&cursor&limit
  *   GET    /api/native/transactions/:id
  *   PATCH  /api/native/transactions/:id   { categoryId?, reviewed?, notes?, name?, iconOverride?, iconColor?, isTransfer? }
  *   GET    /api/native/category-suggestions?ids=a,b   cached on-device AI picks { [txnId]: categoryId | null }
@@ -105,6 +111,8 @@ export const dynamic = "force-dynamic";
  *   GET    /api/native/categories
  *   GET    /api/native/receipts                      (waiting for a transaction)
  *   POST   /api/native/transactions/:id/receipts   (multipart `file`; attaches directly)
+ *   POST   /api/native/transactions/:id/recurring  { recurringId? }   (no id = make it a new recurring item)
+ *   DELETE /api/native/transactions/:id/recurring   (take it out of its recurring item)
  *   POST   /api/native/receipts/attach   { receiptId, transactionId }
  *   POST   /api/native/receipts/:id/detach   (back to the waiting list; the matcher won't re-attach it)
  *   DELETE /api/native/receipts/:id
@@ -569,6 +577,8 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
     if (q.get("needsReview") === "1") filters.needsReview = true;
     if (q.get("categoryId")) filters.categoryId = q.get("categoryId");
     if (q.get("uncategorized") === "1") { filters.categoryId = null; filters.excludeTransfers = true; }
+    const exactAmount = Number(q.get("amount"));
+    if (Number.isInteger(exactAmount) && exactAmount > 0) { filters.amountMin = exactAmount; filters.amountMax = exactAmount; }
     if (q.get("accountId")) filters.accountId = q.get("accountId") ?? undefined;
     if (q.get("dateFrom")) filters.dateFrom = q.get("dateFrom") ?? undefined;
     if (q.get("dateTo")) filters.dateTo = q.get("dateTo") ?? undefined;
@@ -590,6 +600,27 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
     }
     const res = await uploadReceipt(id, form);
     return "error" in res ? fail(res.error) : ok(res.data);
+  }
+
+  if (head === "transactions" && id && segs[2] === "recurring" && (method === "POST" || method === "DELETE")) {
+    if (method === "DELETE") {
+      const res = await unlinkTransactionFromRecurring(id);
+      if ("error" in res) return fail(res.error);
+    } else {
+      // Only spending can be recurring: money coming in is never tagged.
+      const current = await fetchTransactionDetail(id);
+      if ("error" in current) return fail(current.error, 404);
+      if (current.data.normalizedAmount > 0) return fail("Only expenses can be recurring");
+      // With a recurringId, join that item; without one, turn this transaction into a new recurring item.
+      const body = (await req.json().catch(() => null)) as { recurringId?: string } | null;
+      const res = body?.recurringId
+        ? await linkTransactionToRecurring(body.recurringId, id)
+        : await makeTransactionRecurring(id);
+      if ("error" in res) return fail(res.error);
+    }
+    const detail = await fetchTransactionDetail(id);
+    if ("error" in detail) return fail(detail.error, 404);
+    return ok(detail.data);
   }
 
   if (head === "transactions" && id && method === "GET") {
