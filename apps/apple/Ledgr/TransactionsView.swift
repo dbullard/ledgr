@@ -52,7 +52,7 @@ struct TransactionsView: View {
         .scrollContentBackground(.hidden)
         .background(Color.canvas)
         .overlay {
-            if !loaded && error == nil { ProgressView() }
+            if !loaded && error == nil { LoadingPlaceholder() }
             else if let error, rows.isEmpty { ErrorState(message: error) { Task { await reload() } } }
             else if loaded && rows.isEmpty { ContentUnavailableView("No transactions", systemImage: "list.bullet.rectangle", description: Text(search.isEmpty ? "Nothing matches this filter." : "No results for “\(search)”.")) }
         }

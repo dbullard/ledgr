@@ -67,21 +67,11 @@ enum OnDeviceAI {
         return nil
     }
 
-    /// Plain-language read of a budget month: what's on track, what's at risk,
-    /// and where an unbudgeted category might deserve a limit.
-    static func budgetAdvice(_ d: BudgetResponse) async -> String? {
-        var t = "Month \(d.month). Budgeted \(Fmt.moneyWhole(d.summary.totalBudgeted)), spent \(Fmt.moneyWhole(d.summary.totalSpent)), remaining \(Fmt.moneyWhole(d.summary.totalRemaining)).\n"
-        for g in d.groups {
-            for c in g.categories {
-                t += "\(c.categoryName) (\(g.groupName)): limit \(Fmt.moneyWhole(c.limitAmount)), spent \(Fmt.moneyWhole(c.spent))\(c.isFixed ? ", fixed bill" : "")\n"
-            }
-        }
-        if !d.unbudgeted.categories.isEmpty {
-            t += "Spent with no budget: " + d.unbudgeted.categories.map { "\($0.categoryName) \(Fmt.moneyWhole($0.spent))" }.joined(separator: ", ") + "\n"
-        }
-        return await write(
-            instructions: "You are a calm household budgeting assistant. Using only the numbers given, write 3 to 4 short bullet points (start each with •): what is on track, which categories are over or close to their limit, and which unbudgeted spending deserves a limit with a suggested amount. No greetings, no markdown, no invented numbers.",
-            data: t)
+    /// Two plain sentences about a budget month, from facts the app already calculated.
+    static func budgetHeadline(facts: String) async -> String? {
+        await write(
+            instructions: "You are a calm household budgeting assistant. Using only the facts given, write exactly two short sentences: first how the month is going overall, then the one thing most worth acting on. Do not list categories that are on track. No bullets, no markdown, no greetings, no invented numbers.",
+            data: facts)
     }
 
     /// Short summary of whichever report is on screen, from a compact text dump of its rows.

@@ -47,7 +47,7 @@ struct CategoriesView: View {
             } else if let error {
                 ErrorState(message: error) { Task { await load() } }
             } else {
-                ProgressView().padding(.top, 80)
+                LoadingPlaceholder().padding(.top, 80)
             }
         }
         .background(Color.canvas)
@@ -193,6 +193,7 @@ struct CategoriesView: View {
     }
 
     private func load() async {
+        if !loaded, let c: [CategoryGroup] = api.cached("api/native/categories") { groups = c.alphabetical; loaded = true }
         do {
             let fetched: [CategoryGroup] = try await api.get("api/native/categories")
             groups = fetched.alphabetical
@@ -407,7 +408,7 @@ struct RulesView: View {
             } else if let error {
                 ErrorState(message: error) { Task { await load() } }
             } else {
-                ProgressView().padding(.top, 80)
+                LoadingPlaceholder().padding(.top, 80)
             }
         }
         .background(Color.canvas)

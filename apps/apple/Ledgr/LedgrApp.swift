@@ -49,6 +49,7 @@ struct LedgrApp: App {
                 }
                 #if os(macOS)
                 .frame(minWidth: 900, minHeight: 600)
+                .background(WindowBackdrop())
                 #endif
         }
         .commands {

@@ -39,21 +39,20 @@ struct WebPageView: View {
 struct MoreView: View {
     @EnvironmentObject var api: API
     @EnvironmentObject var actions: AppActions
+    @AppStorage("tabBar") private var tabBarRaw = TabChoice.defaultRaw
+
+    private var inMore: [TabChoice] { TabChoice.allCases.filter { !TabChoice.decode(tabBarRaw).contains($0) } }
 
     var body: some View {
         List {
             Section("Native") {
-                NavigationLink { BudgetsView() } label: { Label("Budgets", systemImage: "chart.pie") }
-                NavigationLink { RecurringView() } label: { Label("Recurring", systemImage: "repeat") }
-                NavigationLink { AccountsView() } label: { Label("Accounts", systemImage: "building.columns") }
-                NavigationLink { ReportsView() } label: { Label("Reports", systemImage: "chart.bar.xaxis") }
-                NavigationLink { CategoriesView() } label: { Label("Categories", systemImage: "tag") }
-                NavigationLink { RulesView() } label: { Label("Rules", systemImage: "wand.and.stars") }
-                NavigationLink { ItemsView() } label: { Label("Items", systemImage: "cart") }
-                NavigationLink { ImportView() } label: { Label("Import", systemImage: "square.and.arrow.down") }
+                ForEach(inMore) { choice in
+                    NavigationLink { choice.screen } label: { Label(choice.title, systemImage: choice.symbol) }
+                }
             }
 
             Section("This app") {
+                NavigationLink { TabBarEditor() } label: { Label("Customize tab bar", systemImage: "rectangle.3.group") }
                 NavigationLink { AccountSettingsView() } label: { Label("Settings", systemImage: "gearshape") }
                 Button { actions.showSettings = true } label: { Label("Server addresses", systemImage: "network") }
                 Button(role: .destructive) { Task { await api.signOut() } } label: {
@@ -97,6 +96,9 @@ extension View {
 struct MainView: View {
     @State private var section: AppSection? = .dashboard
     @State private var waiting = 0
+    @State private var uncategorized = 0
+    @AppStorage("tabBar") private var tabBarRaw = TabChoice.defaultRaw
+    @AppStorage("badgeUncategorized") private var badgeUncategorized = true
     @EnvironmentObject var queue: UploadQueue
     @EnvironmentObject var api: API
     @EnvironmentObject var connection: Connection
@@ -106,13 +108,38 @@ struct MainView: View {
         if let list: [UnmatchedReceipt] = try? await api.get("api/native/receipts") { waiting = list.count }
     }
 
+    /// How many transactions still need a category (capped at 100 by the page size).
+    private func refreshUncategorized() async {
+        guard badgeUncategorized else { uncategorized = 0; return }
+        if let page: TxnPage = try? await api.get("api/native/transactions", query: ["uncategorized": "1", "limit": "100"]) {
+            let n = page.rows.filter { $0.categoryName == nil && !$0.isTransfer }.count
+            uncategorized = page.nextCursor != nil ? max(n, 100) : n
+        }
+    }
+
+    private var uncategorizedBadge: Text? {
+        guard badgeUncategorized, uncategorized > 0 else { return nil }
+        return Text(uncategorized >= 100 ? "99+" : "\(uncategorized)")
+    }
+
     var body: some View {
         content
+            .task(id: "\(connection.active?.absoluteString ?? "")|\(api.dataVersion)|\(badgeUncategorized)") {
+                await refreshUncategorized()
+            }
             .task(id: "\(connection.active?.absoluteString ?? "")|\(queue.items.count)|\(queue.uploading)|\(section == .receipts)") {
                 await refreshWaiting()
             }
             .task(id: connection.active) { await CategoryStyles.shared.refresh(api) }
             .overlay(alignment: .bottom) { SimilarCategoryBanner() }
+    }
+
+    private func badge(for choice: TabChoice) -> Text? {
+        switch choice {
+        case .transactions: return uncategorizedBadge
+        case .receipts: return queue.items.count + waiting > 0 ? Text("\(queue.items.count + waiting)") : nil
+        default: return nil
+        }
     }
 
     @ViewBuilder private var content: some View {
@@ -121,7 +148,7 @@ struct MainView: View {
             List(selection: $section) {
                 Section("Overview") {
                     Label("Dashboard", systemImage: "square.grid.2x2").tag(AppSection.dashboard)
-                    Label("Transactions", systemImage: "list.bullet").tag(AppSection.transactions)
+                    Label("Transactions", systemImage: "list.bullet").badge(uncategorizedBadge).tag(AppSection.transactions)
                     Label("Accounts", systemImage: "building.columns").tag(AppSection.accounts)
                     Label("Budgets", systemImage: "chart.pie").tag(AppSection.budgets)
                     Label("Recurring", systemImage: "repeat").tag(AppSection.recurring)
@@ -148,12 +175,17 @@ struct MainView: View {
             detail(for: section ?? .dashboard)
         }
         #else
-        TabView(selection: Binding(get: { section ?? .dashboard }, set: { section = $0 })) {
-            detail(for: .dashboard).tabItem { Label("Dashboard", systemImage: "square.grid.2x2").labelStyle(.iconOnly) }.tag(AppSection.dashboard)
-            detail(for: .transactions).tabItem { Label("Transactions", systemImage: "list.bullet").labelStyle(.iconOnly) }.tag(AppSection.transactions)
-            detail(for: .investments).tabItem { Label("Investments", systemImage: "chart.line.uptrend.xyaxis").labelStyle(.iconOnly) }.tag(AppSection.investments)
-            detail(for: .receipts).tabItem { Label("Receipts", systemImage: "receipt").labelStyle(.iconOnly) }
-                .badge(queue.items.count + waiting).tag(AppSection.receipts)
+        let tabs = TabChoice.decode(tabBarRaw)
+        TabView(selection: Binding(
+            get: { tabs.contains { $0.section == section } || section == .more ? (section ?? .dashboard) : (tabs.first?.section ?? .more) },
+            set: { section = $0 }
+        )) {
+            ForEach(tabs) { choice in
+                detail(for: choice.section)
+                    .tabItem { Label(choice.title, systemImage: choice.symbol).labelStyle(.iconOnly) }
+                    .badge(badge(for: choice))
+                    .tag(choice.section)
+            }
             detail(for: .more).tabItem { Label("More", systemImage: "ellipsis.circle").labelStyle(.iconOnly) }.tag(AppSection.more)
         }
         #endif
@@ -194,5 +226,7 @@ struct MainView: View {
             }
             .statusToolbar()
         }
+        // Behind every screen: without it the window's grey shows at the sides while a screen loads in.
+        .background(Color.canvas.ignoresSafeArea())
     }
 }

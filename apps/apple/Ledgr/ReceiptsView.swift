@@ -55,7 +55,7 @@ struct ReceiptsView: View {
 
             Section("Waiting for a transaction\(loaded ? " (\(waiting.count))" : "")") {
                 if !loaded && error == nil {
-                    ProgressView()
+                    LoadingPlaceholder().frame(maxWidth: .infinity)
                 } else if waiting.isEmpty {
                     Text("Nothing waiting.").foregroundStyle(.secondary)
                 }
@@ -120,6 +120,7 @@ struct ReceiptsView: View {
     }
 
     private func load() async {
+        if !loaded, let c: [UnmatchedReceipt] = api.cached("api/native/receipts") { waiting = c; loaded = true }
         do {
             waiting = try await api.get("api/native/receipts")
             error = nil

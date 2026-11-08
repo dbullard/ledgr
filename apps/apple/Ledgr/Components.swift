@@ -366,3 +366,33 @@ extension Color {
         return String(format: "#%02X%02X%02X", byte(c.red), byte(c.green), byte(c.blue))
     }
 }
+
+/// A spinner that only appears if loading takes a moment, so quick loads don't flash one.
+struct LoadingPlaceholder: View {
+    @State private var show = false
+    var body: some View {
+        ProgressView()
+            .opacity(show ? 1 : 0)
+            .task {
+                try? await Task.sleep(for: .milliseconds(400))
+                withAnimation(.easeIn(duration: 0.2)) { show = true }
+            }
+    }
+}
+
+#if os(macOS)
+/// Paints the window itself with the app canvas, so nothing grey shows while a screen is still loading in.
+struct WindowBackdrop: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { Hook() }
+    func updateNSView(_ view: NSView, context: Context) { (view as? Hook)?.apply() }
+
+    private final class Hook: NSView {
+        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); apply() }
+        func apply() {
+            guard let window else { return }
+            window.backgroundColor = NSColor(Color.canvas)
+            window.contentView?.wantsLayer = true
+        }
+    }
+}
+#endif

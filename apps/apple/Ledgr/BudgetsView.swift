@@ -105,9 +105,7 @@ struct BudgetsView: View {
                         empty(data)
                     } else {
                         summary(data)
-                        OnDeviceInsightCard(title: "Budget insights", prompt: "Analyze this month", resetKey: month) {
-                            await OnDeviceAI.budgetAdvice(data)
-                        }
+                        BudgetInsightsCard(data: data, month: month) { await load() }
                         ForEach(data.groups) { group in groupCard(group) }
                         unbudgeted(data)
                     }
@@ -116,7 +114,7 @@ struct BudgetsView: View {
             } else if let error {
                 ErrorState(message: error) { Task { await load() } }
             } else {
-                ProgressView().padding(.top, 80)
+                LoadingPlaceholder().padding(.top, 80)
             }
         }
         .background(Color.canvas)
@@ -161,6 +159,10 @@ struct BudgetsView: View {
                     Button("Copy from \(MonthMath.title(d.previousMonth))") { Task { await create(copy: true) } }
                         .buttonStyle(.borderedProminent)
                 }
+                Button("Build from last 12 months") {
+                    Task { busy = true; if !(await BudgetPlanner.buildFromHistory(api, month: month)) { error = "Couldn't build a budget from your history." }; busy = false; await load() }
+                }
+                .buttonStyle(.borderedProminent)
                 Button("Start empty") { Task { await create(copy: false) } }
                     .buttonStyle(.bordered)
                 if let error { Text(error).font(.caption).foregroundStyle(Color.alert) }
@@ -269,6 +271,7 @@ struct BudgetsView: View {
     // MARK: Data
 
     private func load() async {
+        if data == nil, let c: BudgetResponse = api.cached("api/native/budgets", query: ["month": month]) { data = c }
         do {
             data = try await api.get("api/native/budgets", query: ["month": month])
             error = nil

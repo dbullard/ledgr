@@ -70,7 +70,8 @@ struct ItemsView: View {
             } else if let error {
                 Section { ErrorState(message: error) { Task { await load() } } }
             } else {
-                Section { ProgressView().frame(maxWidth: .infinity) }
+                LoadingPlaceholder().frame(maxWidth: .infinity).padding(.top, 40)
+                    .listRowBackground(Color.clear).listRowSeparator(.hidden)
             }
         }
         .scrollContentBackground(.hidden)
@@ -238,6 +239,7 @@ struct ItemsView: View {
         if let category { q["category"] = category }
         let term = query.trimmingCharacters(in: .whitespaces)
         if !term.isEmpty { q["q"] = term }
+        if data == nil, let c: ItemsResponse = api.cached("api/native/items", query: q) { data = c }
         do {
             data = try await api.get("api/native/items", query: q)
             error = nil
@@ -292,7 +294,8 @@ struct ProductHistoryView: View {
             } else if let error {
                 Section { ErrorState(message: error) { Task { await load() } } }
             } else if points == nil {
-                Section { ProgressView().frame(maxWidth: .infinity) }
+                LoadingPlaceholder().frame(maxWidth: .infinity).padding(.top, 40)
+                    .listRowBackground(Color.clear).listRowSeparator(.hidden)
             }
         }
         .scrollContentBackground(.hidden)
@@ -369,7 +372,7 @@ struct TransactionLoader: View {
             } else if let error {
                 ErrorState(message: error) { Task { await load() } }
             } else {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                LoadingPlaceholder().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .task { await load() }

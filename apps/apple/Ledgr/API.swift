@@ -118,7 +118,21 @@ final class API: ObservableObject {
 
     func get<T: Decodable>(_ path: String, query: [String: String] = [:]) async throws -> T {
         let data = try await send("GET", path, query: query)
-        return try decode(data)
+        let value: T = try decode(data)
+        responseCache[cacheKey(path, query)] = data
+        return value
+    }
+
+    /// The last successful answer for this request this session, so a screen can show it
+    /// at once while it refreshes in the background.
+    func cached<T: Decodable>(_ path: String, query: [String: String] = [:]) -> T? {
+        guard let data = responseCache[cacheKey(path, query)] else { return nil }
+        return try? decode(data)
+    }
+
+    private var responseCache: [String: Data] = [:]
+    private func cacheKey(_ path: String, _ query: [String: String]) -> String {
+        (connection.active?.absoluteString ?? "") + path + "?" + query.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "&")
     }
 
     func patch<T: Decodable>(_ path: String, body: [String: Any]) async throws -> T {

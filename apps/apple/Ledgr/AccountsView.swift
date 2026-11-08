@@ -78,7 +78,7 @@ struct AccountsView: View {
             } else if let error {
                 ErrorState(message: error) { Task { await load() } }
             } else {
-                ProgressView().padding(.top, 80)
+                LoadingPlaceholder().padding(.top, 80)
             }
         }
         .background(Color.canvas)
@@ -102,6 +102,7 @@ struct AccountsView: View {
     }
 
     private func load() async {
+        if data == nil, let c: AccountsResponse = api.cached("api/native/accounts") { data = c }
         do {
             data = try await api.get("api/native/accounts")
             error = nil

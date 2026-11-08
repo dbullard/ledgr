@@ -32,6 +32,7 @@ struct AccountSettingsView: View {
     @EnvironmentObject var actions: AppActions
     @EnvironmentObject var web: WebModel
     @AppStorage("appearance") private var appearance = AppearanceChoice.system.rawValue
+    @AppStorage("badgeUncategorized") private var badgeUncategorized = true
     @State private var data: SettingsResponse?
     @State private var error: String?
     @State private var note: String?
@@ -58,6 +59,19 @@ struct AccountSettingsView: View {
                     }
                     .pickerStyle(.segmented)
                     Text("Applies to this device only.").font(.caption).foregroundStyle(.secondary)
+                }
+
+                Card("Navigation") {
+                    Toggle("Badge uncategorized transactions", isOn: $badgeUncategorized)
+                    Text("Shows how many transactions still need a category on the Transactions tab.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    #if os(iOS)
+                    NavigationLink { TabBarEditor() } label: {
+                        HStack { Text("Customize tab bar"); Spacer(); Image(systemName: "chevron.right").font(.footnote).foregroundStyle(.tertiary) }
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    #endif
                 }
 
                 #if os(iOS)

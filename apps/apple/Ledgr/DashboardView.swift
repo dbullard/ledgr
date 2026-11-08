@@ -27,7 +27,7 @@ struct DashboardView: View {
             } else if let error {
                 ErrorState(message: error) { Task { await load() } }
             } else {
-                ProgressView().padding(.top, 80)
+                LoadingPlaceholder().padding(.top, 80)
             }
         }
         .background(Color.canvas)
@@ -42,6 +42,7 @@ struct DashboardView: View {
     }
 
     private func load() async {
+        if data == nil, let c: DashboardResponse = api.cached("api/native/dashboard", query: ["range": range]) { data = c }
         do {
             data = try await api.get("api/native/dashboard", query: ["range": range])
             error = nil

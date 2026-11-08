@@ -210,7 +210,7 @@ struct InvestmentsView: View {
                 }
             }
         } else {
-            ProgressView().padding(.top, 60)
+            LoadingPlaceholder().padding(.top, 60)
         }
     }
 
@@ -255,7 +255,7 @@ struct InvestmentsView: View {
                 }
             }
         } else {
-            ProgressView().padding(.top, 40)
+            LoadingPlaceholder().padding(.top, 40)
         }
     }
 

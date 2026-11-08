@@ -106,14 +106,27 @@ struct ReportsView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
+                #if os(iOS)
                 Picker("Report", selection: $tab) {
                     ForEach(ReportTab.allCases) { Text($0.title).tag($0) }
                 }
-                #if os(iOS)
                 .pickerStyle(.menu)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 #else
-                .pickerStyle(.segmented)
+                // Five segments want ~700pt. When the window is narrower they fall back to a menu
+                // instead of forcing the content wider and squeezing the sidebar.
+                ViewThatFits(in: .horizontal) {
+                    Picker("Report", selection: $tab) {
+                        ForEach(ReportTab.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .fixedSize(horizontal: true, vertical: false)
+                    Picker("Report", selection: $tab) {
+                        ForEach(ReportTab.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
                 #endif
                 Picker("Range", selection: $range) {
                     ForEach(["1M", "3M", "6M", "1Y", "all"], id: \.self) { Text($0 == "all" ? "All" : $0).tag($0) }
@@ -195,7 +208,7 @@ struct ReportsView: View {
                     if r.id != s.rows.last?.id { Divider() }
                 }
             }
-        } else { ProgressView().padding(.top, 60) }
+        } else { LoadingPlaceholder().padding(.top, 60) }
     }
 
     // MARK: Income vs expense
@@ -223,7 +236,7 @@ struct ReportsView: View {
             }
             categoryList("Income by category", r.byCategory.filter(\.isIncome))
             categoryList("Expenses by category", r.byCategory.filter { !$0.isIncome })
-        } else { ProgressView().padding(.top, 60) }
+        } else { LoadingPlaceholder().padding(.top, 60) }
     }
 
     private func categoryList(_ title: String, _ rows: [IECategoryRow]) -> some View {
@@ -273,7 +286,7 @@ struct ReportsView: View {
                 .chartYAxis { AxisMarks(position: .trailing) { AxisValueLabel(format: .currency(code: "USD").notation(.compactName)) } }
                 .frame(height: 170)
             }
-        } else { ProgressView().padding(.top, 60) }
+        } else { LoadingPlaceholder().padding(.top, 60) }
     }
 
     private func line(_ label: String, _ cents: Int) -> some View {
@@ -308,7 +321,7 @@ struct ReportsView: View {
                     HStack { Text(name); Spacer(); Text(Fmt.money(total)).monospacedDigit() }.font(.subheadline)
                 }
             }
-        } else { ProgressView().padding(.top, 60) }
+        } else { LoadingPlaceholder().padding(.top, 60) }
     }
 
     // MARK: Net worth
@@ -336,7 +349,7 @@ struct ReportsView: View {
             }
         } else if worth != nil {
             Card { Text("No balance history yet.").foregroundStyle(.secondary) }
-        } else { ProgressView().padding(.top, 60) }
+        } else { LoadingPlaceholder().padding(.top, 60) }
     }
 
     private func tile(_ label: String, _ value: String, _ color: Color) -> some View {

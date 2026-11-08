@@ -123,7 +123,7 @@ struct RecurringView: View {
             } else if let error {
                 ErrorState(message: error) { Task { await load() } }
             } else {
-                ProgressView().padding(.top, 80)
+                LoadingPlaceholder().padding(.top, 80)
             }
         }
         .background(Color.canvas)
@@ -173,7 +173,7 @@ struct RecurringView: View {
                     .buttonStyle(.plain).foregroundStyle(Color.accentColor).font(.subheadline.weight(.medium))
                 }
             }
-            .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+            .transition(.opacity)
         }
     }
 
@@ -235,7 +235,7 @@ struct RecurringView: View {
         for s in suggestions where verdicts[s.key] == nil {
             if Task.isCancelled { return }
             if let v = await OnDeviceAI.judgeSubscription(rawName: s.name, frequency: s.frequency, cents: s.averageAmount) {
-                withAnimation(anim) { verdicts[s.key] = (v.name, v.isSubscription) }
+                verdicts[s.key] = (v.name, v.isSubscription)
             }
         }
     }
@@ -288,7 +288,7 @@ struct RecurringView: View {
                         if item.id != rows.last?.id { Divider() }
                     }
                 }
-                .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+                .transition(.opacity)
             }
         }
     }
@@ -346,12 +346,14 @@ struct RecurringView: View {
     }
 
     private func load() async {
+        if data == nil, let c: RecurringResponse = api.cached("api/native/recurring") { data = c }
         do {
             let fresh: RecurringResponse = try await api.get("api/native/recurring")
-            withAnimation(anim) { data = fresh }
+            let first = data == nil
+            withAnimation(first ? nil : anim) { data = fresh }
             error = nil
             if let found: [SubscriptionSuggestion] = try? await api.get("api/native/recurring/suggestions") {
-                withAnimation(anim) { suggestions = found }
+                withAnimation(first ? nil : anim) { suggestions = found }
             }
         } catch APIError.unauthorized {
         } catch {
