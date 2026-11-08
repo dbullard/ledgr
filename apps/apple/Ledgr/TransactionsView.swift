@@ -32,7 +32,7 @@ struct TransactionsView: View {
                 Section {
                     ForEach(items) { txn in
                         NavigationLink(value: txn) {
-                            TxnRow(txn: txn, suggestion: suggester.suggestions[txn.id], groups: listGroups, onCategory: { id in quickSetCategory(txn, id) }, compact: compactRows)
+                            TxnRow(txn: txn, suggestion: suggester.suggestions[txn.id], groups: listGroups, onCategory: { id in quickSetCategory(txn, id) }, onAccount: { accountId = $0 }, compact: compactRows)
                         }
                             .receiptDropTarget(transactionId: txn.id, inset: 4) { dropMessage = $0 }
                             .listRowBackground(Color.card)
@@ -61,27 +61,18 @@ struct TransactionsView: View {
         .navigationTitle("Transactions")
         .searchable(text: $search, prompt: "Search transactions")
         .toolbar {
+            ToolbarItem(placement: .primaryAction) { accountButton }
+            #if os(iOS)
             ToolbarItem(placement: .primaryAction) {
                 Menu {
                     Picker("Filter", selection: $filter) {
                         ForEach(TxnFilter.allCases) { Text($0.rawValue).tag($0) }
                     }
-                    Menu {
-                        Picker("Account", selection: $accountId) {
-                            Text("All accounts").tag(String?.none)
-                            ForEach(accountGroups) { group in
-                                Section(group.institutionName) {
-                                    ForEach(group.accounts.filter { !$0.isHidden }) { a in Text(a.name).tag(String?.some(a.id)) }
-                                }
-                            }
-                        }
-                    } label: {
-                        Label(accountId == nil ? "Account" : "Account: \(accountName ?? "")", systemImage: "building.columns")
-                    }
                 } label: {
-                    Image(systemName: filter == .all && accountId == nil ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+                    Image(systemName: filter == .all ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
                 }
             }
+            #endif
         }
         .overlay(alignment: .bottom) {
             if let dropMessage {
@@ -98,20 +89,7 @@ struct TransactionsView: View {
         .onChange(of: api.changedTxn) { _, t in if let t { applyChange(t) } }
         .onChange(of: api.changedBatch) { _, batch in batch.forEach(applyChange) }
         .refreshable { await api.syncBanks(); await reload() }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if let accountName {
-                HStack(spacing: 6) {
-                    Image(systemName: "building.columns").font(.caption)
-                    Text(accountName).font(.footnote.weight(.medium)).lineLimit(1)
-                    Button { accountId = nil } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
-                        .buttonStyle(.plain).accessibilityLabel("Show all accounts")
-                }
-                .padding(.horizontal, 12).padding(.vertical, 6)
-                .background(Color.accentColor.opacity(0.14), in: Capsule())
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16).padding(.vertical, 6)
-            }
-        }
+        .safeAreaInset(edge: .top, spacing: 0) { headerBar }
         .task { await loadGroups(); await loadAccounts() }
         .task(id: Key(search: search, filter: filter, account: accountId, base: connection.active)) {
             if !search.isEmpty { try? await Task.sleep(for: .milliseconds(300)) }
@@ -142,6 +120,59 @@ struct TransactionsView: View {
             else { out.append((header, [txn])) }
         }
         return out
+    }
+
+    @State private var showAccounts = false
+
+    /// One button for the account filter: shows the current account, opens a searchable list.
+    private var accountButton: some View {
+        Button { showAccounts = true } label: {
+            Image(systemName: "building.columns")
+                .symbolVariant(accountId == nil ? .none : .fill)
+                .foregroundStyle(accountId == nil ? Color.primary : Color.accentColor)
+        }
+        .help("Filter by account")
+        .accessibilityLabel(accountName.map { "Account: \($0)" } ?? "Filter by account")
+        .popover(isPresented: $showAccounts, arrowEdge: .bottom) {
+            AccountPicker(groups: accountGroups, selected: accountId) { id in
+                accountId = id
+                showAccounts = false
+            }
+        }
+    }
+
+    /// Mac: the four filters as a segmented control. Both platforms: a chip when an account is picked.
+    @ViewBuilder private var headerBar: some View {
+        #if os(macOS)
+        let showFilter = true
+        #else
+        let showFilter = false
+        #endif
+        if showFilter || accountName != nil {
+            HStack(spacing: 10) {
+                if showFilter {
+                    Picker("Filter", selection: $filter) {
+                        ForEach(TxnFilter.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                if let accountName {
+                    HStack(spacing: 6) {
+                        Image(systemName: "building.columns").font(.caption)
+                        Text(accountName).font(.footnote.weight(.medium)).lineLimit(1)
+                        Button { accountId = nil } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                            .buttonStyle(.plain).accessibilityLabel("Show all accounts")
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 5)
+                    .background(Color.accentColor.opacity(0.14), in: Capsule())
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 8)
+            .background(Color.canvas)
+        }
     }
 
     private var accountName: String? {
@@ -1069,6 +1100,64 @@ struct RecurringPicker: View {
                 Spacer()
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+
+/// Searchable account list grouped by bank.
+struct AccountPicker: View {
+    let groups: [InstitutionGroupModel]
+    let selected: String?
+    let onPick: (String?) -> Void
+    @State private var query = ""
+
+    private var filtered: [(id: String, bank: String, rows: [AccountRowModel])] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        return groups.compactMap { g in
+            let rows = g.accounts.filter { !$0.isHidden && (q.isEmpty || $0.name.localizedCaseInsensitiveContains(q) || g.institutionName.localizedCaseInsensitiveContains(q)) }
+            return rows.isEmpty ? nil : (g.id, g.institutionName.trimmingCharacters(in: .whitespaces), rows)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search accounts", text: $query).textFieldStyle(.plain)
+            }
+            .padding(10)
+            Divider()
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if query.isEmpty { row(nil, "All accounts", detail: nil) }
+                    // Two connections can share a bank name (e.g. two Arvest logins), so key by connection.
+                    ForEach(filtered, id: \.id) { group in
+                        Text(group.bank).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 4)
+                        ForEach(group.rows) { a in row(a.id, a.name, detail: a.typeLabel) }
+                    }
+                    if filtered.isEmpty && !query.isEmpty {
+                        Text("No accounts match").foregroundStyle(.secondary).padding(14)
+                    }
+                }
+                .padding(.bottom, 8)
+            }
+        }
+        .frame(minWidth: 280, idealWidth: 300, minHeight: 320, idealHeight: 420)
+    }
+
+    private func row(_ id: String?, _ title: String, detail: String?) -> some View {
+        Button { onPick(id) } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "checkmark").font(.footnote.weight(.semibold)).opacity(selected == id ? 1 : 0).frame(width: 14)
+                Text(title).lineLimit(1)
+                Spacer(minLength: 8)
+                if let detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
+            }
+            .padding(.horizontal, 14).padding(.vertical, 8)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

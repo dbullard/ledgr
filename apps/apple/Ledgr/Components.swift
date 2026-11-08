@@ -209,6 +209,8 @@ struct TxnRow: View {
     /// With these, the category pill opens a quick picker that calls `onCategory`.
     var groups: [CategoryGroup] = []
     var onCategory: ((String?) -> Void)?
+    /// Tapping the account name filters the list to that account.
+    var onAccount: ((String) -> Void)?
     /// One dense line per transaction (Mac list): name and account, then the category pill, amount and review dot in columns.
     var compact = false
     @State private var showPicker = false
@@ -228,6 +230,17 @@ struct TxnRow: View {
         if compact { compactBody } else { regularBody }
     }
 
+    @ViewBuilder private func accountLabel(_ font: Font) -> some View {
+        let label = Text(txn.accountName).font(font).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+        if let onAccount, let id = txn.accountId {
+            Button { onAccount(id) } label: { label }
+                .buttonStyle(.plain)
+                .help("Show only \(txn.accountName)")
+        } else {
+            label
+        }
+    }
+
     private var compactBody: some View {
         HStack(spacing: 10) {
             CategoryBadge(icon: txn.isTransfer ? "arrow-left-right" : txn.categoryIcon, size: 26, categoryId: txn.isTransfer ? nil : txn.categoryId)
@@ -237,7 +250,7 @@ struct TxnRow: View {
                     Image(systemName: "repeat").font(.caption.weight(.semibold)).foregroundStyle(Color.accentColor).help("Recurring").accessibilityLabel("Recurring")
                 }
                 // The account trails the name and is the first thing to truncate.
-                Text(txn.accountName).font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                accountLabel(.callout)
             }
             Spacer(minLength: 12)
             categoryPill.frame(width: 176, alignment: .trailing)
@@ -272,7 +285,7 @@ struct TxnRow: View {
                 }
                 HStack(spacing: 6) {
                     categoryPill
-                    Text(txn.accountName).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                    accountLabel(.caption)
                 }
             }
             Spacer(minLength: 8)

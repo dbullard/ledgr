@@ -43,6 +43,8 @@ struct Txn: Codable, Identifiable, Hashable {
     let pending: Bool
     var reviewed: Bool
     let accountName: String
+    /// Which account this belongs to (used by the account filter).
+    var accountId: String? = nil
     let merchantName: String?
     /// The bank's own description, kept so a rename can be undone.
     let originalName: String?
