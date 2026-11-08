@@ -18,11 +18,13 @@ struct TransactionsView: View {
     @State private var error: String?
     @State private var search = ""
     @State private var filter: TxnFilter = .all
+    @State private var accountId: String?
+    @State private var accountGroups: [InstitutionGroupModel] = []
     @State private var dropMessage: String?
     @State private var listGroups: [CategoryGroup] = CategoryCache.groups
     @ObservedObject private var suggester = CategorySuggester.shared
 
-    private struct Key: Hashable { let search: String; let filter: TxnFilter; let base: URL? }
+    private struct Key: Hashable { let search: String; let filter: TxnFilter; let account: String?; let base: URL? }
 
     var body: some View {
         List {
@@ -64,8 +66,20 @@ struct TransactionsView: View {
                     Picker("Filter", selection: $filter) {
                         ForEach(TxnFilter.allCases) { Text($0.rawValue).tag($0) }
                     }
+                    Menu {
+                        Picker("Account", selection: $accountId) {
+                            Text("All accounts").tag(String?.none)
+                            ForEach(accountGroups) { group in
+                                Section(group.institutionName) {
+                                    ForEach(group.accounts.filter { !$0.isHidden }) { a in Text(a.name).tag(String?.some(a.id)) }
+                                }
+                            }
+                        }
+                    } label: {
+                        Label(accountId == nil ? "Account" : "Account: \(accountName ?? "")", systemImage: "building.columns")
+                    }
                 } label: {
-                    Image(systemName: filter == .all ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+                    Image(systemName: filter == .all && accountId == nil ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
                 }
             }
         }
@@ -84,8 +98,22 @@ struct TransactionsView: View {
         .onChange(of: api.changedTxn) { _, t in if let t { applyChange(t) } }
         .onChange(of: api.changedBatch) { _, batch in batch.forEach(applyChange) }
         .refreshable { await api.syncBanks(); await reload() }
-        .task { await loadGroups() }
-        .task(id: Key(search: search, filter: filter, base: connection.active)) {
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let accountName {
+                HStack(spacing: 6) {
+                    Image(systemName: "building.columns").font(.caption)
+                    Text(accountName).font(.footnote.weight(.medium)).lineLimit(1)
+                    Button { accountId = nil } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                        .buttonStyle(.plain).accessibilityLabel("Show all accounts")
+                }
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(Color.accentColor.opacity(0.14), in: Capsule())
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16).padding(.vertical, 6)
+            }
+        }
+        .task { await loadGroups(); await loadAccounts() }
+        .task(id: Key(search: search, filter: filter, account: accountId, base: connection.active)) {
             if !search.isEmpty { try? await Task.sleep(for: .milliseconds(300)) }
             guard !Task.isCancelled else { return }
             await reload()
@@ -116,8 +144,19 @@ struct TransactionsView: View {
         return out
     }
 
+    private var accountName: String? {
+        guard let accountId else { return nil }
+        return accountGroups.flatMap(\.accounts).first { $0.id == accountId }?.name
+    }
+
+    private func loadAccounts() async {
+        if let c: AccountsResponse = api.cached("api/native/accounts") { accountGroups = c.groups }
+        if let r: AccountsResponse = try? await api.get("api/native/accounts") { accountGroups = r.groups }
+    }
+
     private func query(cursor: String?) -> [String: String] {
         var q = ["limit": "40"]
+        if let accountId { q["accountId"] = accountId }
         if !search.isEmpty { q["search"] = search }
         switch filter {
         case .all: break

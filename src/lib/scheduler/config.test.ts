@@ -29,7 +29,7 @@ describe("getSchedulerConfig", () => {
     expect(getSchedulerConfig()).toEqual({
       enabled: true,
       snapshotCron: "15 3 * * *",
-      safetySyncCron: "30 4 * * *",
+      safetySyncCron: "30 */3 * * *",
       simplefinSyncCron: "45 */6 * * *",
       receiptInboxCron: "*/10 * * * *",
       pushScanCron: "*/15 * * * *",

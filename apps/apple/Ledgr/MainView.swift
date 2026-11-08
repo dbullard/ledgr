@@ -99,6 +99,8 @@ struct MainView: View {
     @State private var uncategorized = 0
     @AppStorage("tabBar") private var tabBarRaw = TabChoice.defaultRaw
     @AppStorage("badgeUncategorized") private var badgeUncategorized = true
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var lastForegroundSync = Date.distantPast
     @EnvironmentObject var queue: UploadQueue
     @EnvironmentObject var api: API
     @EnvironmentObject var connection: Connection
@@ -132,6 +134,13 @@ struct MainView: View {
                 await refreshWaiting()
             }
             .task(id: connection.active) { await CategoryStyles.shared.refresh(api) }
+            // Pull new bank data whenever the app comes back, at most every 5 minutes, so it
+            // doesn't wait for the nightly sync or a manual pull-to-refresh.
+            .onChange(of: scenePhase) { _, phase in
+                guard phase == .active, Date().timeIntervalSince(lastForegroundSync) > 300 else { return }
+                lastForegroundSync = Date()
+                Task { await api.syncBanks(); api.noteChanged() }
+            }
             .overlay(alignment: .bottom) { SimilarCategoryBanner() }
     }
 

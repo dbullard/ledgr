@@ -11,7 +11,9 @@ export type SchedulerConfig = {
 
 const DEFAULTS = {
   snapshotCron: "15 3 * * *",
-  safetySyncCron: "30 4 * * *",
+  // Plaid webhooks only arrive if the server is reachable from the internet. A private
+  // install never hears them, so poll every 3 hours instead of once a day.
+  safetySyncCron: "30 */3 * * *",
   // Every 6h, offset 15 minutes from the Plaid safety-sync. SimpleFIN has no
   // webhooks, so a once-a-day poll leaves data up to a day old.
   simplefinSyncCron: "45 */6 * * *",
