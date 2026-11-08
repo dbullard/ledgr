@@ -23,6 +23,8 @@ final class API: ObservableObject {
     @Published private(set) var auth: AuthState = .unknown
     /// Set whenever a transaction is edited so lists and the dashboard can update in place.
     @Published private(set) var changedTxn: Txn?
+    /// Set by edits that touch several transactions at once.
+    @Published private(set) var changedBatch: [Txn] = []
     /// Bumped on any edit that can change totals (category, review, receipts).
     @Published private(set) var dataVersion = 0
 
@@ -50,6 +52,11 @@ final class API: ObservableObject {
         await task.value
         bankSyncTask = nil
         lastBankSync = Date()
+    }
+
+    func noteBulkChanged(_ txns: [Txn]) {
+        changedBatch = txns
+        dataVersion += 1
     }
 
     func noteChanged(_ txn: Txn? = nil) {

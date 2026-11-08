@@ -112,6 +112,7 @@ struct MainView: View {
                 await refreshWaiting()
             }
             .task(id: connection.active) { await CategoryStyles.shared.refresh(api) }
+            .overlay(alignment: .bottom) { SimilarCategoryBanner() }
     }
 
     @ViewBuilder private var content: some View {

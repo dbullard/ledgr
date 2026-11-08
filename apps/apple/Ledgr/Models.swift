@@ -56,6 +56,8 @@ struct Txn: Codable, Identifiable, Hashable {
     var notes: String?
     let hasSplits: Bool?
     let isTransfer: Bool
+    /// The recurring item this transaction belongs to, if any.
+    let recurringTransactionId: String?
 
     /// What lists show: the user's own name, else the resolved merchant, else the bank's (often noisy) description.
     var displayName: String {

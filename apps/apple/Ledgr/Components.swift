@@ -216,6 +216,9 @@ struct TxnRow: View {
 
     private var interactive: Bool { onCategory != nil && !txn.isTransfer }
 
+    /// Only spending is marked recurring; income never gets the repeat icon.
+    private var isRecurringExpense: Bool { txn.recurringTransactionId != nil && txn.normalizedAmount < 0 }
+
     private var incomeOnly: Bool {
         if let id = txn.categoryId, let cat = groups.lazy.flatMap(\.categories).first(where: { $0.id == id }) { return cat.isIncome }
         return txn.normalizedAmount > 0
@@ -230,6 +233,9 @@ struct TxnRow: View {
             CategoryBadge(icon: txn.isTransfer ? "arrow-left-right" : txn.categoryIcon, size: 26, categoryId: txn.isTransfer ? nil : txn.categoryId)
             HStack(spacing: 8) {
                 Text(txn.displayName).font(.body).lineLimit(1).layoutPriority(1)
+                if isRecurringExpense {
+                    Image(systemName: "repeat").font(.caption.weight(.semibold)).foregroundStyle(Color.accentColor).help("Recurring").accessibilityLabel("Recurring")
+                }
                 // The account trails the name and is the first thing to truncate.
                 Text(txn.accountName).font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
             }
@@ -260,6 +266,9 @@ struct TxnRow: View {
                         Circle().fill(Color.accentColor).frame(width: 7, height: 7)
                     }
                     Text(txn.displayName).font(.body.weight(.medium)).lineLimit(1)
+                    if isRecurringExpense {
+                        Image(systemName: "repeat").font(.caption.weight(.semibold)).foregroundStyle(Color.accentColor).accessibilityLabel("Recurring")
+                    }
                 }
                 HStack(spacing: 6) {
                     categoryPill

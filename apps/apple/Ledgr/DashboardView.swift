@@ -35,15 +35,8 @@ struct DashboardView: View {
         .refreshable { await api.syncBanks(); await load() }
         .task(id: connection.active) { await load() }
         .onChange(of: range) { _, _ in Task { await load() } }
-        .onChange(of: api.changedTxn) { _, t in
-            guard let t else { return }
-            // Show the edit immediately in "Recent", then refresh totals in the background.
-            if var d = data, let i = d.recent.firstIndex(where: { $0.id == t.id }) { d.recent[i] = t; data = d }
-            // A transaction that now has a category (or became a transfer) leaves "Needs a category".
-            if let i = uncategorized.firstIndex(where: { $0.id == t.id }) {
-                if t.categoryId != nil || t.isTransfer { uncategorized.remove(at: i) } else { uncategorized[i] = t }
-            }
-        }
+        .onChange(of: api.changedTxn) { _, t in if let t { applyChange(t) } }
+        .onChange(of: api.changedBatch) { _, batch in batch.forEach(applyChange) }
         .task { await loadGroups() }
         .onChange(of: api.dataVersion) { _, _ in Task { await load() } }
     }
@@ -113,6 +106,15 @@ struct DashboardView: View {
         }
     }
 
+    /// Show an edit immediately in "Recent" and "Needs a category"; the totals refresh in the background.
+    private func applyChange(_ t: Txn) {
+        if var d = data, let i = d.recent.firstIndex(where: { $0.id == t.id }) { d.recent[i] = t; data = d }
+        // A transaction that now has a category (or became a transfer) leaves "Needs a category".
+        if let i = uncategorized.firstIndex(where: { $0.id == t.id }) {
+            if t.categoryId != nil || t.isTransfer { uncategorized.remove(at: i) } else { uncategorized[i] = t }
+        }
+    }
+
     private func loadGroups() async {
         guard groups.isEmpty else { return }
         if let g: [CategoryGroup] = try? await api.get("api/native/categories") {
@@ -126,6 +128,7 @@ struct DashboardView: View {
         Task {
             if let updated: Txn = try? await api.patch("api/native/transactions/\(txn.id)", body: ["categoryId": id ?? NSNull()]) {
                 api.noteChanged(updated)
+                SimilarCategories.shared.check(after: updated, api: api)
             }
         }
     }

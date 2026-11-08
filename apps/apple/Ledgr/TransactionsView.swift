@@ -81,10 +81,8 @@ struct TransactionsView: View {
             }
         }
         .animation(.snappy, value: dropMessage)
-        .onChange(of: api.changedTxn) { _, t in
-            guard let t, let i = rows.firstIndex(where: { $0.id == t.id }) else { return }
-            if filter == .needsReview && t.reviewed { rows.remove(at: i) } else { rows[i] = t }
-        }
+        .onChange(of: api.changedTxn) { _, t in if let t { applyChange(t) } }
+        .onChange(of: api.changedBatch) { _, batch in batch.forEach(applyChange) }
         .refreshable { await api.syncBanks(); await reload() }
         .task { await loadGroups() }
         .task(id: Key(search: search, filter: filter, base: connection.active)) {
@@ -145,6 +143,11 @@ struct TransactionsView: View {
         }
     }
 
+    private func applyChange(_ t: Txn) {
+        guard let i = rows.firstIndex(where: { $0.id == t.id }) else { return }
+        if filter == .needsReview && t.reviewed { rows.remove(at: i) } else { rows[i] = t }
+    }
+
     private func loadGroups() async {
         guard listGroups.isEmpty else { return }
         if let g: [CategoryGroup] = try? await api.get("api/native/categories") {
@@ -160,6 +163,7 @@ struct TransactionsView: View {
             do {
                 let updated: Txn = try await api.patch("api/native/transactions/\(txn.id)", body: ["categoryId": id ?? NSNull()])
                 api.noteChanged(updated)
+                SimilarCategories.shared.check(after: updated, api: api)
             } catch APIError.unauthorized {
             } catch { dropMessage = error.localizedDescription }
         }
@@ -196,6 +200,8 @@ struct TransactionDetailView: View {
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var attaching = false
     @State private var showCategories = false
+    @State private var showRecurring = false
+    @State private var recurringItems: [RecurringItem] = []
     @State private var slideIn = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var kindDraft: Kind?
@@ -223,6 +229,11 @@ struct TransactionDetailView: View {
                     } else {
                         categoryRow
                         suggestionRow
+                        // Spending only. An income row that was already linked keeps the row so it can be removed.
+                        if txn.normalizedAmount < 0 || txn.recurringTransactionId != nil {
+                            Divider()
+                            recurringRow
+                        }
                     }
                     Divider()
                     TextField("Add a note", text: $notes, axis: .vertical)
@@ -425,7 +436,9 @@ struct TransactionDetailView: View {
             // everything arrives together. Don't wait more than a moment if the server is slow.
             Task { try? await Task.sleep(for: .milliseconds(350)); reveal() }
             async let cats: Void = loadCategories()
+            async let recurring: Void = loadRecurring()
             await load()
+            await recurring
             reveal()
             await cats
             suggester.enqueue(txn, api: api)
@@ -640,6 +653,82 @@ struct TransactionDetailView: View {
         } catch { self.error = error.localizedDescription }
     }
 
+    // MARK: Recurring
+
+    private func loadRecurring() async {
+        if let r: RecurringResponse = try? await api.get("api/native/recurring") {
+            let g = r.groups
+            recurringItems = g.overdue + g.thisMonth + g.future + g.paused + g.archived
+        }
+    }
+
+    private var linkedRecurring: RecurringItem? {
+        recurringItems.first { $0.id == txn.recurringTransactionId }
+    }
+
+    /// Active items this transaction could be added to.
+    private var linkableRecurring: [RecurringItem] {
+        recurringItems.filter { $0.status == "active" }
+    }
+
+    private var recurringRow: some View {
+        Button {
+            showRecurring = true
+            Task { await loadRecurring() }
+        } label: {
+            HStack(spacing: 8) {
+                Label("Recurring", systemImage: "repeat").foregroundStyle(Color.primary)
+                Spacer(minLength: 12)
+                HStack(spacing: 6) {
+                    if txn.recurringTransactionId != nil {
+                        Text([linkedRecurring?.name, linkedRecurring?.frequencyLabel].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ").nonEmpty ?? "Recurring")
+                            .fontWeight(.medium).lineLimit(1)
+                            .foregroundStyle(Color.accentColor)
+                    } else {
+                        Text("Not recurring").foregroundStyle(.secondary)
+                    }
+                    Image(systemName: "chevron.up.chevron.down").font(.caption2.weight(.bold)).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background((txn.recurringTransactionId != nil ? Color.accentColor : Color.primary).opacity(0.1), in: Capsule())
+            }
+            .frame(maxWidth: .infinity, minHeight: 32)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showRecurring, arrowEdge: .bottom) {
+            RecurringPicker(txn: txn, linked: linkedRecurring, items: linkableRecurring,
+                            onMake: { showRecurring = false; Task { await setRecurring(nil) } },
+                            onLink: { item in showRecurring = false; Task { await setRecurring(item.id) } },
+                            onRemove: { showRecurring = false; Task { await removeRecurring() } })
+        }
+    }
+
+    /// Makes this transaction a new recurring item (no id), or adds it to an existing one.
+    private func setRecurring(_ recurringId: String?) async {
+        do {
+            try await api.post("api/native/transactions/\(initial.id)/recurring", body: recurringId.map { ["recurringId": $0] } ?? [:])
+            error = nil
+            await finishRecurringChange()
+        } catch APIError.unauthorized {
+        } catch { self.error = error.localizedDescription }
+    }
+
+    private func removeRecurring() async {
+        do {
+            try await api.delete("api/native/transactions/\(initial.id)/recurring")
+            error = nil
+            await finishRecurringChange()
+        } catch APIError.unauthorized {
+        } catch { self.error = error.localizedDescription }
+    }
+
+    private func finishRecurringChange() async {
+        await load()
+        await loadRecurring()
+        api.noteChanged(txn)
+    }
+
     private func load() async {
         if let d: TxnDetail = try? await api.get("api/native/transactions/\(initial.id)") {
             detail = d
@@ -694,6 +783,7 @@ struct TransactionDetailView: View {
         suggester.resolve(txn.id, api: api)
         let value: Any = id ?? NSNull()
         await patch(["categoryId": value])
+        if id != nil, txn.categoryId == id { SimilarCategories.shared.check(after: txn, api: api) }
     }
     private func setReviewed(_ value: Bool) async { await patch(["reviewed": value]) }
 
@@ -871,5 +961,77 @@ struct WaitingReceiptPicker: View {
             await onDone()
             dismiss()
         } catch { self.error = error.localizedDescription }
+    }
+}
+
+private extension String {
+    var nonEmpty: String? { isEmpty ? nil : self }
+}
+
+/// Make a transaction recurring, add it to an existing recurring item, or take it out of one.
+struct RecurringPicker: View {
+    let txn: Txn
+    let linked: RecurringItem?
+    let items: [RecurringItem]
+    let onMake: () -> Void
+    let onLink: (RecurringItem) -> Void
+    let onRemove: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if txn.recurringTransactionId != nil {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(linked?.name ?? "Recurring").font(.headline)
+                    if let l = linked { Text([l.frequencyLabel, l.nextDate.map { "next \(Fmt.shortDate($0))" }].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary) }
+                }
+                .padding(14)
+                Divider()
+                row("minus.circle", "Remove from recurring", tint: Color.alert, action: onRemove)
+            } else {
+                row("repeat.circle.fill", "Make this a monthly recurring expense", tint: .accentColor, action: onMake)
+                Text("Starts a new item on the Recurring page. You can change how often on that page.")
+                    .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 14).padding(.bottom, 10)
+                if !items.isEmpty {
+                    Divider()
+                    Text("ADD TO EXISTING").font(.caption2.weight(.semibold)).tracking(0.6).foregroundStyle(.secondary)
+                        .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 4)
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(items) { item in
+                                Button { onLink(item) } label: {
+                                    HStack(spacing: 10) {
+                                        CategoryBadge(icon: item.categoryIcon ?? "repeat", size: 26)
+                                        VStack(alignment: .leading, spacing: 1) {
+                                            Text(item.name).foregroundStyle(Color.primary).lineLimit(1)
+                                            Text(item.frequencyLabel).font(.caption).foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                        Text(Fmt.moneyWhole(item.amount)).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+                                    }
+                                    .padding(.horizontal, 14).padding(.vertical, 6)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .frame(minWidth: 300, idealWidth: 320, maxHeight: 440)
+        .presentationDetents([.medium, .large])
+    }
+
+    private func row(_ icon: String, _ title: String, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: icon).foregroundStyle(tint).frame(width: 26)
+                Text(title).foregroundStyle(Color.primary)
+                Spacer()
+            }
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
