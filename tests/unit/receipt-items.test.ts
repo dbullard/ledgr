@@ -163,7 +163,7 @@ describe("the server's own PDF text", () => {
 
   test("a device reader's items keep their names but take the printed prices", () => {
     const items = itemsFromText(SERVER_TEXT, { items: [{ name: "Red Baron Pepperoni Classic Crust Frozen Pizza, 61.81 oz., 3 pk.", totalCents: 6181, product: "Pizza" }] });
-    expect(items[0]).toMatchObject({ totalCents: 1198, product: "Pizza" });
+    expect(items.find((i) => i.name.includes("Red Baron"))).toMatchObject({ totalCents: 1198, product: "Pizza" });
     expect(items.length).toBe(5); // the printed lines it missed are added
   });
 
@@ -313,5 +313,27 @@ describe("Walmart delivery invoice as the server reads the PDF", () => {
       ["Great Value Ground Cloves, 2 oz", 218, 1],
       ["Russet Baking Potatoes Whole Fresh, Each", 164, 3],
     ]);
+  });
+});
+
+describe("a device reader's list on a receipt with printed Qty lines", () => {
+  const T = "Delivery items(1)\nButter, 15 Count 23 shopped Qty 1 $14.97\nSubtotal $14.97";
+  test("only the printed lines are items; the device's summary rows and duplicates are dropped", () => {
+    const items = itemsFromText(T, {
+      items: [
+        { name: "Butter, 15 Count", totalCents: 1497, product: "Butter", category: "Groceries" },
+        { name: "Taxes", totalCents: 518 },
+        { name: "Invoice", totalCents: 12782 },
+        { name: "Payment", totalCents: 502 },
+        { name: "Return", totalCents: 13802 },
+      ],
+    });
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ totalCents: 1497, product: "Butter", category: "Groceries" });
+  });
+
+  test("Walmart summary rows are recognized as summary lines", () => {
+    for (const n of ["Taxes", "Invoice", "Payment", "Return", "Free delivery from store"]) expect(isSummaryLine(n)).toBe(true);
+    expect(isSummaryLine("Return Address Labels")).toBe(false);
   });
 });

@@ -258,17 +258,25 @@ export function itemsFromText(
   /** Category name for lines that aren't store-order lines (e.g. the transaction's own category). */
   defaultCategory?: string | null,
 ): ParsedReceipt["items"] {
-  if (onDevice && onDevice.items.length > 0) return correctPricesFromText(onDevice, text).items;
   const store = extractPricedLines(text);
   if (store.length > 0) {
-    return store.map((l) => ({
-      name: l.name,
-      quantity: l.quantity,
-      totalCents: l.totalCents,
-      product: cleanProductName(l.name),
-      category: guessCategoryName(l.name),
-    }));
+    // Printed "Qty N $price" lines are the whole order. A device reader's list is not trusted
+    // beyond lending its product and category to a line it names the same way: its other rows
+    // (Taxes, Invoice, Payment, renamed duplicates) are not purchases.
+    const device = (onDevice?.items ?? []).map((d) => ({ d, key: matchKey(d.name) }));
+    return store.map((l) => {
+      const k = matchKey(l.name);
+      const hit = device.find((x) => x.key && (x.key === k || k.endsWith(x.key) || x.key.endsWith(k)));
+      return {
+        name: l.name,
+        quantity: l.quantity,
+        totalCents: l.totalCents,
+        product: hit?.d.product?.trim() || cleanProductName(l.name),
+        category: hit?.d.category || guessCategoryName(l.name),
+      };
+    });
   }
+  if (onDevice && onDevice.items.length > 0) return correctPricesFromText(onDevice, text).items;
   return extractTotaledLines(text).map((l) => ({
     name: l.name,
     quantity: l.quantity,
@@ -297,7 +305,7 @@ export interface CleanItem {
  * name so a product that merely contains one of these words is kept.
  */
 const SUMMARY_LINE =
-  /^(?:(?:sub[\s-]*)?total(?:\s+(?:due|amount|savings|purchase))?|(?:sales\s+)?tax(?:\s+\d.*)?|change(?:\s+due)?|balance(?:\s+due)?|amount\s+(?:due|paid|tendered)|(?:driver|delivery|service)?\s*tip|(?:total\s+)?savings|cash|tend(?:er(?:ed)?)?|(?:visa|mastercard|debit|credit)(?:\s+(?:card|tend))?|items?\s+sold|number\s+of\s+items)[\s:.\-]*$/i;
+  /^(?:(?:sub[\s-]*)?total(?:\s+(?:due|amount|savings|purchase))?|(?:sales\s+)?tax(?:es)?(?:\s+\d.*)?|invoice|payment|return|free\s+delivery(?:\s+from\s+store)?|delivery\s+fee|change(?:\s+due)?|balance(?:\s+due)?|amount\s+(?:due|paid|tendered)|(?:driver|delivery|service)?\s*tip|(?:total\s+)?savings|cash|tend(?:er(?:ed)?)?|(?:visa|mastercard|debit|credit)(?:\s+(?:card|tend))?|items?\s+sold|number\s+of\s+items)[\s:.\-]*$/i;
 
 export function isSummaryLine(name: string): boolean {
   return SUMMARY_LINE.test(name.replace(/\s+/g, " ").trim());
