@@ -37,6 +37,13 @@ export function ReceiptTray() {
     };
   }, []);
 
+  // Status messages are transient: clear them a few seconds after they appear.
+  useEffect(() => {
+    if (!message) return;
+    const t = setTimeout(() => setMessage(null), 5000);
+    return () => clearTimeout(t);
+  }, [message]);
+
   function upload(files: FileList | File[]) {
     setError(null);
     setMessage(null);

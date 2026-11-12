@@ -255,3 +255,63 @@ describe("reconcile and allocateSplits", () => {
     expect(allocateSplits([{ categoryId: null, totalCents: 100 }], 100)).toBeNull();
   });
 });
+
+describe("Walmart order text with fulfilment status", () => {
+  const WM = [
+    "Delivery items(2)",
+    "Great Value Chunk Chicken Breast with",
+    "Rib Meat in Water, 12.5 oz Can 2 substituted",
+    "Qty 2 $5.68",
+    "Butter, 15 Count 2 shopped",
+    "Qty 1 $14.97",
+  ].join("\n");
+
+  test("status text is not part of an item name", () => {
+    const lines = extractPricedLines(WM);
+    expect(lines.map((l) => l.name)).toEqual([
+      "Great Value Chunk Chicken Breast with Rib Meat in Water, 12.5 oz Can",
+      "Butter, 15 Count",
+    ]);
+  });
+
+  test("a model's full name and the printed tail are one item, not two", () => {
+    const fixed = correctPricesFromText(
+      { items: [{ name: "Great Value Chunk Chicken Breast with Rib Meat in Water, 12.5 oz Can", totalCents: 2072 }] },
+      "Delivery items(1)\nGreat Value Chunk Chicken Breast with\nRib Meat in Water, 12.5 oz Can 2 substituted\nQty 2 $5.68",
+    );
+    expect(fixed.items).toHaveLength(1);
+    expect(fixed.items[0]).toMatchObject({ totalCents: 568, quantity: 2 });
+  });
+});
+
+describe("Walmart delivery invoice as the server reads the PDF", () => {
+  const INVOICE = [
+    "Invoice",
+    "Buyer",
+    "Loren Bullard",
+    "4307 W Murfield Dr, Rogers, AR 72758",
+    "OGX Clarifying Strength and Rosemary Mint Hair",
+    "Shampoo, 13 fl. oz Qty 1 $6.97",
+    "(4 pack) Betty Crocker Bisquick, Gluten Free Pancake",
+    "and Baking Mix, 16 oz Qty 1 $20.72",
+    "King Arthur Baking Company Non-GMO",
+    "Project Verified, Certified Gluten-Free",
+    "Measure for Measure Flour, 3 lb Bag",
+    "23 shopped Qty 1 $8.67",
+    "Great Value Ground Cloves, 2 oz 23 shopped Qty 1 $2.18",
+    "Russet Baking Potatoes Whole",
+    "Fresh, Each 9 weight adjusted Qty 3 $1.64",
+    "Subtotal $132.35",
+  ].join("\n");
+
+  test("wrapped names are whole, status text is gone, the address is not glued on", () => {
+    const lines = extractPricedLines(INVOICE);
+    expect(lines.map((l) => [l.name, l.totalCents, l.quantity])).toEqual([
+      ["OGX Clarifying Strength and Rosemary Mint Hair Shampoo, 13 fl. oz", 697, 1],
+      ["(4 pack) Betty Crocker Bisquick, Gluten Free Pancake and Baking Mix, 16 oz", 2072, 1],
+      ["King Arthur Baking Company Non-GMO Project Verified, Certified Gluten-Free Measure for Measure Flour, 3 lb Bag", 867, 1],
+      ["Great Value Ground Cloves, 2 oz", 218, 1],
+      ["Russet Baking Potatoes Whole Fresh, Each", 164, 3],
+    ]);
+  });
+});

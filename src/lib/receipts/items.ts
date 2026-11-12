@@ -74,13 +74,21 @@ export function extractPricedLines(text: string | null): PricedLine[] {
     const m = line.match(QTY_AT_END);
     if (!m) {
       const t = line.trim();
-      if (SECTION_HEADER.test(t)) pending = [];
-      else if (t && !NOT_A_NAME.test(t)) pending.push(t);
+      // A header, or an address line (state + ZIP), ends whatever came before the first item.
+      if (SECTION_HEADER.test(t) || /\b[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/.test(t)) pending = [];
+      else if (t && !NOT_A_NAME.test(t)) {
+        const s = stripFulfillmentStatus(t);
+        if (s) pending.push(s);
+      }
       continue;
     }
-    const head = line.slice(0, m.index).trim();
+    const head = stripFulfillmentStatus(line.slice(0, m.index).trim());
     let name: string;
-    if (head) {
+    if (head && !layout && pending.length > 0) {
+      // Single-space text where the name wraps over several lines and the last one carries
+      // "Qty N $price": the earlier pieces are the lines since the previous price.
+      name = [...pending.slice(-3), head].join(" ");
+    } else if (head) {
       name = head;
       const next = (lines[i + 1] ?? "").trim();
       if (layout && next && !QTY_AT_END.test(next) && !SECTION_HEADER.test(next) && !NOT_A_NAME.test(next)) {
@@ -93,10 +101,26 @@ export function extractPricedLines(text: string | null): PricedLine[] {
       name = (pending.length > 3 ? pending.slice(-2) : pending).join(" ");
     }
     pending = [];
+    name = stripFulfillmentStatus(name);
     const cents = Math.round(parseFloat(m[2].replace(/,/g, "")) * 100);
     if (name && cents > 0) out.push({ name, quantity: parseInt(m[1], 10), totalCents: cents });
   }
   return out;
+}
+
+/**
+ * Walmart order pages print fulfilment status beside each product ("2 shopped",
+ * "1 substituted", "weight adjusted", "unavailable"). It is not part of the name.
+ * A line that is only status text becomes empty.
+ */
+export function stripFulfillmentStatus(name: string): string {
+  const STATUS = /\b\d*\s*(?:shopped|substituted|unavailable|out of stock|weight adjusted|price adjusted)\b/gi;
+  if (!STATUS.test(name)) return name;
+  return name
+    .replace(STATUS, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[,\s]+$/g, "");
 }
 
 /**
@@ -119,11 +143,27 @@ export function correctPricesFromText(parsed: ParsedReceipt, text: string | null
         : left.findIndex((l) => k.length >= 20 && (l.key.startsWith(k) || k.startsWith(l.key)));
     return at >= 0 ? left.splice(at, 1)[0].p : null;
   };
-  const items = parsed.items.map((it) => {
+  const matched = new Set<number>();
+  const items = parsed.items.map((it, idx) => {
     const hit = take(it.name);
+    if (hit) matched.add(idx);
     return hit ? { ...it, totalCents: hit.totalCents, quantity: hit.quantity } : it;
   });
-  for (const { p } of left) items.push({ name: p.name, quantity: p.quantity, totalCents: p.totalCents });
+  // A wrapped name leaves the printed line holding only the tail ("Rib Meat in Water, 12.5 oz Can")
+  // while the model has the whole name. If the model's name ends with that tail, or carries the
+  // same price and nothing else claimed it, they are one item: not a second purchase.
+  const leftover = left.filter(({ p, key }) => {
+    const at = items.findIndex(
+      (it, idx) =>
+        !matched.has(idx) &&
+        (matchKey(it.name).endsWith(key) || (it.totalCents === p.totalCents && key.length > 0 && matchKey(it.name).includes(key.split(" ").slice(-2).join(" ")))),
+    );
+    if (at < 0) return true;
+    matched.add(at);
+    items[at] = { ...items[at], totalCents: p.totalCents, quantity: p.quantity };
+    return false;
+  });
+  for (const { p } of leftover) items.push({ name: p.name, quantity: p.quantity, totalCents: p.totalCents });
   return { ...parsed, items };
 }
 
