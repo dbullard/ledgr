@@ -154,4 +154,37 @@ describe("receipt items", () => {
     await deleteReceipt(receiptId, db, root);
     expect(await db.select().from(receiptItems).where(eq(receiptItems.receiptId, receiptId))).toHaveLength(0);
   });
+
+  it("re-reading a receipt with printed Qty lines uses them as they are, never the model", async () => {
+    const { parseReceiptItems } = await import("../../src/actions/receipt-items");
+    const { uploadReceipt } = await import("../../src/actions/receipts");
+    const { accountId } = await insertAccount(db, currentHousehold, { name: "Card 2" });
+    const { transactionId } = await insertTransaction(db, currentHousehold, accountId, {
+      date: "2026-11-06",
+      name: "Walmart",
+      originalName: "WALMART",
+      amount: 1000,
+      normalizedAmount: -1000,
+    });
+    const text = [
+      "Delivery items(2)",
+      "Great Value Chunk Chicken Breast with",
+      "Rib Meat in Water, 12.5 oz Can 2 substituted Qty 2 $5.68",
+      "Butter, 15 Count 23 shopped Qty 1 $14.97",
+    ].join("\n");
+    const fd = new FormData();
+    fd.set("file", new File([text], "walmart-order.txt"));
+    const up = await uploadReceipt(transactionId, fd, db, root);
+    if (!("data" in up)) throw new Error("upload failed");
+
+    const neverCalled: ParseRunner = async () => {
+      throw new Error("the model should not be asked");
+    };
+    const res = await parseReceiptItems(up.data.id, db, root, neverCalled, "no model configured");
+    if (!("data" in res)) throw new Error(JSON.stringify(res));
+    expect(res.data.items.map((i) => [i.rawName, i.totalCents])).toEqual([
+      ["Great Value Chunk Chicken Breast with Rib Meat in Water, 12.5 oz Can", 568],
+      ["Butter, 15 Count", 1497],
+    ]);
+  });
 });

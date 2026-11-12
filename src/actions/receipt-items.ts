@@ -17,6 +17,8 @@ import {
   allocateSplits,
   applyAliases,
   cleanItems,
+  extractPricedLines,
+  itemsFromText,
   normalizeRawName,
   reconcile,
 } from "@/lib/receipts/items";
@@ -119,7 +121,6 @@ export async function parseReceiptItems(
   const { householdId } = auth;
   const parsedId = idSchema.safeParse(receiptId);
   if (!parsedId.success) return { error: "Invalid input" };
-  if (blocker) return { error: blocker };
 
   const found = await withHousehold(
     householdId,
@@ -153,23 +154,32 @@ export async function parseReceiptItems(
     if (!text?.trim()) return { error: "No readable text in this file. Try a PDF with text, an image, or a .txt." };
   }
 
-  const attempt = async () => cleanItems(await run({ text, image, categoryNames: found.cats.map((c) => c.name) }), found.cats);
+  // Printed "Qty N $price" lines (Walmart, Sam's Club) are the receipt's own data, so they are
+  // used as they are: no model, and no chance of it renaming or duplicating a line.
+  const direct = text && extractPricedLines(text).length > 0 ? itemsFromText(text, null) : [];
+
   let parsed: ParsedReceipt | null = null;
   let cleaned: ReturnType<typeof cleanItems> = [];
-  try {
-    const first = await run({ text, image, categoryNames: found.cats.map((c) => c.name) });
-    parsed = first;
-    cleaned = cleanItems(first, found.cats);
-    // A model sometimes stops after a few lines. If the lines found cover well under
-    // the receipt's own total, try once more and keep whichever read found more.
-    const total = found.receipt.hintTotalCents;
-    if (total && reconcile(cleaned, total).itemsTotalCents < total * MIN_COVERAGE) {
-      const second = await attempt().catch(() => []);
-      if (second.length > cleaned.length) cleaned = second;
+  if (direct.length > 0) {
+    cleaned = cleanItems({ items: direct }, found.cats);
+  } else {
+    if (blocker) return { error: blocker };
+    const attempt = async () => cleanItems(await run({ text, image, categoryNames: found.cats.map((c) => c.name) }), found.cats);
+    try {
+      const first = await run({ text, image, categoryNames: found.cats.map((c) => c.name) });
+      parsed = first;
+      cleaned = cleanItems(first, found.cats);
+      // A model sometimes stops after a few lines. If the lines found cover well under
+      // the receipt's own total, try once more and keep whichever read found more.
+      const total = found.receipt.hintTotalCents;
+      if (total && reconcile(cleaned, total).itemsTotalCents < total * MIN_COVERAGE) {
+        const second = await attempt().catch(() => []);
+        if (second.length > cleaned.length) cleaned = second;
+      }
+    } catch (e) {
+      console.error("[receipts] item parsing failed", e);
+      return { error: "The model couldn't read this receipt. Check that it is running and supports this file type." };
     }
-  } catch (e) {
-    console.error("[receipts] item parsing failed", e);
-    return { error: "The model couldn't read this receipt. Check that it is running and supports this file type." };
   }
   if (cleaned.length === 0) return { error: "No line items were found on this receipt" };
 
