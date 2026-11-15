@@ -61,10 +61,11 @@ unreadable, so back up both.
    (Tailscale or a VPN), enter that address as the away address.
 4. Sign in with the account you created in step 1.
 
-Push notifications are sent by the server, which needs Apple push credentials
-tied to the app's developer account, so they will not work on a self-hosted
-server unless you add your own (see [`docs/push-notifications.md`](docs/push-notifications.md)).
-Everything else works without them.
+Push notifications (bills due, large charges, budget alerts) are off until
+your server has an Apple push key. If the person who sent you the apps gave you
+a `.p8` key file, a Key ID and a Team ID, follow steps 3 and 4 of
+[`docs/push-notifications.md`](docs/push-notifications.md), using
+`APNS_BUNDLE_ID=com.dbullard.ledgr`. Everything else works without it.
 
 ---
 
@@ -84,6 +85,15 @@ It publishes `ghcr.io/dbullard/ledgr:latest` plus the version tag. The first
 time only, make the package public so others can pull it without logging in:
 GitHub → your profile → Packages → `ledgr` → Package settings → Change
 visibility → Public.
+
+### Push notifications for another server
+
+The app's push entitlement belongs to your developer team, so another person's
+server can only notify their phone with a key from your team. In Certificates,
+Identifiers & Profiles → Keys, create an APNs key, give him the `.p8`, its Key
+ID and your Team ID, and revoke it if he stops using it. An APNs key can push
+to any app on your team and Apple allows only two per team, so only do this for
+someone you trust. Skip it and the app simply has no notifications.
 
 ### Shipping the apps through TestFlight
 

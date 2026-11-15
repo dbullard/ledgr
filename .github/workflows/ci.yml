@@ -12,7 +12,7 @@ concurrency:
 jobs:
   test:
     name: typecheck · lint · test
-    runs-on: [self-hosted, macmini]
+    runs-on: ubuntu-latest
     # Self-hosted runner: never execute a fork PR's code here. Only run for
     # direct pushes (already require write access) or PRs from this same repo.
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
@@ -67,7 +67,7 @@ jobs:
 
   mutation:
     name: mutation (diff)
-    runs-on: [self-hosted, macmini]
+    runs-on: ubuntu-latest
     # Runs only after `test` releases its runner. Mutation is non-blocking, but
     # a wide diff can keep Stryker busy for 30+ min (observed on a 9-file diff),
     # and while it held the runner the *blocking* typecheck/lint/test jobs of
