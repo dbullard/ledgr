@@ -59,6 +59,8 @@ Claude: Based on your transactions, you spent $342.18 on dining out in April...
 
 ## Quick Start
 
+> Using the `dbullard/ledgr` fork (receipts, hidden accounts, Apple apps)? See [INSTALL.md](INSTALL.md).
+
 Requires [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/).
 
 ```bash

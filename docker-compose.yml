@@ -33,7 +33,7 @@ services:
         max-file: "3"
 
   app:
-    image: ghcr.io/kentaniguchi-r/ledgr:latest
+    image: ${LEDGR_IMAGE:-ghcr.io/dbullard/ledgr:latest}
     depends_on:
       db:
         condition: service_healthy
@@ -62,8 +62,8 @@ services:
       # credentials — reuses POSTGRES_PASSWORD rather than a separate secret
       # since both roles are equally trusted inside this container/network.
       APP_DATABASE_URL: postgresql://ledgr_app:${POSTGRES_PASSWORD:-ledgr}@db:5432/ledgr
-      BETTER_AUTH_URL: http://localhost:${PORT:-4200}
-      NEXT_PUBLIC_APP_URL: http://localhost:${PORT:-4200}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:${PORT:-4200}}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:${PORT:-4200}}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)throw 1}).catch(()=>process.exit(1))"]
