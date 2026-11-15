@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ReceiptTray } from "@/components/organisms/receipt-tray";
 import { WalmartImport } from "@/components/organisms/walmart-import";
+import { AmazonImport } from "@/components/organisms/amazon-import";
 
 export const metadata = { title: "Receipts" };
 
@@ -19,6 +20,7 @@ export default function ReceiptsPage() {
       </div>
       <ReceiptTray />
       <WalmartImport />
+      <AmazonImport />
     </div>
   );
 }
