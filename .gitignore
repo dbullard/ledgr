@@ -53,3 +53,7 @@ test-results/
 .stryker-tmp/
 docs/*
 !docs/images/
+
+# Xcode per-user state
+xcuserdata/
+apps/apple/Ledgr.xcodeproj/project.xcworkspace/
