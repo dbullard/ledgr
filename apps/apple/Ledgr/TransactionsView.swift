@@ -826,6 +826,8 @@ struct TransactionDetailView: View {
             if let d = detail { detail = TxnDetail(txn: updated, splits: d.splits, receipts: d.receipts, items: d.items, itemsTotalCents: d.itemsTotalCents, itemsGapCents: d.itemsGapCents) }
             else { await load() }
             error = nil
+            // Lets the list, dashboard and uncategorized badge pick up the edit without a relaunch.
+            api.noteChanged(updated)
         } catch APIError.unauthorized {
         } catch {
             self.error = error.localizedDescription

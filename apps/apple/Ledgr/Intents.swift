@@ -28,6 +28,42 @@ private func readyAPI() async throws -> API {
     return api
 }
 
+// MARK: Category entity
+
+/// A spending category Siri and Shortcuts can resolve by name ("dining", "groceries") and offer as a picker.
+struct CategoryEntity: AppEntity, Identifiable {
+    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Category")
+    static let defaultQuery = CategoryQuery()
+
+    let id: String
+    let name: String
+
+    var displayRepresentation: DisplayRepresentation { DisplayRepresentation(title: "\(name)") }
+}
+
+struct CategoryQuery: EntityStringQuery {
+    private func all() async throws -> [CategoryEntity] {
+        let api = try await readyAPI()
+        let groups: [CategoryGroup] = try await api.get("api/native/categories")
+        return groups.alphabetical.flatMap(\.categories).map { CategoryEntity(id: $0.id, name: $0.name) }
+    }
+
+    func entities(for identifiers: [String]) async throws -> [CategoryEntity] {
+        let wanted = Set(identifiers)
+        return try await all().filter { wanted.contains($0.id) }
+    }
+
+    func entities(matching string: String) async throws -> [CategoryEntity] {
+        let q = string.trimmingCharacters(in: .whitespaces)
+        let every = try await all()
+        guard !q.isEmpty else { return every }
+        let exact = every.filter { $0.name.caseInsensitiveCompare(q) == .orderedSame }
+        return exact.isEmpty ? every.filter { $0.name.localizedCaseInsensitiveContains(q) } : exact
+    }
+
+    func suggestedEntities() async throws -> [CategoryEntity] { try await all() }
+}
+
 // MARK: Questions
 
 struct NetWorthIntent: AppIntent {
@@ -61,7 +97,7 @@ struct SpendingIntent: AppIntent {
     static let description = IntentDescription("How much you've spent this month, overall or in one category.")
 
     @Parameter(title: "Category", description: "Leave empty for the top categories.")
-    var category: String?
+    var category: CategoryEntity?
 
     static var parameterSummary: some ParameterSummary {
         Summary("Spending in \(\.$category) this month")
@@ -71,11 +107,11 @@ struct SpendingIntent: AppIntent {
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let api = try await readyAPI()
         let d: DashboardResponse = try await api.get("api/native/dashboard", query: ["range": "1M"])
-        if let q = category?.trimmingCharacters(in: .whitespaces), !q.isEmpty {
-            let hits = d.spending.filter { $0.categoryName.localizedCaseInsensitiveContains(q) }
-            guard !hits.isEmpty else { return .result(dialog: "I don't see any spending in \(q) this month.") }
+        if let cat = category {
+            let hits = d.spending.filter { $0.categoryId == cat.id }
+            guard !hits.isEmpty else { return .result(dialog: IntentDialog(stringLiteral: "I don't see any spending in \(cat.name) this month.")) }
             let total = hits.reduce(0) { $0 + $1.total }
-            return .result(dialog: "You've spent \(Fmt.money(total)) on \(hits.first!.categoryName) this month.")
+            return .result(dialog: IntentDialog(stringLiteral: "You've spent \(Fmt.money(total)) on \(cat.name) this month."))
         }
         let top = d.spending.sorted { $0.total > $1.total }.prefix(3)
         let list = top.map { "\($0.categoryName), \(Fmt.moneyWhole($0.total))" }.joined(separator: "; ")
@@ -88,7 +124,7 @@ struct BudgetStatusIntent: AppIntent {
     static let description = IntentDescription("How much budget you have left this month, overall or in one category.")
 
     @Parameter(title: "Category", description: "Leave empty for the whole budget.")
-    var category: String?
+    var category: CategoryEntity?
 
     static var parameterSummary: some ParameterSummary {
         Summary("Budget left in \(\.$category)")
@@ -99,9 +135,9 @@ struct BudgetStatusIntent: AppIntent {
         let api = try await readyAPI()
         let b: BudgetResponse = try await api.get("api/native/budgets")
         guard b.budget != nil else { return .result(dialog: "You haven't set up a budget for this month yet.") }
-        if let q = category?.trimmingCharacters(in: .whitespaces), !q.isEmpty {
-            let hit = b.groups.flatMap(\.categories).first { $0.categoryName.localizedCaseInsensitiveContains(q) }
-            guard let c = hit else { return .result(dialog: "\(q) isn't in this month's budget.") }
+        if let cat = category {
+            let hit = b.groups.flatMap(\.categories).first { $0.categoryId == cat.id }
+            guard let c = hit else { return .result(dialog: IntentDialog(stringLiteral: "\(cat.name) isn't in this month's budget.")) }
             let text = c.remaining >= 0
                 ? "You have \(Fmt.money(c.remaining)) left in \(c.categoryName): \(Fmt.money(c.spent)) spent of \(Fmt.money(c.limitAmount))."
                 : "You're \(Fmt.money(-c.remaining)) over in \(c.categoryName): \(Fmt.money(c.spent)) spent of \(Fmt.money(c.limitAmount))."
@@ -142,7 +178,7 @@ struct CategorizeTransactionIntent: AppIntent {
     static let description = IntentDescription("Puts an uncategorized transaction into a category, after you confirm.")
 
     @Parameter(title: "Merchant or name") var search: String
-    @Parameter(title: "Category") var category: String
+    @Parameter(title: "Category") var category: CategoryEntity
 
     static var parameterSummary: some ParameterSummary {
         Summary("Categorize \(\.$search) as \(\.$category)")
@@ -151,15 +187,7 @@ struct CategorizeTransactionIntent: AppIntent {
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let api = try await readyAPI()
-        let groups: [CategoryGroup] = try await api.get("api/native/categories")
-        let all = groups.flatMap(\.categories)
-        let q = category.trimmingCharacters(in: .whitespaces)
-        let exact = all.filter { $0.name.caseInsensitiveCompare(q) == .orderedSame }
-        let matches = exact.isEmpty ? all.filter { $0.name.localizedCaseInsensitiveContains(q) } : exact
-        guard matches.count == 1, let cat = matches.first else {
-            let text = matches.isEmpty ? "I couldn't find a category called \(q)." : "More than one category matches \(q). Say the full name."
-            return .result(dialog: IntentDialog(stringLiteral: text))
-        }
+        let cat = category
         let page: TxnPage = try await api.get("api/native/transactions", query: ["search": search, "needsReview": "1", "limit": "5"])
         let open = page.rows.filter { $0.categoryId == nil }
         guard open.count == 1, let txn = open.first else {
@@ -170,6 +198,7 @@ struct CategorizeTransactionIntent: AppIntent {
         }
         try await requestConfirmation(result: .result(dialog: IntentDialog(stringLiteral: "Put \(txn.name) for \(Fmt.money(abs(txn.normalizedAmount))) in \(cat.name)?")))
         let _: Ok = try await api.patch("api/native/transactions/\(txn.id)", body: ["categoryId": cat.id])
+        api.noteChanged()
         return .result(dialog: IntentDialog(stringLiteral: "Done. \(txn.name) is now in \(cat.name)."))
     }
 }
@@ -260,11 +289,17 @@ struct LedgrShortcuts: AppShortcutsProvider {
             shortTitle: "This Month", systemImageName: "calendar")
         AppShortcut(
             intent: SpendingIntent(),
-            phrases: ["How much did I spend in \(.applicationName)", "\(.applicationName) spending"],
+            phrases: [
+                "How much did I spend in \(.applicationName)", "\(.applicationName) spending",
+                "How much did I spend on \(\.$category) in \(.applicationName)",
+                "\(.applicationName) spending on \(\.$category)"],
             shortTitle: "Spending", systemImageName: "creditcard")
         AppShortcut(
             intent: BudgetStatusIntent(),
-            phrases: ["How's my budget in \(.applicationName)", "\(.applicationName) budget left"],
+            phrases: [
+                "How's my budget in \(.applicationName)", "\(.applicationName) budget left",
+                "How's my \(\.$category) budget in \(.applicationName)",
+                "\(.applicationName) budget left for \(\.$category)"],
             shortTitle: "Budget", systemImageName: "chart.pie")
         AppShortcut(
             intent: UpcomingBillsIntent(),
@@ -272,7 +307,9 @@ struct LedgrShortcuts: AppShortcutsProvider {
             shortTitle: "Bills Due", systemImageName: "calendar.badge.clock")
         AppShortcut(
             intent: CategorizeTransactionIntent(),
-            phrases: ["Categorize a transaction in \(.applicationName)"],
+            phrases: [
+                "Categorize a transaction in \(.applicationName)",
+                "Categorize a transaction as \(\.$category) in \(.applicationName)"],
             shortTitle: "Categorize", systemImageName: "tag")
         AppShortcut(
             intent: PortfolioIntent(),
