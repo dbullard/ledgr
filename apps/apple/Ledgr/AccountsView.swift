@@ -36,6 +36,13 @@ struct InstitutionGroupModel: Codable, Identifiable {
     let lastDataAt: String?
     let accounts: [AccountRowModel]
     var id: String { connectionId ?? institutionName }
+    /// The server stores `reauth_required` / `revoked` for logins that lapsed or
+    /// were revoked; `login_required` is kept for older servers.
+    var needsAttention: Bool {
+        ["error", "reauth_required", "revoked", "login_required"].contains(status ?? "")
+    }
+    /// Only Plaid connections can be reconnected from Ledgr itself.
+    var canReconnect: Bool { needsAttention && provider == "plaid" }
     var subtotal: Int { accounts.filter { !$0.isHidden }.reduce(0) { $0 + ($1.currentBalance ?? 0) } }
 }
 
@@ -59,6 +66,8 @@ struct BalancePoint: Codable, Identifiable {
 struct AccountsView: View {
     @EnvironmentObject var api: API
     @EnvironmentObject var connection: Connection
+    @EnvironmentObject var web: WebModel
+    @State private var showReconnect = false
     @State private var data: AccountsResponse?
     @State private var error: String?
     @State private var showHidden = false
@@ -99,6 +108,25 @@ struct AccountsView: View {
         }
         .refreshable { await api.syncBanks(); await load() }
         .task(id: connection.active) { await load() }
+        // Plaid Link only runs on the web page, so reconnecting opens it here.
+        .sheet(isPresented: $showReconnect, onDismiss: { Task { await load() } }) {
+            NavigationStack {
+                LedgrWebView(model: web)
+                    .navigationTitle("Reconnect bank")
+                    #if os(iOS)
+                    .navigationBarTitleDisplayMode(.inline)
+                    #endif
+                    .onAppear { web.show(path: "/accounts") }
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showReconnect = false }
+                        }
+                    }
+            }
+            #if os(macOS)
+            .frame(minWidth: 520, minHeight: 640)
+            #endif
+        }
     }
 
     private func load() async {
@@ -159,9 +187,16 @@ struct AccountsView: View {
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(group.institutionName).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-                            if group.status == "error" || group.status == "login_required" {
+                            if group.needsAttention {
                                 Label(group.errorMessage ?? "Needs attention", systemImage: "exclamationmark.triangle.fill")
                                     .font(.caption).foregroundStyle(Color.alert)
+                                if group.canReconnect {
+                                    Button { showReconnect = true } label: {
+                                        Label("Reconnect", systemImage: "link")
+                                    }
+                                    .buttonStyle(.borderedProminent).controlSize(.small).tint(Color.alert)
+                                    .accessibilityLabel("Reconnect \(group.institutionName)")
+                                }
                             } else if let cid = group.connectionId, let note = syncNotes[cid] {
                                 Text(note).font(.caption)
                                     .foregroundStyle(note.hasPrefix("Refreshed") ? Color.income : Color.alert)

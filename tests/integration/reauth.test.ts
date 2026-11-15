@@ -123,4 +123,27 @@ describe("re-auth server actions", () => {
     const logs = await db.select().from(syncLog).where(eq(syncLog.connectionId, ITEM_ID));
     expect(logs).toHaveLength(1);
   });
+  it("createUpdateLinkToken allows an item in error status", async () => {
+    const { createUpdateLinkTokenDirect } = await import("@/actions/reauth");
+    await setup();
+    await seedItem(db, "error");
+
+    server.use(
+      http.post("https://sandbox.plaid.com/link/token/create", () =>
+        HttpResponse.json({ link_token: "link-update-error", expiration: "2026-12-31T00:00:00Z", request_id: "req-err" })
+      )
+    );
+
+    expect(await createUpdateLinkTokenDirect(ITEM_ID, HOUSEHOLD_ID, db)).toEqual({ linkToken: "link-update-error" });
+  });
+
+  it("createUpdateLinkToken rejects healthy and revoked items", async () => {
+    const { createUpdateLinkTokenDirect } = await import("@/actions/reauth");
+    await setup();
+    await seedItem(db, "revoked");
+
+    expect(await createUpdateLinkTokenDirect(ITEM_ID, HOUSEHOLD_ID, db)).toEqual({
+      error: "Institution does not require re-authentication",
+    });
+  });
 });

@@ -12,6 +12,10 @@ import { db as defaultDb, type LedgrDb } from "@/db";
 import { bankConnections } from "@/db/schema";
 import { syncInstitution } from "@/lib/plaid/sync";
 
+// "error" is included because a transient sync failure can outlast its cause
+// (or hide a lapsed login); Link in update mode is safe for a healthy item.
+const RECONNECTABLE_STATUSES = new Set(["reauth_required", "error"]);
+
 export async function createUpdateLinkTokenDirect(
   plaidItemId: string,
   householdId: string,
@@ -28,7 +32,7 @@ export async function createUpdateLinkTokenDirect(
     return { error: "Institution not found" };
   }
 
-  if (item.status !== "reauth_required") {
+  if (!RECONNECTABLE_STATUSES.has(item.status ?? "")) {
     return { error: "Institution does not require re-authentication" };
   }
 
@@ -71,7 +75,7 @@ export async function completeReAuthDirect(
     return { error: "Institution not found" };
   }
 
-  if (item.status !== "reauth_required") {
+  if (!RECONNECTABLE_STATUSES.has(item.status ?? "")) {
     return { error: "Institution does not require re-authentication" };
   }
 

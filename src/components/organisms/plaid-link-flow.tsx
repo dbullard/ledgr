@@ -5,7 +5,7 @@ import { usePlaidLink } from "react-plaid-link";
 import type { PlaidLinkError } from "react-plaid-link";
 import { Button } from "@/components/ui/button";
 import { Loader2, Plus, Building2, Link as LinkIcon } from "lucide-react";
-import { createLinkToken, exchangePublicToken } from "@/actions/plaid";
+import { createLinkToken, exchangePublicToken, disconnectPlaidItem } from "@/actions/plaid";
 import { createUpdateLinkToken, completeReAuth } from "@/actions/reauth";
 
 interface PlaidLinkFlowProps {
@@ -15,6 +15,13 @@ interface PlaidLinkFlowProps {
   plaidItemId?: string;
   onReAuthSuccess?: () => void;
   onError?: (error: string) => void;
+  /**
+   * Connect-mode only. A revoked Item's token is dead, so update mode cannot
+   * revive it. Before opening Link, this connection is disconnected (accounts
+   * are soft-deleted, keeping their Plaid IDs) so the fresh Link restores the
+   * same accounts and their history instead of duplicating them.
+   */
+  replaceItemId?: string;
 }
 
 export function PlaidLinkFlow({
@@ -24,6 +31,7 @@ export function PlaidLinkFlow({
   plaidItemId,
   onReAuthSuccess,
   onError,
+  replaceItemId,
 }: PlaidLinkFlowProps) {
   const defaultLabel = mode === "update" ? "Reconnect" : "Connect Bank";
   const displayLabel = label ?? defaultLabel;
@@ -50,6 +58,9 @@ export function PlaidLinkFlow({
         const result = await exchangePublicToken(publicToken);
         if ("error" in result && result.error) {
           setError(result.error);
+          if (replaceItemId) onError?.(result.error);
+        } else if (replaceItemId) {
+          onReAuthSuccess?.();
         }
       }
     } catch {
@@ -61,7 +72,7 @@ export function PlaidLinkFlow({
       setLinkToken(null);
       triggerRef.current?.focus();
     }
-  }, [mode, plaidItemId, onReAuthSuccess, onError]);
+  }, [mode, plaidItemId, replaceItemId, onReAuthSuccess, onError]);
 
   const onExit = useCallback(
     (err: PlaidLinkError | null) => {
@@ -103,9 +114,19 @@ export function PlaidLinkFlow({
           setLinkToken(result.linkToken);
         }
       } else {
+        if (replaceItemId) {
+          const removed = await disconnectPlaidItem(replaceItemId);
+          // "Item not found" means an earlier attempt already removed it.
+          if ("error" in removed && removed.error && removed.error !== "Item not found") {
+            setError(removed.error);
+            onError?.(removed.error);
+            return;
+          }
+        }
         const result = await createLinkToken();
         if ("error" in result && result.error) {
           setError(result.error);
+          if (replaceItemId) onError?.(result.error);
           return;
         }
         if ("linkToken" in result && result.linkToken) {

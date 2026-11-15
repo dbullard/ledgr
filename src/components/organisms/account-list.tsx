@@ -162,12 +162,23 @@ export function AccountList({ groups }: AccountListProps) {
   // a revoked SimpleFIN token needs a fresh Setup Token, and a SimpleFIN bank
   // whose own login lapsed is fixed on the Bridge, not in Ledgr.
   const renderFix = (c: Pick<ConnectionAlert, "connectionId" | "institutionName" | "provider" | "status">) => {
-    if (c.provider === "plaid" && c.status === "reauth_required") {
+    if (c.provider === "plaid" && (c.status === "reauth_required" || c.status === "error")) {
       return (
         <PlaidLinkFlow
           mode="update"
           variant="reconnect-inline"
           plaidItemId={c.connectionId}
+          onReAuthSuccess={handleReAuthSuccess}
+          onError={(err) => handleReAuthError(c.connectionId, err)}
+        />
+      );
+    }
+    if (c.provider === "plaid" && c.status === "revoked") {
+      return (
+        <PlaidLinkFlow
+          variant="reconnect-inline"
+          label="Reconnect"
+          replaceItemId={c.connectionId}
           onReAuthSuccess={handleReAuthSuccess}
           onError={(err) => handleReAuthError(c.connectionId, err)}
         />
