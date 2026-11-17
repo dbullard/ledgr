@@ -6,6 +6,7 @@ import {
   type CategorizableTransaction,
   type CategoryRule,
 } from "./engine";
+import { buildHistoryIndex } from "./history-suggester";
 
 function makeTxn(overrides: Partial<CategorizableTransaction> = {}): CategorizableTransaction {
   return {
@@ -194,5 +195,47 @@ describe("categorizeTransactions", () => {
     const result = categorizeTransactions(txns, []);
 
     expect(result).toHaveLength(0);
+  });
+});
+
+describe("categorizeTransactions: history tier", () => {
+  const history = buildHistoryIndex([
+    { name: "CASEYS #12", categoryId: "cat-gas" },
+    { name: "CASEYS #30", categoryId: "cat-gas" },
+    { name: "CASEYS #44", categoryId: "cat-gas" },
+  ]);
+
+  it("files a known merchant under the household's usual category, as a guess", () => {
+    const result = categorizeTransactions([makeTxn({ name: "CASEYS #901" })], [], new Map(), history);
+
+    expect(result).toEqual([{ transactionId: "txn-1", categoryId: "cat-gas", source: "history" }]);
+  });
+
+  it("loses to a rule and to a merchant default", () => {
+    const rule = makeRule({ matchPattern: "caseys", categoryId: "cat-rule" });
+    expect(categorizeTransactions([makeTxn({ name: "CASEYS #901" })], [rule], new Map(), history)[0].source).toBe("rule");
+
+    const withDefault = makeTxn({ name: "CASEYS #901", merchantCategoryId: "cat-merchant" });
+    expect(categorizeTransactions([withDefault], [], new Map(), history)[0]).toMatchObject({
+      categoryId: "cat-merchant",
+      source: "merchant_default",
+    });
+  });
+
+  it("beats the bank's PFC label", () => {
+    const pfc = new Map([["TRANSPORTATION_GAS", "cat-pfc"]]);
+    const txn = makeTxn({ name: "CASEYS #901", pfcDetailed: "TRANSPORTATION_GAS" });
+
+    expect(categorizeTransactions([txn], [], pfc, history)[0]).toMatchObject({
+      categoryId: "cat-gas",
+      source: "history",
+    });
+  });
+
+  it("falls through to PFC when history has nothing for the merchant", () => {
+    const pfc = new Map([["TRANSPORTATION_GAS", "cat-pfc"]]);
+    const txn = makeTxn({ name: "Some New Station", pfcDetailed: "TRANSPORTATION_GAS" });
+
+    expect(categorizeTransactions([txn], [], pfc, history)[0].source).toBe("pfc");
   });
 });

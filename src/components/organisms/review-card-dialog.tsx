@@ -80,12 +80,16 @@ export function ReviewCardDialog({
     (categoryId: string | null, categoryName: string | null) => {
       if (!currentTransaction) return;
       const prev = currentTransaction;
-      updateCurrentTransaction({ categoryId, categoryName });
+      updateCurrentTransaction({ categoryId, categoryName, categorySource: categoryId ? "manual" : null });
       setPhase("VIEWING");
 
       void updateTransactionCategory(currentTransaction.id, categoryId).then((result) => {
         if ("error" in result) {
-          updateCurrentTransaction({ categoryId: prev.categoryId, categoryName: prev.categoryName });
+          updateCurrentTransaction({
+            categoryId: prev.categoryId,
+            categoryName: prev.categoryName,
+            categorySource: prev.categorySource,
+          });
         }
       });
     },

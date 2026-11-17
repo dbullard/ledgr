@@ -1,10 +1,14 @@
-import { eq, and, isNull, inArray } from "drizzle-orm";
+import { eq, and, isNull, isNotNull, inArray, desc } from "drizzle-orm";
 import type { LedgrDb } from "@/db";
 import { transactions, merchants, categoryRules, accounts, categories } from "@/db/schema";
 import { scopedQuery } from "@/lib/scoped-query";
 import { notDeleted } from "@/lib/query-helpers";
 import { withHousehold } from "@/lib/household-context";
 import { PFC_DETAILED_TO_CATEGORY } from "./pfc-map";
+import { buildHistoryIndex, suggestFromHistory, type HistoryIndex } from "./history-suggester";
+
+/** Newest manual labels to learn from; bounds the work done per sync. */
+const HISTORY_LOOKBACK_ROWS = 20_000;
 
 export interface CategorizableTransaction {
   id: string;
@@ -26,13 +30,14 @@ export interface CategoryRule {
 export interface CategoryAssignment {
   transactionId: string;
   categoryId: string;
-  source: "rule" | "merchant_default" | "pfc";
+  source: "rule" | "merchant_default" | "history" | "pfc";
 }
 
 export function categorizeTransactions(
   transactions: CategorizableTransaction[],
   rules: CategoryRule[],
   pfcCategoryMap: Map<string, string> = new Map(),
+  historyIndex: HistoryIndex = new Map(),
 ): CategoryAssignment[] {
   // Lowercase each rule's pattern once (R work) rather than per transaction.
   const sorted = [...rules]
@@ -68,6 +73,20 @@ export function categorizeTransactions(
         source: "merchant_default",
       });
       matched = true;
+    }
+
+    // Your own past manual choices outrank the bank's generic label, but are
+    // still a guess, so the row is filed as "history" and queued for review.
+    if (!matched) {
+      const suggestion = suggestFromHistory(txn.name, historyIndex);
+      if (suggestion) {
+        assignments.push({
+          transactionId: txn.id,
+          categoryId: suggestion.categoryId,
+          source: "history",
+        });
+        matched = true;
+      }
     }
 
     if (!matched && txn.pfcDetailed) {
@@ -189,7 +208,27 @@ async function doCategorizeSyncedTransactions(
     };
   });
 
-  const assignments = categorizeTransactions(categorizableTxns, rules, pfcCategoryMap);
+  // Learn from what the household categorized by hand. Transfers carry no
+  // category worth learning, and deleted/hidden rows are not evidence.
+  const labeled = await db
+    .select({ name: transactions.name, categoryId: transactions.categoryId })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.householdId, householdId),
+        eq(transactions.categorySource, "manual"),
+        isNotNull(transactions.categoryId),
+        eq(transactions.isTransfer, false),
+        notDeleted(transactions),
+      ),
+    )
+    .orderBy(desc(transactions.date))
+    .limit(HISTORY_LOOKBACK_ROWS);
+  const historyIndex = buildHistoryIndex(
+    labeled.flatMap((r) => (r.categoryId ? [{ name: r.name, categoryId: r.categoryId }] : [])),
+  );
+
+  const assignments = categorizeTransactions(categorizableTxns, rules, pfcCategoryMap, historyIndex);
   if (assignments.length === 0) return;
 
   const now = new Date();

@@ -14,6 +14,9 @@ import { recurringTransactions } from "./recurring";
 export const CATEGORY_SOURCES = [
   "rule",
   "merchant_default",
+  // Learned from the household's own past manual choices for the same
+  // merchant. A guess, so it is queued for review like `ai`.
+  "history",
   "pfc",
   "ai",
   "ai_low_confidence",

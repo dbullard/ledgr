@@ -146,7 +146,7 @@ export function baseTransactionQuery(db: LedgrDb, householdId: string) {
 }
 
 /** Category sources that are a guess rather than a decision someone made. */
-const GUESSED_CATEGORY_SOURCES = ["ai", "ai_low_confidence"] as const;
+const GUESSED_CATEGORY_SOURCES = ["ai", "ai_low_confidence", "history"] as const;
 
 function needsReviewCondition(): SQL {
   return and(

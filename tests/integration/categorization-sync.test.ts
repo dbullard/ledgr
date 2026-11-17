@@ -145,4 +145,57 @@ describe("categorizeSyncedTransactions", () => {
       categorizeSyncedTransactions("nonexistent-item", householdId, db),
     ).resolves.not.toThrow();
   });
+
+  describe("history tier", () => {
+    it("files a new transaction under the category the household picked by hand before", async () => {
+      const { groupId } = await insertCategoryGroup(db, householdId, { name: "Auto" });
+      const { categoryId: gas } = await insertCategory(db, householdId, groupId, { name: "Gas" });
+      for (const n of ["CASEYS #12", "CASEYS #30", "CASEYS #44"]) {
+        await insertTransaction(db, householdId, accountId, {
+          name: n, originalName: n, categoryId: gas, categorySource: "manual",
+        });
+      }
+      const fresh = await insertTransaction(db, householdId, accountId, { name: "CASEYS #901" });
+
+      await categorizeSyncedTransactions(plaidItemId, householdId, db);
+
+      const [row] = await db.select().from(transactions).where(eq(transactions.id, fresh.transactionId));
+      expect(row!.categoryId).toBe(gas);
+      expect(row!.categorySource).toBe("history");
+    });
+
+    it("does not learn from rows that were not categorized by hand", async () => {
+      const { groupId } = await insertCategoryGroup(db, householdId, { name: "Misc" });
+      const { categoryId: cat } = await insertCategory(db, householdId, groupId, { name: "Pets" });
+      for (const n of ["PETCO #1", "PETCO #2", "PETCO #3"]) {
+        await insertTransaction(db, householdId, accountId, {
+          name: n, originalName: n, categoryId: cat, categorySource: "ai",
+        });
+      }
+      const fresh = await insertTransaction(db, householdId, accountId, { name: "PETCO #77" });
+
+      await categorizeSyncedTransactions(plaidItemId, householdId, db);
+
+      const [row] = await db.select().from(transactions).where(eq(transactions.id, fresh.transactionId));
+      expect(row!.categoryId).toBeNull();
+    });
+
+    it("does not learn from another household's choices", async () => {
+      const { householdId: other } = await insertHousehold(db);
+      const { accountId: otherAccount } = await insertAccount(db, other);
+      const { groupId } = await insertCategoryGroup(db, other, { name: "Other" });
+      const { categoryId: cat } = await insertCategory(db, other, groupId, { name: "Theirs" });
+      for (const n of ["TRADER JOES #1", "TRADER JOES #2", "TRADER JOES #3"]) {
+        await insertTransaction(db, other, otherAccount, {
+          name: n, originalName: n, categoryId: cat, categorySource: "manual",
+        });
+      }
+      const fresh = await insertTransaction(db, householdId, accountId, { name: "TRADER JOES #55" });
+
+      await categorizeSyncedTransactions(plaidItemId, householdId, db);
+
+      const [row] = await db.select().from(transactions).where(eq(transactions.id, fresh.transactionId));
+      expect(row!.categoryId).toBeNull();
+    });
+  });
 });

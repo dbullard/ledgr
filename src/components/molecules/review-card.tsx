@@ -5,6 +5,7 @@ import { EntityAvatar } from "@/components/molecules/entity-avatar";
 import { AmountDisplay } from "@/components/atoms/amount-display";
 import { CategoryPill } from "@/components/molecules/category-pill";
 import { EditableText } from "@/components/molecules/editable-text";
+import { ReviewSuggestionNote } from "@/components/molecules/review-suggestion-note";
 import { formatDateShort } from "@/lib/date-utils";
 import type { TransactionRow } from "@/queries/transactions";
 import type { CategoryGroup } from "@/queries/categories";
@@ -79,6 +80,12 @@ export function ReviewCard({
           open={categoryOpen}
           onOpenChange={onCategoryOpenChange}
         />
+        <div className="mt-1.5">
+          <ReviewSuggestionNote
+            key={`${transaction.id}:${transaction.categoryId ?? ""}`}
+            transaction={transaction}
+          />
+        </div>
       </div>
 
       <div>
