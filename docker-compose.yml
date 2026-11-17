@@ -111,6 +111,9 @@ services:
         KEEP=$${BACKUP_KEEP:-14}
         HOUR=$${BACKUP_HOUR:-3}
         STATUS=$$DIR/status.json
+        # The app reads status.json through a read-only mount as a different user.
+        # Some NAS shares give root-written files no permissions for others, so say it explicitly.
+        chmod 755 "$$DIR" 2>/dev/null || true
         now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
         prev_success() { sed -n 's/.*"lastSuccessAt":"\([^"]*\)".*/\1/p' "$$STATUS" 2>/dev/null | head -n 1; }
         write_status() { # success_at attempt_at error file
@@ -121,6 +124,7 @@ services:
           n=$$(ls -1 $$DIR/ledgr-*.dump 2>/dev/null | wc -l | tr -d ' ')
           printf '{"lastSuccessAt":%s,"lastAttemptAt":"%s","lastError":%s,"file":%s,"sizeBytes":%s,"count":%s}\n' \
             "$$ok" "$$2" "$$er" "$$fl" "$$sz" "$$n" > "$$DIR/.status.tmp" && mv "$$DIR/.status.tmp" "$$STATUS"
+          chmod 644 "$$STATUS" 2>/dev/null || true
         }
         run_backup() {
           at=$$(now); ts=$$(date -u +%Y%m%d-%H%M%S); f=ledgr-$$ts.dump
