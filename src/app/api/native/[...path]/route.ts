@@ -28,6 +28,7 @@ import {
 } from "@/queries/investments";
 import { rangeToDateBounds } from "@/lib/date-utils";
 import { getCategoryRules } from "@/queries/category-rules";
+import { nativeSearch } from "@/lib/native-search";
 import { getCategorySuggestions, setCategorySuggestion } from "@/lib/ai/category-suggestions";
 import {
   applyRuleToExisting,
@@ -119,6 +120,7 @@ export const dynamic = "force-dynamic";
  *   POST   /api/native/receipts/attach   { receiptId, transactionId }
  *   POST   /api/native/receipts/:id/detach   (back to the waiting list; the matcher won't re-attach it)
  *   DELETE /api/native/receipts/:id
+ *   GET    /api/native/search?q                      (transactions + accounts, categories, rules, recurring, items, holdings)
  *   GET    /api/native/items?from&to&category&q
  *   GET    /api/native/items/history?key
  *   GET    /api/native/accounts                      (grouped by institution + totals)
@@ -784,6 +786,10 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
     const key = q.get("key");
     if (!key) return fail("key is required");
     return ok(await withHousehold(householdId, (tx) => getProductPriceHistory(householdId, key, tx)));
+  }
+
+  if (head === "search" && !id && method === "GET") {
+    return ok(await nativeSearch(householdId, q.get("q") ?? ""));
   }
 
   if (head === "items" && !id && method === "GET") {
