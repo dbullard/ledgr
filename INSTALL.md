@@ -52,6 +52,35 @@ Your data lives in two Docker volumes: `pgdata` (the database) and `appdata`
 (encryption key and session secret). Losing `appdata` makes stored bank tokens
 unreadable, so back up both.
 
+**The database is backed up for you.** The `backup` service in
+`docker-compose.yml` dumps it every night at 03:00 (container clock, UTC by
+default), keeps the newest 14 dumps, and checks each one is readable. Settings →
+Data health shows when the last one ran and turns amber or red if it is late or
+failed. Set these in `.env`:
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `BACKUP_PATH` | a Docker volume | Folder for the dumps. On a NAS, point this at a share on a **different disk** than the database. |
+| `BACKUP_KEEP` | `14` | How many dumps to keep. |
+| `BACKUP_HOUR` | `3` | Hour of day (0-23) for the nightly dump. |
+
+The `backup` service does **not** copy `appdata`. Keep your own copy of the
+encryption key (`/data/encryption-key`), stored somewhere other than the dumps.
+Anyone with both can read your bank tokens.
+
+To restore, run this from the folder with `docker-compose.yml`:
+
+```bash
+./scripts/restore.sh /path/to/backups/ledgr-20261117-030000.dump
+```
+
+It asks you to type `RESTORE`, stops the app, saves the current database as
+`pre-restore-<time>.dump` next to the dump, restores in one transaction, and
+starts the app again. If the restore fails it rolls back and leaves the database
+as it was. Upgrading an existing install? Add the `backup` service, the
+`backups` volume and the `/backups:ro` mount on `app` from `docker-compose.yml`
+to your own compose file; `deploy.sh` only changes the image line.
+
 ## 2. Install the apps (TestFlight)
 
 1. Install **TestFlight** from the App Store on your iPhone and Mac.

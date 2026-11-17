@@ -45,6 +45,9 @@ services:
       # RECEIPTS_PATH at a NAS mount to keep them there; the default is a
       # Docker volume.
       - ${RECEIPTS_PATH:-receipts}:/data/receipts
+      # Read-only view of the backup sidecar's folder, so Settings > Data
+      # health can show when the last backup ran.
+      - ${BACKUP_PATH:-backups}:/backups:ro
     env_file:
       - path: .env
         required: false
@@ -77,7 +80,78 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Nightly pg_dump of the database into BACKUP_PATH, keeping the newest
+  # BACKUP_KEEP dumps. Runs the same postgres image as `db`, so pg_dump always
+  # matches the server version. After every attempt it writes status.json,
+  # which the app reads (read-only) to show Settings > Data health.
+  # Restore with scripts/restore.sh. This does NOT back up the `appdata`
+  # volume (encryption key, session secret): keep a copy of that yourself,
+  # and not in the same place as the dumps.
+  backup:
+    image: postgres:18-alpine
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-ledgr}
+      BACKUP_KEEP: ${BACKUP_KEEP:-14}
+      # Hour of day (0-23, container clock, UTC by default) for the nightly dump.
+      BACKUP_HOUR: ${BACKUP_HOUR:-3}
+    volumes:
+      - ${BACKUP_PATH:-backups}:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        DIR=/backups
+        KEEP=$${BACKUP_KEEP:-14}
+        HOUR=$${BACKUP_HOUR:-3}
+        STATUS=$$DIR/status.json
+        now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+        prev_success() { sed -n 's/.*"lastSuccessAt":"\([^"]*\)".*/\1/p' "$$STATUS" 2>/dev/null | head -n 1; }
+        write_status() { # success_at attempt_at error file
+          ok="null"; [ -n "$$1" ] && ok="\"$$1\""
+          er="null"; [ -n "$$3" ] && er="\"$$3\""
+          fl="null"; sz="null"
+          if [ -n "$$4" ] && [ -f "$$DIR/$$4" ]; then fl="\"$$4\""; sz=$$(wc -c < "$$DIR/$$4" | tr -d ' '); fi
+          n=$$(ls -1 $$DIR/ledgr-*.dump 2>/dev/null | wc -l | tr -d ' ')
+          printf '{"lastSuccessAt":%s,"lastAttemptAt":"%s","lastError":%s,"file":%s,"sizeBytes":%s,"count":%s}\n' \
+            "$$ok" "$$2" "$$er" "$$fl" "$$sz" "$$n" > "$$DIR/.status.tmp" && mv "$$DIR/.status.tmp" "$$STATUS"
+        }
+        run_backup() {
+          at=$$(now); ts=$$(date -u +%Y%m%d-%H%M%S); f=ledgr-$$ts.dump
+          if msg=$$(pg_dump -h db -U ledgr -Fc -f "$$DIR/$$f.part" ledgr 2>&1) \
+             && msg=$$(pg_restore --list "$$DIR/$$f.part" 2>&1 >/dev/null) \
+             && mv "$$DIR/$$f.part" "$$DIR/$$f"; then
+            ls -1t $$DIR/ledgr-*.dump | tail -n +$$((KEEP + 1)) | xargs -r rm -f
+            write_status "$$at" "$$at" "" "$$f"
+            echo "backup ok: $$f"
+          else
+            rm -f "$$DIR/$$f.part"
+            e=$$(printf '%s' "$$msg" | tr -d '"\\' | tr '\n' ' ' | cut -c1-200)
+            write_status "$$(prev_success)" "$$at" "$${e:-backup failed}" ""
+            echo "backup FAILED: $$e" >&2
+          fi
+        }
+        # Back up right away on first start (or after downtime), then nightly.
+        last=$$(ls -1t $$DIR/ledgr-*.dump 2>/dev/null | head -n 1)
+        if [ -z "$$last" ] || [ -n "$$(find "$$last" -mmin +1200)" ]; then run_backup; fi
+        while true; do
+          h=$$(date +%H | sed 's/^0*//'); m=$$(date +%M | sed 's/^0*//'); s=$$(date +%S | sed 's/^0*//')
+          wait=$$(( HOUR * 3600 - ($${h:-0} * 3600 + $${m:-0} * 60 + $${s:-0}) ))
+          [ $$wait -le 0 ] && wait=$$((wait + 86400))
+          echo "next backup in $$wait s"
+          sleep $$wait
+          run_backup
+        done
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   pgdata:
   appdata:
   receipts:
+  backups:
