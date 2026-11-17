@@ -97,6 +97,11 @@ services:
       BACKUP_KEEP: ${BACKUP_KEEP:-14}
       # Hour of day (0-23, container clock, UTC by default) for the nightly dump.
       BACKUP_HOUR: ${BACKUP_HOUR:-3}
+      # Where the database is reachable from this container. The defaults fit
+      # this file; a setup with host networking (database on 127.0.0.1, odd port)
+      # sets both and adds `network_mode: host` to this service.
+      BACKUP_DB_HOST: ${BACKUP_DB_HOST:-db}
+      BACKUP_DB_PORT: ${BACKUP_DB_PORT:-5432}
     volumes:
       - ${BACKUP_PATH:-backups}:/backups
     entrypoint: ["/bin/sh", "-c"]
@@ -119,7 +124,7 @@ services:
         }
         run_backup() {
           at=$$(now); ts=$$(date -u +%Y%m%d-%H%M%S); f=ledgr-$$ts.dump
-          if msg=$$(pg_dump -h db -U ledgr -Fc -f "$$DIR/$$f.part" ledgr 2>&1) \
+          if msg=$$(pg_dump -h "$$BACKUP_DB_HOST" -p "$$BACKUP_DB_PORT" -U ledgr -Fc -f "$$DIR/$$f.part" ledgr 2>&1) \
              && msg=$$(pg_restore --list "$$DIR/$$f.part" 2>&1 >/dev/null) \
              && mv "$$DIR/$$f.part" "$$DIR/$$f"; then
             ls -1t $$DIR/ledgr-*.dump | tail -n +$$((KEEP + 1)) | xargs -r rm -f

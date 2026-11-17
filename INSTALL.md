@@ -63,6 +63,7 @@ failed. Set these in `.env`:
 | `BACKUP_PATH` | a Docker volume | Folder for the dumps. On a NAS, point this at a share on a **different disk** than the database. |
 | `BACKUP_KEEP` | `14` | How many dumps to keep. |
 | `BACKUP_HOUR` | `3` | Hour of day (0-23) for the nightly dump. |
+| `BACKUP_DB_HOST` / `BACKUP_DB_PORT` | `db` / `5432` | Where the backup service reaches the database. Only change these with host networking (add `network_mode: host` to the `backup` service). |
 
 The `backup` service does **not** copy `appdata`. Keep your own copy of the
 encryption key (`/data/encryption-key`), stored somewhere other than the dumps.
