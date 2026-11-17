@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 
 enum AppSection: Hashable {
     case dashboard, transactions, accounts, budgets, recurring, investments, reports, categories, rules, receipts, items, importFile, more
@@ -104,20 +105,28 @@ struct MainView: View {
     @EnvironmentObject var queue: UploadQueue
     @EnvironmentObject var api: API
     @EnvironmentObject var connection: Connection
+    @ObservedObject private var context = AppContext.shared
 
     /// Receipts on the server still waiting for a transaction (re-matched on the way).
     private func refreshWaiting() async {
         if let list: [UnmatchedReceipt] = try? await api.get("api/native/receipts") { waiting = list.count }
     }
 
-    /// How many transactions still need a category.
+    /// How many transactions still need a look: unreviewed and uncategorized, or only a guess.
+    /// Drives the Transactions badge and the app icon. (The name and the "badgeUncategorized"
+    /// setting predate guesses; the key is kept so a saved choice still applies.)
     private func refreshUncategorized() async {
-        guard badgeUncategorized else { uncategorized = 0; return }
-        if let page: TxnPage = try? await api.get("api/native/transactions", query: ["uncategorized": "1", "limit": "100", "count": "1"]) {
+        guard badgeUncategorized else { uncategorized = 0; setIconBadge(0); return }
+        if let page: TxnPage = try? await api.get("api/native/transactions", query: ["needsReview": "1", "limit": "100", "count": "1"]) {
             // Servers that predate `count` return only the rows themselves, which is exact up to one page.
-            let n = page.rows.filter { $0.categoryId == nil && !$0.isTransfer }.count
-            uncategorized = page.count ?? n
+            uncategorized = page.count ?? page.rows.count
+            setIconBadge(uncategorized)
         }
+    }
+
+    /// The number on the app icon. Needs notification permission for badges; without it this is a no-op.
+    private func setIconBadge(_ n: Int) {
+        Task { try? await UNUserNotificationCenter.current().setBadgeCount(n) }
     }
 
     private var uncategorizedBadge: Text? {
@@ -142,6 +151,7 @@ struct MainView: View {
                 Task { await api.syncBanks(); api.noteChanged() }
             }
             .overlay(alignment: .bottom) { SimilarCategoryBanner() }
+            .onChange(of: context.pendingReview, initial: true) { _, pending in if pending { section = .transactions } }
     }
 
     private func badge(for choice: TabChoice) -> Text? {

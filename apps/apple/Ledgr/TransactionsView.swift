@@ -23,6 +23,7 @@ struct TransactionsView: View {
     @State private var dropMessage: String?
     @State private var listGroups: [CategoryGroup] = CategoryCache.groups
     @ObservedObject private var suggester = CategorySuggester.shared
+    @ObservedObject private var context = AppContext.shared
 
     private struct Key: Hashable { let search: String; let filter: TxnFilter; let account: String?; let base: URL? }
 
@@ -53,6 +54,10 @@ struct TransactionsView: View {
         }
         .scrollContentBackground(.hidden)
         .background(Color.canvas)
+        // "Open review queue" (Siri / Shortcuts): show what needs a look.
+        .onChange(of: context.pendingReview, initial: true) { _, pending in
+            if pending { filter = .needsReview; context.pendingReview = false }
+        }
         .overlay {
             if !loaded && error == nil { LoadingPlaceholder() }
             else if let error, rows.isEmpty { ErrorState(message: error) { Task { await reload() } } }
@@ -299,6 +304,7 @@ struct TransactionDetailView: View {
                     } else {
                         categoryRow
                         suggestionRow
+                        GuessNote(txn: txn).id("\(txn.id):\(txn.categoryId ?? "")")
                         // Spending only. An income row that was already linked keeps the row so it can be removed.
                         if txn.normalizedAmount < 0 || txn.recurringTransactionId != nil {
                             Divider()

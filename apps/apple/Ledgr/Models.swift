@@ -55,6 +55,9 @@ struct Txn: Codable, Identifiable, Hashable {
     var categoryId: String?
     var categoryName: String?
     let categoryIcon: String?
+    /// How the category was set: "manual", "rule", "history", "ai"... Guesses ("history", "ai",
+    /// "ai_low_confidence") are queued for review. Absent on servers that predate it.
+    var categorySource: String? = nil
     var notes: String?
     let hasSplits: Bool?
     let isTransfer: Bool

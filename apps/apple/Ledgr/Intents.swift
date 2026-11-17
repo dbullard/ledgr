@@ -4,10 +4,13 @@ import SwiftUI
 /// Lets App Intents (Siri, Spotlight, Shortcuts) reach the running app's API client.
 /// Intents run inside the app process, so LedgrApp registers its objects here at launch.
 @MainActor
-final class AppContext {
+final class AppContext: ObservableObject {
     static let shared = AppContext()
     var api: API?
     var actions: AppActions?
+    /// Set by "Open review queue"; the main screen jumps to Transactions, which clears it
+    /// after switching to the Needs review filter. A flag (not an event) so it survives a cold launch.
+    @Published var pendingReview = false
 }
 
 enum IntentFailure: LocalizedError {
@@ -249,11 +252,26 @@ struct ReviewQueueIntent: AppIntent {
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let api = try await readyAPI()
-        let page: TxnPage = try await api.get("api/native/transactions", query: ["needsReview": "1", "limit": "50"])
-        let n = page.rows.count
+        let page: TxnPage = try await api.get("api/native/transactions", query: ["needsReview": "1", "limit": "50", "count": "1"])
+        // `count` is the true total; servers that predate it only return the first page.
+        let n = page.count ?? page.rows.count
         if n == 0 { return .result(dialog: "You're all caught up. Nothing to review.") }
-        let more = page.nextCursor != nil ? "at least " : ""
-        return .result(dialog: "You have \(more)\(n) transactions to review.")
+        let more = page.count == nil && page.nextCursor != nil ? "at least " : ""
+        return .result(dialog: "You have \(more)\(n) transaction\(n == 1 ? "" : "s") to review.")
+    }
+}
+
+/// Not in `LedgrShortcuts`: Apple allows at most 10 App Shortcuts per app and Ledgr is at the limit,
+/// so this is an action people add themselves in the Shortcuts app (or find in Spotlight).
+struct OpenReviewQueueIntent: AppIntent {
+    static let title: LocalizedStringResource = "Open Review Queue"
+    static let description = IntentDescription("Opens Ledgr's Transactions list filtered to what needs your review.")
+    static let openAppWhenRun = true
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        AppContext.shared.pendingReview = true
+        return .result()
     }
 }
 

@@ -148,6 +148,12 @@ final class API: ObservableObject {
         _ = try await send("POST", path, body: body)
     }
 
+    /// A POST whose JSON answer the caller needs (the plain `post` discards it).
+    func postDecoded<T: Decodable>(_ path: String, body: [String: Any]) async throws -> T {
+        let data = try await send("POST", path, body: body)
+        return try decode(data)
+    }
+
     func delete(_ path: String, query: [String: String] = [:]) async throws {
         _ = try await send("DELETE", path, query: query)
     }

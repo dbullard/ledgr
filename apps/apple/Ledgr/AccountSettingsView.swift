@@ -62,8 +62,8 @@ struct AccountSettingsView: View {
                 }
 
                 Card("Navigation") {
-                    Toggle("Badge uncategorized transactions", isOn: $badgeUncategorized)
-                    Text("Shows how many transactions still need a category on the Transactions tab.")
+                    Toggle("Badge transactions to review", isOn: $badgeUncategorized)
+                    Text("Shows how many transactions still need a category or a look on the Transactions tab and the app icon.")
                         .font(.caption).foregroundStyle(.secondary)
                     #if os(iOS)
                     NavigationLink { TabBarEditor() } label: {
