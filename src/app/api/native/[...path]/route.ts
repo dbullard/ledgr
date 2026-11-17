@@ -30,8 +30,10 @@ import { rangeToDateBounds } from "@/lib/date-utils";
 import { getCategoryRules } from "@/queries/category-rules";
 import { getCategorySuggestions, setCategorySuggestion } from "@/lib/ai/category-suggestions";
 import {
+  applyRuleToExisting,
   createCategoryRule,
   deleteCategoryRule,
+  previewRuleApplication,
   updateCategoryRule,
 } from "@/actions/category-rules";
 import {
@@ -138,6 +140,8 @@ export const dynamic = "force-dynamic";
  *   GET    /api/native/category-rules
  *   POST   /api/native/category-rules    { categoryId, matchField, matchPattern, priority }
  *   PATCH  /api/native/category-rules/:id  (same fields)  DELETE /api/native/category-rules/:id
+ *   POST   /api/native/category-rules/preview  { categoryId, matchField, matchPattern }  -> { count } existing uncategorized/guessed rows the rule would file
+ *   POST   /api/native/category-rules/apply    { categoryId, matchField, matchPattern }  -> { updated }
  *   GET    /api/native/recurring                     (bucketed list + monthly totals)
  *   GET    /api/native/recurring/:id/transactions
  *   PATCH  /api/native/recurring/:id    { status: "active"|"paused"|"archived" }
@@ -422,6 +426,11 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
     if (!id && method === "POST") {
       if (!input) return fail("Invalid input");
       return fin(await createCategoryRule(input));
+    }
+    if ((id === "preview" || id === "apply") && method === "POST") {
+      if (!input) return fail("Invalid input");
+      const result = id === "preview" ? await previewRuleApplication(input) : await applyRuleToExisting(input);
+      return "error" in result ? fail(result.error) : ok(result);
     }
     if (id && method === "PATCH") {
       if (!input) return fail("Invalid input");

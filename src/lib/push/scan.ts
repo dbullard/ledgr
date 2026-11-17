@@ -1,4 +1,4 @@
-import { and, count, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, count, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { db as defaultDb, type LedgrDb } from "@/db";
 import { accounts, bankConnections, households, pushEvents, transactions } from "@/db/schema";
 import { withHousehold } from "@/lib/household-context";
@@ -217,6 +217,8 @@ export interface WeekSummary {
   spentCents: number;
   incomeCents: number;
   charges: number;
+  /** Transactions still waiting for a look (uncategorized or guessed). */
+  toReview?: number;
 }
 
 /** Sunday-morning recap, once per week. Returns nothing on other days or before 9am. */
@@ -224,6 +226,7 @@ export function weeklyCandidates(week: WeekSummary, now: Date): PushCandidate[] 
   if (now.getDay() !== 0 || now.getHours() < 9) return [];
   const parts = [`Spent ${centsToDisplay(week.spentCents)} across ${week.charges} charge${week.charges === 1 ? "" : "s"}`];
   if (week.incomeCents > 0) parts.push(`${centsToDisplay(week.incomeCents)} came in`);
+  if (week.toReview) parts.push(`${week.toReview} to review`);
   return [
     {
       type: "weekly",
@@ -383,7 +386,30 @@ export async function collectCandidates(
                   isNull(transactions.deletedAt),
                 ),
               );
-            return { spentCents: r?.spent ?? 0, incomeCents: r?.income ?? 0, charges: r?.charges ?? 0 };
+            // Same rule as the in-app queue: unreviewed and either uncategorized or a guess.
+            const [q] = await tx
+              .select({ n: count() })
+              .from(transactions)
+              .where(
+                and(
+                  eq(transactions.householdId, householdId),
+                  eq(transactions.reviewed, false),
+                  eq(transactions.pending, false),
+                  eq(transactions.isTransfer, false),
+                  eq(transactions.isHidden, false),
+                  isNull(transactions.deletedAt),
+                  or(
+                    isNull(transactions.categoryId),
+                    inArray(transactions.categorySource, ["ai", "ai_low_confidence", "history"]),
+                  ),
+                ),
+              );
+            return {
+              spentCents: r?.spent ?? 0,
+              incomeCents: r?.income ?? 0,
+              charges: r?.charges ?? 0,
+              toReview: q?.n ?? 0,
+            };
           },
           db,
         )

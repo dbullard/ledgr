@@ -9,6 +9,8 @@ import { categoryRules, categories } from "@/db/schema";
 import { scopedQuery } from "@/lib/scoped-query";
 import { authorizeAction } from "@/lib/auth/authorize-action";
 import { normalizeRulePattern } from "@/lib/categorization/rule-pattern";
+import { applyRuleToTargets, countRuleTargets, type RuleTarget } from "@/lib/categorization/apply-rule";
+import { withHousehold } from "@/lib/household-context";
 
 type ActionResult = { success: true } | { error: string };
 
@@ -148,4 +150,64 @@ export async function deleteCategoryRule(
   const auth = await authorizeAction();
   if ("error" in auth) return auth;
   return deleteCategoryRuleScoped(auth.householdId, ruleId, db);
+}
+
+const ruleTargetSchema = ruleInputSchema.pick({ categoryId: true, matchField: true, matchPattern: true });
+export type RuleTargetInput = z.input<typeof ruleTargetSchema>;
+
+async function parseRuleTarget(
+  householdId: string,
+  input: RuleTargetInput,
+  db: LedgrDb,
+): Promise<{ rule: RuleTarget } | { error: string }> {
+  const parsed = ruleTargetSchema.safeParse(input);
+  if (!parsed.success) return { error: "Enter a pattern to match on." };
+  if (!(await categoryBelongsToHousehold(householdId, parsed.data.categoryId, db))) {
+    return { error: "Category not found" };
+  }
+  return { rule: parsed.data };
+}
+
+/** How many existing uncategorized or guessed transactions a rule would file. */
+export async function previewRuleApplicationScoped(
+  householdId: string,
+  input: RuleTargetInput,
+  db: LedgrDb = defaultDb,
+): Promise<{ count: number } | { error: string }> {
+  const target = await parseRuleTarget(householdId, input, db);
+  if ("error" in target) return target;
+  return { count: await withHousehold(householdId, (tx) => countRuleTargets(householdId, target.rule, tx), db) };
+}
+
+export async function applyRuleToExistingScoped(
+  householdId: string,
+  input: RuleTargetInput,
+  db: LedgrDb = defaultDb,
+): Promise<{ updated: number } | { error: string }> {
+  const target = await parseRuleTarget(householdId, input, db);
+  if ("error" in target) return target;
+  const updated = await withHousehold(householdId, (tx) => applyRuleToTargets(householdId, target.rule, tx), db);
+  if (updated > 0) {
+    revalidatePath("/transactions");
+    revalidatePath("/");
+  }
+  return { updated };
+}
+
+export async function previewRuleApplication(
+  input: RuleTargetInput,
+  db: LedgrDb = defaultDb,
+): Promise<{ count: number } | { error: string }> {
+  const auth = await authorizeAction();
+  if ("error" in auth) return auth;
+  return previewRuleApplicationScoped(auth.householdId, input, db);
+}
+
+export async function applyRuleToExisting(
+  input: RuleTargetInput,
+  db: LedgrDb = defaultDb,
+): Promise<{ updated: number } | { error: string }> {
+  const auth = await authorizeAction();
+  if ("error" in auth) return auth;
+  return applyRuleToExistingScoped(auth.householdId, input, db);
 }

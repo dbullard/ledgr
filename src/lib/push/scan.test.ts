@@ -226,4 +226,14 @@ describe("weeklyCandidates", () => {
     expect(c.key).toBe("weekly:2026-11-08");
     expect(c.message.body).toBe("Spent $412.50 across 18 charges · $2,000.00 came in");
   });
+
+  it("adds how many transactions are waiting for review, when any are", () => {
+    const sunday = new Date(2026, 10, 8, 9, 30);
+    expect(weeklyCandidates({ ...week, toReview: 12 }, sunday)[0].message.body).toBe(
+      "Spent $412.50 across 18 charges · $2,000.00 came in · 12 to review",
+    );
+    expect(weeklyCandidates({ ...week, toReview: 1 }, sunday)[0].message.body).toContain("· 1 to review");
+    expect(weeklyCandidates({ ...week, toReview: 0 }, sunday)[0].message.body).not.toContain("review");
+    expect(weeklyCandidates(week, sunday)[0].message.body).not.toContain("review");
+  });
 });

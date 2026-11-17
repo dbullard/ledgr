@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
-import { createCategoryRule } from "@/actions/category-rules";
+import { applyRuleToExisting, createCategoryRule, previewRuleApplication } from "@/actions/category-rules";
 import { suggestRulePattern } from "@/lib/categorization/history-suggester";
 import type { TransactionRow } from "@/queries/transactions";
 
@@ -24,6 +24,9 @@ interface ReviewSuggestionNoteProps {
  */
 export function ReviewSuggestionNote({ transaction }: ReviewSuggestionNoteProps) {
   const [saved, setSaved] = useState(false);
+  // Existing rows the new rule could also file: null until counted, then a number.
+  const [matches, setMatches] = useState<number | null>(null);
+  const [applied, setApplied] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -44,19 +47,47 @@ export function ReviewSuggestionNote({ transaction }: ReviewSuggestionNoteProps)
         matchPattern: pattern,
         priority: 0,
       });
+      if ("error" in result) {
+        setError(result.error);
+        return;
+      }
+      setSaved(true);
+      const preview = await previewRuleApplication({ categoryId, matchField: "name", matchPattern: pattern });
+      if ("count" in preview) setMatches(preview.count);
+    });
+  };
+
+  const applyToExisting = () => {
+    if (!transaction.categoryId || !pattern) return;
+    const categoryId = transaction.categoryId;
+    setError(null);
+    startTransition(async () => {
+      const result = await applyRuleToExisting({ categoryId, matchField: "name", matchPattern: pattern });
       if ("error" in result) setError(result.error);
-      else setSaved(true);
+      else setApplied(result.updated);
     });
   };
 
   return (
     <div className="space-y-1.5 text-xs" data-testid="review-suggestion-note">
-      {guess && <p className="text-muted-foreground">{guess}</p>}
+      {/* Once a rule has filed this row, it is no longer a guess. */}
+      {guess && applied === null && <p className="text-muted-foreground">{guess}</p>}
       {canMakeRule && (
         saved ? (
-          <p className="text-muted-foreground" role="status">
-            Rule saved: &ldquo;{pattern}&rdquo; will be filed under {transaction.categoryName}.
-          </p>
+          <div className="space-y-1" role="status">
+            <p className="text-muted-foreground">
+              Rule saved: &ldquo;{pattern}&rdquo; will be filed under {transaction.categoryName}.
+            </p>
+            {applied !== null ? (
+              <p className="text-muted-foreground">
+                Filed {applied} existing transaction{applied === 1 ? "" : "s"} under {transaction.categoryName}.
+              </p>
+            ) : matches ? (
+              <Button variant="link" size="xs" className="h-auto p-0" onClick={applyToExisting} disabled={pending}>
+                Also file {matches} existing transaction{matches === 1 ? "" : "s"} under {transaction.categoryName}
+              </Button>
+            ) : null}
+          </div>
         ) : (
           <Button
             variant="link"
