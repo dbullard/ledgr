@@ -7,6 +7,7 @@ final class AppActions: ObservableObject {
     @Published var showSettings = false
     @Published var showScanner = false
     @Published var showPhotoPicker = false
+    @Published var showSearch = false
     @Published var reloadTick = 0
 }
 

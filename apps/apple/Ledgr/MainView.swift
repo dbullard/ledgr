@@ -105,6 +105,7 @@ struct MainView: View {
     @EnvironmentObject var queue: UploadQueue
     @EnvironmentObject var api: API
     @EnvironmentObject var connection: Connection
+    @EnvironmentObject var actions: AppActions
     @ObservedObject private var context = AppContext.shared
 
     /// Receipts on the server still waiting for a transaction (re-matched on the way).
@@ -152,6 +153,7 @@ struct MainView: View {
             }
             .overlay(alignment: .bottom) { SimilarCategoryBanner() }
             .onChange(of: context.pendingReview, initial: true) { _, pending in if pending { section = .transactions } }
+            .sheet(isPresented: $actions.showSearch) { SearchView { section = $0 } }
     }
 
     private func badge(for choice: TabChoice) -> Text? {
@@ -242,6 +244,11 @@ struct MainView: View {
             .navigationDestination(for: Txn.self) { TransactionDetailView(initial: $0) }
             .navigationDestination(for: WebPage.self) { WebPageView(page: $0) }
             .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { actions.showSearch = true } label: { Label("Search", systemImage: "magnifyingglass") }
+                        .keyboardShortcut("k", modifiers: .command)
+                        .help("Search everything (⌘K)")
+                }
                 ToolbarItem(placement: .primaryAction) { AddReceiptMenu() }
             }
             .statusToolbar()

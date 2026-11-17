@@ -81,6 +81,50 @@ enum OnDeviceAI {
             data: "Report: \(title). Range: \(range).\n\(data)")
     }
 
+    /// Answers a question typed into search. The model looks up the user's own data with tools
+    /// (subscriptions, budget, spending, accounts, transactions, holdings) and answers from what
+    /// they return, using the app guide only for how-to questions. Nil when unavailable.
+    /// The answer is a short written summary plus any tables the tools produced; the app lays
+    /// the tables out itself so lists are never reformatted by the model.
+    static func answer(question: String, api: API) async -> (text: String?, tables: [AnswerTable]) {
+        #if canImport(FoundationModels)
+        if #available(iOS 27.0, macOS 27.0, *) {
+            let sink = AnswerSink()
+            let session = LanguageModelSession(
+                model: .default,
+                tools: AskTools.all(api: api, sink: sink),
+                instructions: """
+                You answer questions inside Ledgr, a personal finance app, about the user's own money and about using the app.
+                For anything about their data, call the matching tool first and answer from what it returns. Never reply by only telling the user which screen to open when a tool can give the answer.
+                When a tool says its list or table is shown to the user, do NOT list the items again. Write one to three plain sentences instead: the key number, then the most useful insight (the biggest item, anything over budget, anything unusual). Use concrete names and dollar amounts.
+                Plain text only: no bullet points, no markdown, no greetings. Never invent numbers; if a tool shows nothing relevant, say so plainly.
+                For how-to questions use this guide:
+                \(appGuide)
+                """)
+            let reply = try? await session.respond(to: question)
+            let text = reply?.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (text?.isEmpty == false ? text : nil, sink.all)
+        }
+        #endif
+        return (nil, [])
+    }
+
+    /// What each screen is for, so how-to questions have something real to draw on.
+    static let appGuide = """
+    App guide:
+    - Dashboard: net worth, this month's income and spending, recent transactions.
+    - Transactions: every transaction; search, filter, change a category, split, add notes or receipts. Swipe or open one to edit it.
+    - Accounts: balances grouped by bank; pull to refresh pulls new bank data.
+    - Budgets: monthly limits per category; tap a limit to change it.
+    - Recurring: bills and subscriptions found automatically; pause or archive them.
+    - Investments: holdings, performance and investment activity.
+    - Reports: spending, income vs expense, cash flow, trends and net worth over a range.
+    - Receipts and Items: photographed receipts and the products read from them, with price history.
+    - Categories and Rules: edit categories; rules file matching transactions into a category automatically.
+    - Import: bring in a bank file. Settings: server addresses, appearance, notifications, tab bar.
+    - Search (magnifier or Command-K) finds anything across these screens.
+    """
+
     private static func write(instructions: String, data: String) async -> String? {
         #if canImport(FoundationModels)
         if #available(iOS 27.0, macOS 27.0, *) {
