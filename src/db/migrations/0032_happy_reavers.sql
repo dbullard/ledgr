@@ -1,0 +1,1 @@
+ALTER TABLE "receipts" ADD COLUMN "hints_edited_at" timestamp with time zone;

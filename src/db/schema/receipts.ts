@@ -41,6 +41,8 @@ export const receipts = pgTable(
      * never puts it back on its own. They can still attach it by hand.
      */
     autoMatchBlocked: boolean("auto_match_blocked").notNull().default(false),
+    /** Set when a person corrected the total, date or merchant; the hints are theirs from then on and are never re-read from the file. */
+    hintsEditedAt: timestamp("hints_edited_at", { withTimezone: true }),
     /** When line items were last parsed from the file; NULL if never. */
     parsedAt: timestamp("parsed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

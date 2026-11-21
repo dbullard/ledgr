@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { ListChecks } from "lucide-react";
+import { ListChecks, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   createSplitsFromReceipt,
@@ -11,6 +11,7 @@ import {
   type ReceiptItemsResult,
 } from "@/actions/receipt-items";
 import { centsToDisplay } from "@/lib/money";
+import { ReceiptEditDialog } from "@/components/molecules/receipt-edit-dialog";
 import type { CategoryGroup } from "@/queries/categories";
 
 /**
@@ -32,6 +33,7 @@ export function ReceiptItems({
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [editing, setEditing] = useState(false);
 
   // A receipt that already has items shows them without a click.
   useEffect(() => {
@@ -79,6 +81,18 @@ export function ReceiptItems({
     });
   }
 
+  function afterEdit() {
+    setNote(null);
+    startTransition(async () => {
+      const fresh = await fetchReceiptItems(receiptId);
+      if ("data" in fresh) {
+        setResult(fresh.data);
+        setOpen(true);
+      }
+      onSplitsChanged();
+    });
+  }
+
   function split() {
     setError(null);
     setNote(null);
@@ -100,6 +114,17 @@ export function ReceiptItems({
           <ListChecks className="mr-1 size-3" aria-hidden />
           Items
         </Button>
+        <Button variant="ghost" size="sm" className="h-7 rounded-full px-2 text-xs" onClick={() => setEditing(true)}>
+          <Pencil className="mr-1 size-3" aria-hidden />
+          Edit
+        </Button>
+      <ReceiptEditDialog
+        receiptId={receiptId}
+        categories={categories}
+        open={editing}
+        onOpenChange={setEditing}
+        onSaved={afterEdit}
+      />
       </div>
     );
   }
@@ -117,7 +142,19 @@ export function ReceiptItems({
             Split by category
           </Button>
         )}
+        <Button variant="outline" size="sm" className="h-7 rounded-full text-xs" onClick={() => setEditing(true)} disabled={pending}>
+          <Pencil className="mr-1 size-3" aria-hidden />
+          Edit
+        </Button>
       </div>
+      <ReceiptEditDialog
+        receiptId={receiptId}
+        categories={categories}
+        open={editing}
+        onOpenChange={setEditing}
+        onSaved={afterEdit}
+      />
+
 
       {result?.items.map((it) => (
         <div key={it.id} className="grid grid-cols-[1fr_auto] items-center gap-x-2 gap-y-1 text-sm">

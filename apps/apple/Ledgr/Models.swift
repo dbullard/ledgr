@@ -105,6 +105,29 @@ struct TxnItem: Codable, Identifiable, Hashable {
     var name: String { productName ?? rawName }
 }
 
+/// One line on a receipt as the edit form sees it (`GET /api/native/receipts/:id`).
+struct ReceiptEditItem: Codable, Identifiable, Hashable {
+    let id: String
+    let rawName: String
+    let productName: String?
+    let categoryId: String?
+    let categoryName: String?
+    let quantityMilli: Int
+    let totalCents: Int
+}
+
+/// A receipt's total, date, merchant and lines, for the edit form. `gapCents` is what the
+/// total (or, with no total, the transaction) has left over after the lines.
+struct ReceiptEditData: Decodable {
+    let receiptId: String
+    let totalCents: Int?
+    let date: String?
+    let merchant: String?
+    let items: [ReceiptEditItem]
+    let itemsTotalCents: Int
+    let gapCents: Int?
+}
+
 struct TxnDetail: Decodable {
     let txn: Txn
     let splits: [SplitRow]

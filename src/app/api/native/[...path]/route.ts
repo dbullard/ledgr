@@ -97,6 +97,7 @@ import { getItemSpendByCategory, getProductPriceHistory, getTopProducts } from "
 import { fetchTransactionDetail, updateTransactionFields } from "@/actions/transaction-detail";
 import { toggleReviewed, updateTransactionCategory } from "@/actions/transactions";
 import { fetchReceiptItems } from "@/actions/receipt-items";
+import { fetchReceiptForEdit, saveReceiptEdits } from "@/actions/receipt-edit";
 import { attachReceipt, deleteReceipt, detachReceipt, fetchReceipts, fetchUnmatchedReceipts, uploadReceipt } from "@/actions/receipts";
 
 export const dynamic = "force-dynamic";
@@ -120,7 +121,9 @@ export const dynamic = "force-dynamic";
  *   POST   /api/native/receipts/attach   { receiptId, transactionId }
  *   POST   /api/native/receipts/:id/detach   (back to the waiting list; the matcher won't re-attach it)
  *   DELETE /api/native/receipts/:id
- *   GET    /api/native/search?q                      (transactions + accounts, categories, rules, recurring, items, holdings)
+ *   GET    /api/native/receipts/:id                  (the edit form's data: { receiptId, transactionId, totalCents, date, merchant, items[], itemsTotalCents, gapCents })
+ *   PATCH  /api/native/receipts/:id                  { totalCents?, date?, merchant?, items: [{ id?, rawName, productName?, categoryId?, quantityMilli, totalCents }] }  (whole form, saved atomically; returns the same data)
+ *   GET    /api/native/search?q                     (transactions + accounts, categories, rules, recurring, items, holdings)
  *   GET    /api/native/items?from&to&category&q
  *   GET    /api/native/items/history?key
  *   GET    /api/native/accounts                      (grouped by institution + totals)
@@ -780,6 +783,18 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
   if (head === "receipts" && id && id !== "attach" && method === "DELETE") {
     const res = await deleteReceipt(id);
     return "error" in res ? fail(res.error) : ok(res);
+  }
+
+  if (head === "receipts" && id && id !== "attach" && !segs[2] && method === "GET") {
+    const res = await fetchReceiptForEdit(id);
+    return "error" in res ? fail(res.error) : ok(res.data);
+  }
+
+  if (head === "receipts" && id && id !== "attach" && !segs[2] && method === "PATCH") {
+    const body = await req.json().catch(() => null);
+    if (!body || typeof body !== "object") return fail("Invalid input");
+    const res = await saveReceiptEdits(id, body);
+    return "error" in res ? fail(res.error) : ok(res.data);
   }
 
   if (head === "items" && id === "history" && method === "GET") {

@@ -26,7 +26,8 @@ async function refreshWaitingAmounts(tx: LedgrDb, householdId: string, root: str
       hintTotalCents: receipts.hintTotalCents,
     })
     .from(receipts)
-    .where(and(eq(receipts.householdId, householdId), isNull(receipts.transactionId)));
+    // A person's correction is never overwritten by a re-read.
+    .where(and(eq(receipts.householdId, householdId), isNull(receipts.transactionId), isNull(receipts.hintsEditedAt)));
   for (const r of waiting) {
     const ext = receiptExtension(r.originalFilename);
     if (!ext || !REREADABLE.has(ext)) continue;

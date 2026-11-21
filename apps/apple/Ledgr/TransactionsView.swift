@@ -283,6 +283,7 @@ struct TransactionDetailView: View {
     @State private var nameDraft = ""
     @FocusState private var nameFocused: Bool
     @State private var receiptToDelete: ReceiptSummary?
+    @State private var receiptToEdit: ReceiptSummary?
     @ObservedObject private var suggester = CategorySuggester.shared
 
     private var txn: Txn { detail?.txn ?? initial }
@@ -390,6 +391,7 @@ struct TransactionDetailView: View {
                             }
                             .buttonStyle(.plain)
                             Menu {
+                                Button { receiptToEdit = r } label: { Label("Edit receipt…", systemImage: "pencil") }
                                 Button { Task { await detach(r) } } label: { Label("Remove from transaction", systemImage: "link.badge.plus") }
                                 Button(role: .destructive) { receiptToDelete = r } label: { Label("Delete receipt…", systemImage: "trash") }
                             } label: {
@@ -499,6 +501,9 @@ struct TransactionDetailView: View {
             .ignoresSafeArea()
         }
         #endif
+        .sheet(item: $receiptToEdit) { r in
+            ReceiptEditSheet(receiptId: r.id, groups: groups) { await load() }
+        }
         .sheet(isPresented: $showWaiting) {
             WaitingReceiptPicker(transactionId: initial.id) { await load() }
                 #if os(macOS)
