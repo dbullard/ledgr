@@ -13,7 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import type { TransactionRow as TxnRow } from "@/queries/transactions";
 import type { CategoryGroup } from "@/queries/categories";
 import type { TransactionPatch } from "@/hooks/use-transaction-rows";
-import { needsReceipt } from "@/lib/receipts/missing";
+import { showsReceiptMark } from "@/lib/receipts/mark";
 import { cn } from "@/lib/utils";
 
 // Account is a column only at lg and up. The breakpoint is on the viewport but
@@ -235,14 +235,14 @@ function TransactionDescription({
           {txn.name}
         </span>
         {note && <RowNote note={note} />}
-        {needsReceipt(txn) && (
-          // Quiet on purpose: faint, small, and it takes no column. Receipts are optional.
+        {showsReceiptMark(txn) && (
+          // Quiet on purpose: faint, small, and it takes no column.
           <ReceiptText
             className="size-3 shrink-0 text-muted-foreground/40"
-            aria-label="No receipt attached"
+            aria-label="Receipt attached"
             role="img"
           >
-            <title>No receipt</title>
+            <title>Receipt attached</title>
           </ReceiptText>
         )}
         {txn.isHidden && (

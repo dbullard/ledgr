@@ -66,8 +66,8 @@ struct Txn: Codable, Identifiable, Hashable {
     /// The recurring item this transaction belongs to, if any.
     let recurringTransactionId: String?
 
-    /// A posted expense with no receipt gets a quiet mark in lists. Receipts are optional, so it is only a hint.
-    var needsReceipt: Bool { hasReceipt == false && normalizedAmount < 0 && !isTransfer && !pending }
+    /// A transaction with a receipt attached gets a quiet mark in lists.
+    var showsReceiptMark: Bool { hasReceipt == true }
 
     /// What lists show: the user's own name, else the resolved merchant, else the bank's (often noisy) description.
     var displayName: String {
