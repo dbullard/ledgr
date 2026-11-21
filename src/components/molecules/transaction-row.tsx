@@ -2,7 +2,7 @@
 
 import { accountDisplayName } from "@/lib/account-name";
 import { memo, useCallback, useRef, useState } from "react";
-import { Clock, Eye, EyeOff } from "lucide-react";
+import { Clock, Eye, EyeOff, ReceiptText } from "lucide-react";
 import { AmountDisplay } from "@/components/atoms/amount-display";
 import { EntityAvatar } from "@/components/molecules/entity-avatar";
 import { CategoryPill } from "@/components/molecules/category-pill";
@@ -13,6 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import type { TransactionRow as TxnRow } from "@/queries/transactions";
 import type { CategoryGroup } from "@/queries/categories";
 import type { TransactionPatch } from "@/hooks/use-transaction-rows";
+import { needsReceipt } from "@/lib/receipts/missing";
 import { cn } from "@/lib/utils";
 
 // Account is a column only at lg and up. The breakpoint is on the viewport but
@@ -234,6 +235,16 @@ function TransactionDescription({
           {txn.name}
         </span>
         {note && <RowNote note={note} />}
+        {needsReceipt(txn) && (
+          // Quiet on purpose: faint, small, and it takes no column. Receipts are optional.
+          <ReceiptText
+            className="size-3 shrink-0 text-muted-foreground/40"
+            aria-label="No receipt attached"
+            role="img"
+          >
+            <title>No receipt</title>
+          </ReceiptText>
+        )}
         {txn.isHidden && (
           <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">Hidden</Badge>
         )}

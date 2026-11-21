@@ -1,6 +1,6 @@
 import { eq, and, or, ilike, gte, lte, lt, gt, isNull, desc, sql, inArray, type SQL } from "drizzle-orm";
 import { db as defaultDb, type LedgrDb } from "@/db";
-import { transactions, categories, categoryGroups, merchants, accounts, transactionSplits, type CategorySource } from "@/db/schema";
+import { transactions, categories, categoryGroups, merchants, accounts, transactionSplits, receipts, type CategorySource } from "@/db/schema";
 import { scopedQuery } from "@/lib/scoped-query";
 import { includedInSpending } from "@/queries/shared-conditions";
 import { notDeleted, encodeCursor, decodeCursor, countRows, isVisibleTransaction } from "@/lib/query-helpers";
@@ -57,6 +57,8 @@ export interface TransactionRow {
   pfcPrimary: string | null;
   notes: string | null;
   hasSplits: boolean;
+  /** True when at least one receipt is attached. Absent where a list doesn't compute it (e.g. dashboard recents). */
+  hasReceipt?: boolean;
   isTransfer: boolean;
   transferPairId: string | null;
   transferSource: string | null;
@@ -275,6 +277,15 @@ export async function fetchTransactionPage(
     : [];
   const splitSet = new Set(splitRows.filter((r) => r.count > 0).map((r) => r.transactionId));
 
+  const receiptRows = pageIds.length > 0
+    ? await db
+        .select({ transactionId: receipts.transactionId })
+        .from(receipts)
+        .where(and(eq(receipts.householdId, householdId), inArray(receipts.transactionId, pageIds)))
+        .groupBy(receipts.transactionId)
+    : [];
+  const receiptSet = new Set(receiptRows.map((r) => r.transactionId));
+
   const result: TransactionRow[] = pageRows.map((row: typeof pageRows[0]) => ({
     ...row,
     accountName: row.accountName ?? "",
@@ -282,6 +293,7 @@ export async function fetchTransactionPage(
     pending: Boolean(row.pending),
     reviewed: Boolean(row.reviewed),
     hasSplits: splitSet.has(row.id),
+    hasReceipt: receiptSet.has(row.id),
     isTransfer: Boolean(row.isTransfer),
     transferPairId: row.transferPairId ?? null,
     transferSource: row.transferSource ?? null,

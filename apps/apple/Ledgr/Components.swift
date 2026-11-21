@@ -221,6 +221,8 @@ struct TxnRow: View {
     /// Only spending is marked recurring; income never gets the repeat icon.
     private var isRecurringExpense: Bool { txn.recurringTransactionId != nil && txn.normalizedAmount < 0 }
 
+    private var needsReceiptMark: Bool { txn.needsReceipt }
+
     private var incomeOnly: Bool {
         if let id = txn.categoryId, let cat = groups.lazy.flatMap(\.categories).first(where: { $0.id == id }) { return cat.isIncome }
         return txn.normalizedAmount > 0
@@ -248,6 +250,9 @@ struct TxnRow: View {
                 Text(txn.displayName).font(.body).lineLimit(1).layoutPriority(1)
                 if isRecurringExpense {
                     Image(systemName: "repeat").font(.caption.weight(.semibold)).foregroundStyle(Color.accentColor).help("Recurring").accessibilityLabel("Recurring")
+                }
+                if needsReceiptMark {
+                    Image(systemName: "doc.text").font(.caption2).foregroundStyle(.tertiary).help("No receipt").accessibilityLabel("No receipt attached")
                 }
                 // The account trails the name and is the first thing to truncate.
                 accountLabel(.callout)
@@ -281,6 +286,9 @@ struct TxnRow: View {
                     Text(txn.displayName).font(.body.weight(.medium)).lineLimit(1)
                     if isRecurringExpense {
                         Image(systemName: "repeat").font(.caption.weight(.semibold)).foregroundStyle(Color.accentColor).accessibilityLabel("Recurring")
+                    }
+                    if needsReceiptMark {
+                        Image(systemName: "doc.text").font(.caption2).foregroundStyle(.tertiary).help("No receipt").accessibilityLabel("No receipt attached")
                     }
                 }
                 HStack(spacing: 6) {

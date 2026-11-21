@@ -60,9 +60,14 @@ struct Txn: Codable, Identifiable, Hashable {
     var categorySource: String? = nil
     var notes: String?
     let hasSplits: Bool?
+    /// Whether a receipt is attached. Absent where the server doesn't send it (older servers, the detail screen).
+    var hasReceipt: Bool? = nil
     let isTransfer: Bool
     /// The recurring item this transaction belongs to, if any.
     let recurringTransactionId: String?
+
+    /// A posted expense with no receipt gets a quiet mark in lists. Receipts are optional, so it is only a hint.
+    var needsReceipt: Bool { hasReceipt == false && normalizedAmount < 0 && !isTransfer && !pending }
 
     /// What lists show: the user's own name, else the resolved merchant, else the bank's (often noisy) description.
     var displayName: String {
