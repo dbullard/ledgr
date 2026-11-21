@@ -41,6 +41,22 @@ describe("suggestMatches", () => {
     expect(confidentMatch(noDate, suggestMatches(noDate, txns))).toBeNull();
   });
 
+  test("never auto-attaches to a different merchant with the same amount", () => {
+    const openai = t("o", "Openai", "2026-11-16", -2000);
+    const hints = { totalCents: 2000, date: "2026-11-18", merchant: "Anthropic, PBC" };
+    const s = suggestMatches(hints, [openai]);
+    expect(s[0].txn.id).toBe("o");
+    expect(confidentMatch(hints, s)).toBeNull();
+  });
+
+  test("still auto-attaches when the merchant matches or the receipt names none", () => {
+    const anthropic = t("n", "Anthropic Anthropic* David J Bullard", "2026-11-19", -2000);
+    const named = { totalCents: 2000, date: "2026-11-18", merchant: "Anthropic, PBC" };
+    expect(confidentMatch(named, suggestMatches(named, [anthropic]))?.txn.id).toBe("n");
+    const unnamed = { totalCents: 2000, date: "2026-11-18", merchant: null };
+    expect(confidentMatch(unnamed, suggestMatches(unnamed, [anthropic]))?.txn.id).toBe("n");
+  });
+
   test("without an amount, needs merchant and a close date", () => {
     const s = suggestMatches({ totalCents: null, date: "2026-11-02", merchant: "amazon" }, txns);
     expect(s.map((x) => x.txn.id).sort()).toEqual(["a", "b"]);

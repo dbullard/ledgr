@@ -23,6 +23,7 @@ import { parseClientReceipt } from "@/lib/receipts/items";
 import { autoItems } from "@/lib/receipts/auto-items";
 import { readReceiptText } from "@/lib/receipts/hints";
 import { rematchWaitingReceipts } from "@/lib/receipts/rematch";
+import { findDuplicateReceipt } from "@/lib/receipts/duplicate";
 
 const idSchema = z.string().min(1);
 
@@ -122,12 +123,8 @@ export async function uploadReceipt(
         .limit(1);
       if (!txn) return { error: "Transaction not found" };
 
-      const [dupe] = await tx
-        .select({ id: receipts.id })
-        .from(receipts)
-        .where(scoped.where(receipts, eq(receipts.sha256, sha256)))
-        .limit(1);
-      if (dupe) return { error: "This receipt was already uploaded" };
+      const dupe = await findDuplicateReceipt(tx, householdId, sha256);
+      if (dupe) return { error: `This receipt was already uploaded; ${dupe.where}` };
 
       const rel = await writeReceipt(
         data,
@@ -271,7 +268,7 @@ export async function uploadUnmatchedReceipt(
 ): Promise<
   | { status: "attached"; transactionId: string }
   | { status: "unmatched" }
-  | { status: "duplicate" }
+  | { status: "duplicate"; where: string }
   | { error: string }
 > {
   const auth = await authorizeAction();
@@ -299,7 +296,7 @@ export async function uploadUnmatchedReceipt(
     db,
   );
   if (res.status === "rejected") return { error: res.error };
-  if (res.status === "duplicate") return { status: "duplicate" };
+  if (res.status === "duplicate") return { status: "duplicate", where: res.where };
   return res.transactionId
     ? { status: "attached", transactionId: res.transactionId }
     : { status: "unmatched" };

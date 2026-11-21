@@ -50,20 +50,20 @@ export function ReceiptTray() {
     startTransition(async () => {
       let attached = 0;
       let waiting = 0;
-      let duplicates = 0;
+      const duplicates: string[] = [];
       for (const file of Array.from(files)) {
         const fd = new FormData();
         fd.set("file", file);
         const res = await uploadUnmatchedReceipt(fd);
         if ("error" in res) setError(`${file.name}: ${res.error}`);
         else if (res.status === "attached") attached++;
-        else if (res.status === "duplicate") duplicates++;
+        else if (res.status === "duplicate") duplicates.push(`${file.name} was already uploaded; ${res.where}`);
         else waiting++;
       }
       const parts = [
         attached && `${attached} attached automatically`,
         waiting && `${waiting} waiting for a match`,
-        duplicates && `${duplicates} already uploaded`,
+        ...duplicates,
       ].filter(Boolean);
       if (parts.length) setMessage(parts.join(", "));
       await reload();

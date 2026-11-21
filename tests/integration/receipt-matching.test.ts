@@ -107,7 +107,7 @@ describe("unmatched receipts", () => {
     const { uploadUnmatchedReceipt } = await import("../../src/actions/receipts");
     expect(
       await uploadUnmatchedReceipt(file("gas-again.txt", "Date: 2026-11-03\nTotal: $50.00"), db, root),
-    ).toEqual({ status: "duplicate" });
+    ).toMatchObject({ status: "duplicate", where: expect.stringContaining("it is ") });
   });
 });
 

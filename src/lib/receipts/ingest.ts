@@ -1,4 +1,4 @@
-import { eq, gte, lte, sql } from "drizzle-orm";
+import { gte, lte, sql } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
 import type { LedgrDb } from "@/db";
 import { receipts, transactions } from "@/db/schema";
@@ -14,6 +14,7 @@ import { replaceReceiptItems } from "./service";
 import { confidentMatch, suggestMatches, type Suggestion, type TxnCandidate } from "./match";
 import { MAX_RECEIPT_BYTES, RECEIPT_TYPES, receiptExtension, receiptsRoot } from "./paths";
 import { deleteReceiptFile, sha256Hex, writeReceipt } from "./storage";
+import { findDuplicateReceipt } from "./duplicate";
 
 function shiftDays(date: string, days: number): string {
   return new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
@@ -90,7 +91,7 @@ export async function visionHints(
 }
 
 export type IngestResult =
-  | { status: "duplicate" }
+  | { status: "duplicate"; where: string }
   | { status: "rejected"; error: string }
   | {
       status: "stored";
@@ -128,13 +129,8 @@ export async function ingestReceipt(opts: {
   if (data.length > MAX_RECEIPT_BYTES) return { status: "rejected", error: "File is larger than 15 MB" };
 
   const sha256 = sha256Hex(data);
-  const scoped = scopedQuery(householdId, db);
-  const [dupe] = await db
-    .select({ id: receipts.id })
-    .from(receipts)
-    .where(scoped.where(receipts, eq(receipts.sha256, sha256)))
-    .limit(1);
-  if (dupe) return { status: "duplicate" };
+  const dupe = await findDuplicateReceipt(db, householdId, sha256);
+  if (dupe) return { status: "duplicate", where: dupe.where };
 
   const text = await readReceiptText(ext, data);
   let hints = extractHints(filename, text);

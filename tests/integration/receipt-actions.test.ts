@@ -72,7 +72,7 @@ describe("receipt actions", () => {
   it("rejects duplicates, bad types, empty files and unknown transactions", async () => {
     const { uploadReceipt } = await import("../../src/actions/receipts");
     expect(await uploadReceipt(txnId, form("again.pdf", "pdf-bytes"), db, root)).toEqual({
-      error: "This receipt was already uploaded",
+      error: expect.stringMatching(/^This receipt was already uploaded; it is attached to ".*" on 2026-11-\d\d \(\$75\.39\)$/),
     });
     expect(await uploadReceipt(txnId, form("x.exe", "z"), db, root)).toMatchObject({
       error: expect.stringContaining("Unsupported"),

@@ -78,14 +78,18 @@ export function suggestMatches(
 }
 
 /**
- * Safe to attach without asking: exact amount, a date within 3 days, and no
- * close runner-up (a monthly subscription repeats the same amount).
+ * Safe to attach without asking: exact amount, a date within 3 days, no close
+ * runner-up (a monthly subscription repeats the same amount), and, when the
+ * receipt names a merchant, a transaction that shares part of that name. A
+ * different merchant with the same amount is a coincidence, not a match; it
+ * stays in the tray as a suggestion instead.
  */
 export function confidentMatch(hints: ReceiptHints, suggestions: Suggestion[]): Suggestion | null {
   const [top, second] = suggestions;
   if (!top || hints.totalCents === null || !hints.date) return null;
   if (!top.reasons.includes("exact amount")) return null;
   if (dayDiff(hints.date, top.txn.date) > 3) return null;
+  if (hints.merchant && !top.reasons.includes("merchant name")) return null;
   if (second && top.score - second.score < 20) return null;
   return top;
 }
