@@ -46,7 +46,7 @@ export default async function ReceiptItemsPage({
   const sort: ProductSort = PRODUCT_SORTS.includes(first(params.sort) as ProductSort)
     ? (first(params.sort) as ProductSort)
     : "spent";
-  const defaultDir = sort === "name" ? "asc" : "desc";
+  const defaultDir = sort === "name" || sort === "category" ? "asc" : "desc";
   const dir = first(params.dir) === "asc" || first(params.dir) === "desc" ? (first(params.dir) as "asc" | "desc") : defaultDir;
 
   const filters = {
@@ -73,7 +73,7 @@ export default async function ReceiptItemsPage({
   };
   const header = (key: ProductSort, label: string, align: "left" | "right" = "right") => {
     const active = sort === key;
-    const nextDir = active ? (dir === "desc" ? "asc" : "desc") : key === "name" ? "asc" : "desc";
+    const nextDir = active ? (dir === "desc" ? "asc" : "desc") : key === "name" || key === "category" ? "asc" : "desc";
     return (
       <th
         scope="col"
@@ -103,7 +103,7 @@ export default async function ReceiptItemsPage({
         </Link>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">What we buy</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          From receipts you&apos;ve read item by item. Prices are before tax, so totals are lower than the
+          From receipts you&apos;ve read item by item, including ones not yet attached to a transaction. Prices are before tax, so totals are lower than the
           charges they came from.
         </p>
       </div>
@@ -199,6 +199,7 @@ export default async function ReceiptItemsPage({
               <thead className="text-left text-xs text-muted-foreground">
                 <tr>
                   {header("name", "Product", "left")}
+                  {header("category", "Category", "left")}
                   <th scope="col" className="py-1 pl-3 text-left font-normal">
                     Bought at
                   </th>
@@ -216,6 +217,7 @@ export default async function ReceiptItemsPage({
                         {p.name}
                       </Link>
                     </td>
+                    <td className="py-1.5 pl-3 text-muted-foreground">{p.categoryName ?? "No category"}</td>
                     <td className="py-1.5 pl-3 text-muted-foreground">
                       {p.stores.map((s) => s.name).join(", ")}
                       {p.storeCount > p.stores.length ? ` +${p.storeCount - p.stores.length}` : ""}
@@ -246,9 +248,10 @@ export default async function ReceiptItemsPage({
                     <tr key={i} className="border-t border-border/70">
                       <td className="py-1.5">{formatDateShort(h.date)}</td>
                       <td className="py-1.5">
-                        <Link href={`/transactions?txn=${h.transactionId}`} className="hover:underline">
-                          {h.merchant}
+                        <Link href={h.transactionId ? `/transactions?txn=${h.transactionId}` : "/receipts"} className="hover:underline">
+                          {h.merchant || "Unknown store"}
                         </Link>
+                        {h.transactionId ? null : <span className="text-muted-foreground"> · not attached yet</span>}
                         {h.accountName ? <span className="text-muted-foreground"> · {h.accountName}</span> : null}
                       </td>
                       <td className="py-1.5 pl-3 text-right tabular-nums">{centsToDisplay(h.unitCents)} each</td>

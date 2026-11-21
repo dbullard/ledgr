@@ -13,6 +13,36 @@ import {
 import { centsToDisplay } from "@/lib/money";
 import { formatDateShort } from "@/lib/date-utils";
 
+type WaitingItem = UnmatchedReceipt["items"][number];
+
+/** A waiting receipt's items, in receipt order or grouped by category. */
+function WaitingItems({ items }: { items: WaitingItem[] }) {
+  const [byCategory, setByCategory] = useState(false);
+  const rows = byCategory
+    ? [...items].sort((a, b) => (a.categoryName ?? "~").localeCompare(b.categoryName ?? "~") || a.name.localeCompare(b.name))
+    : items;
+  return (
+    <details className="text-sm">
+      <summary className="cursor-pointer text-xs text-muted-foreground">Items</summary>
+      <label className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+        <input type="checkbox" checked={byCategory} onChange={(e) => setByCategory(e.target.checked)} />
+        Sort by category
+      </label>
+      <ul className="mt-1 space-y-0.5">
+        {rows.map((it) => (
+          <li key={it.id} className="flex justify-between gap-2">
+            <span className="min-w-0 truncate">
+              {it.name}
+              <span className="ml-1 text-xs text-muted-foreground">{it.categoryName ?? "No category"}</span>
+            </span>
+            <span className="tabular-nums">{centsToDisplay(it.totalCents)}</span>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 /** Receipts waiting for a transaction, with one-click suggested matches. */
 export function ReceiptTray() {
   const [items, setItems] = useState<UnmatchedReceipt[] | null>(null);
@@ -166,15 +196,17 @@ export function ReceiptTray() {
                   <Trash2 className="size-3.5" aria-hidden />
                 </Button>
               </div>
+              {r.hintMerchant && <p className="text-sm font-medium">{r.hintMerchant}</p>}
               <p className="text-xs text-muted-foreground">
                 {[
                   r.hintTotalCents !== null && `Total ${centsToDisplay(r.hintTotalCents)}`,
                   r.hintDate && formatDateShort(r.hintDate),
-                  r.hintMerchant,
+                  r.items.length > 0 && `${r.items.length} item${r.items.length === 1 ? "" : "s"}`,
                 ]
                   .filter(Boolean)
                   .join(" · ") || "Couldn't read details from this file"}
               </p>
+              {r.items.length > 0 && <WaitingItems items={r.items} />}
               {r.suggestions.length > 0 ? (
                 <ul className="space-y-1.5">
                   {r.suggestions.map((s) => (

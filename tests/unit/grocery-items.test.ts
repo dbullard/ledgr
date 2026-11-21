@@ -32,7 +32,7 @@ describe("corsHeaders", () => {
 });
 
 const row = (over: Partial<TopProductRow>): TopProductRow => ({
-  key: "k", name: "Eggs", totalCents: 1000, purchases: 3, lastDate: "2026-11-16", avgUnitCents: 266, stores: [], storeCount: 0, ...over,
+  key: "k", name: "Eggs", categoryName: null, totalCents: 1000, purchases: 3, lastDate: "2026-11-16", avgUnitCents: 266, stores: [], storeCount: 0, ...over,
 });
 
 describe("toGroceryItems", () => {

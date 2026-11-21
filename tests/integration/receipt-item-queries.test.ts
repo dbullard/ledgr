@@ -17,6 +17,7 @@ async function addReceipt(
   hid: string,
   txnId: string | null,
   items: { raw: string; product?: string; cat?: string; cents: number; qty?: number }[],
+  hints: { date?: string; merchant?: string } = {},
 ) {
   const id = uuid();
   await db.insert(receipts).values({
@@ -28,6 +29,8 @@ async function addReceipt(
     contentType: "text/plain",
     sizeBytes: 1,
     sha256: id,
+    hintDate: hints.date ?? null,
+    hintMerchant: hints.merchant ?? null,
   });
   await db.insert(receiptItems).values(
     items.map((it, i) => ({
@@ -68,7 +71,15 @@ beforeAll(async () => {
     { raw: "BANANAS ORG", product: "bananas", cat: grocId, cents: 400, qty: 2000 },
     { raw: "MYSTERY", cents: 100 },
   ]);
-  await addReceipt(householdId, null, [{ raw: "UNATTACHED", product: "Bananas", cat: grocId, cents: 9999 }]);
+  // Waiting receipts count too, dated and named from what was read off the receipt.
+  await addReceipt(householdId, null, [{ raw: "UNATTACHED", product: "Bananas", cat: grocId, cents: 9999 }], {
+    date: "2026-11-02",
+    merchant: "Aldi",
+  });
+  await addReceipt(householdId, null, [{ raw: "WAITING", product: "Bananas", cat: grocId, cents: 60 }], {
+    date: "2026-09-20",
+    merchant: "Aldi",
+  });
   await addReceipt(householdId, t3, [{ raw: "OLD", cat: grocId, cents: 50 }]);
   const o = await mk(otherHousehold, otherAcct, "2026-10-05", 700);
   await addReceipt(otherHousehold, o, [{ raw: "THEIRS", product: "Bananas", cat: grocId, cents: 777 }]);
@@ -81,10 +92,10 @@ afterAll(async () => {
 const range = { dateFrom: "2026-09-01", dateTo: "2026-10-10" };
 
 describe("receipt item reports", () => {
-  it("totals by category, counting only attached receipts in range and this household", async () => {
+  it("totals by category, counting waiting receipts by their own date, in range and this household", async () => {
     const rows = await getItemSpendByCategory(householdId, range, db);
     expect(rows.map((r) => [r.categoryName, r.totalCents, r.itemCount])).toEqual([
-      ["Groceries", 700, 2],
+      ["Groceries", 760, 3],
       ["Home Goods", 500, 1],
       [null, 100, 1],
     ]);
@@ -93,8 +104,8 @@ describe("receipt item reports", () => {
   it("ranks products case-insensitively with average price per unit", async () => {
     const rows = await getTopProducts(householdId, range, 10, db);
     const bananas = rows.find((r) => r.key === "bananas")!;
-    expect(bananas).toMatchObject({ totalCents: 700, purchases: 2, lastDate: "2026-10-05" });
-    expect(bananas.avgUnitCents).toBe(140); // 700 cents over 5 units
+    expect(bananas).toMatchObject({ totalCents: 760, purchases: 3, lastDate: "2026-10-05" });
+    expect(bananas.avgUnitCents).toBe(127); // 760 cents over 6 units
     expect(rows[0].key).toBe("bananas");
   });
 
@@ -139,8 +150,8 @@ describe("receipt item reports", () => {
   it("lists where each product was bought, most often first", async () => {
     const rows = await getTopProducts(householdId, range, 10, db);
     expect(rows.find((r) => r.key === "bananas")).toMatchObject({
-      stores: [{ name: "Kroger", count: 1 }, { name: "Walmart", count: 1 }],
-      storeCount: 2,
+      stores: [{ name: "Aldi", count: 1 }, { name: "Kroger", count: 1 }, { name: "Walmart", count: 1 }],
+      storeCount: 3,
     });
   });
 
@@ -148,14 +159,16 @@ describe("receipt item reports", () => {
     const h = await getProductPriceHistory(householdId, "Bananas", db);
     expect(h.map((p) => [p.date, p.merchant, p.unitCents])).toEqual([
       ["2026-09-05", "Walmart", 100],
+      ["2026-09-20", "Aldi", 60],
       ["2026-10-05", "Kroger", 200],
+      ["2026-11-02", "Aldi", 9999],
     ]);
   });
 
-  it("links every purchase to its transaction", async () => {
+  it("links attached purchases to their transaction and leaves waiting ones unlinked", async () => {
     const h = await getProductPriceHistory(householdId, "Bananas", db);
-    expect(h.every((p) => typeof p.transactionId === "string" && p.transactionId.length > 0)).toBe(true);
-    expect(new Set(h.map((p) => p.transactionId)).size).toBe(2);
+    expect(h.filter((p) => p.transactionId).length).toBe(2);
+    expect(h.filter((p) => p.transactionId === null).map((p) => p.merchant)).toEqual(["Aldi", "Aldi"]);
     expect(h[0].accountName).toBe("Card");
   });
 });

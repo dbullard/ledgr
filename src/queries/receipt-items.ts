@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, lte, sql, desc } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lte, or, sql, desc } from "drizzle-orm";
 import { db as defaultDb, type LedgrDb } from "@/db";
 import { accounts, categories, merchants, receiptItems, receipts, transactions } from "@/db/schema";
 import { searchTokens, storeLabel } from "@/lib/receipts/store-name";
@@ -6,8 +6,9 @@ import { scopedQuery } from "@/lib/scoped-query";
 import { isVisibleTransaction, notDeleted } from "@/lib/query-helpers";
 
 /**
- * Item reports count only items on receipts attached to a visible transaction,
- * dated by that transaction. Item totals are pre-tax line prices, so they will
+ * Item reports count items on receipts attached to a visible transaction (dated
+ * by it) and on receipts not yet attached (dated by the date read from the
+ * receipt, else the day it was uploaded). Item totals are pre-tax line prices, so they will
  * not add up to the transactions they came from.
  */
 export interface ItemFilters {
@@ -20,6 +21,14 @@ export interface ItemFilters {
   txnCategoryIds?: string[];
 }
 
+/** The day a purchase counts toward: its transaction's date, else the receipt's own. */
+const effectiveDate = sql<string>`coalesce(${transactions.date}, ${receipts.hintDate}, ${receipts.createdAt}::date::text)`;
+/** Attached receipts need a live, visible transaction; waiting ones always count. */
+const countable = or(
+  isNull(receipts.transactionId),
+  and(notDeleted(transactions), isVisibleTransaction(transactions)),
+);
+
 const productKey = sql<string>`lower(coalesce(${receiptItems.productName}, ${receiptItems.rawName}))`;
 const productLabel = sql<string>`min(coalesce(${receiptItems.productName}, ${receiptItems.rawName}))`;
 
@@ -27,10 +36,9 @@ function base(householdId: string, db: LedgrDb, f: ItemFilters) {
   const scoped = scopedQuery(householdId, db);
   return scoped.where(
     receiptItems,
-    notDeleted(transactions),
-    isVisibleTransaction(transactions),
-    gte(transactions.date, f.dateFrom),
-    lte(transactions.date, f.dateTo),
+    countable,
+    gte(effectiveDate, f.dateFrom),
+    lte(effectiveDate, f.dateTo),
     f.categoryId ? eq(receiptItems.categoryId, f.categoryId) : undefined,
     f.categoryIds && f.categoryIds.length > 0 ? inArray(receiptItems.categoryId, f.categoryIds) : undefined,
     f.txnCategoryIds && f.txnCategoryIds.length > 0 ? inArray(transactions.categoryId, f.txnCategoryIds) : undefined,
@@ -59,7 +67,7 @@ export async function getItemSpendByCategory(
     })
     .from(receiptItems)
     .innerJoin(receipts, eq(receiptItems.receiptId, receipts.id))
-    .innerJoin(transactions, eq(receipts.transactionId, transactions.id))
+    .leftJoin(transactions, eq(receipts.transactionId, transactions.id))
     .leftJoin(categories, eq(receiptItems.categoryId, categories.id))
     .where(base(householdId, db, filters))
     .groupBy(receiptItems.categoryId, categories.name)
@@ -73,8 +81,8 @@ export async function getItemSpendByCategory(
  */
 const searchBlob = sql<string>`lower(regexp_replace(concat_ws(' ',
   ${receiptItems.productName}, ${receiptItems.rawName}, ${categories.name},
-  ${merchants.name}, ${transactions.name}, ${accounts.name},
-  ${transactions.date}, to_char(${transactions.date}::date, 'FMMonth FMDD YYYY'),
+  ${merchants.name}, ${transactions.name}, ${receipts.hintMerchant}, ${accounts.name},
+  ${effectiveDate}, to_char(${effectiveDate}::date, 'FMMonth FMDD YYYY'),
   to_char(${receiptItems.totalCents} / 100.0, 'FM999999990.00')
 ), '[^a-zA-Z0-9. ]', '', 'g'))`;
 
@@ -101,6 +109,8 @@ export interface TopProductRow {
   /** Lowercased product name; pass to getProductPriceHistory. */
   key: string;
   name: string;
+  /** Most common category across its purchases. */
+  categoryName: string | null;
   totalCents: number;
   purchases: number;
   lastDate: string;
@@ -111,8 +121,8 @@ export interface TopProductRow {
   storeCount: number;
 }
 
-export type ProductSort = "spent" | "times" | "avg" | "last" | "name";
-export const PRODUCT_SORTS: readonly ProductSort[] = ["spent", "times", "avg", "last", "name"];
+export type ProductSort = "spent" | "times" | "avg" | "last" | "name" | "category";
+export const PRODUCT_SORTS: readonly ProductSort[] = ["spent", "times", "avg", "last", "name", "category"];
 
 export interface ProductOptions {
   sort?: ProductSort;
@@ -134,31 +144,36 @@ export async function getTopProducts(
 ): Promise<TopProductRow[]> {
   const total = sql<number>`sum(${receiptItems.totalCents})`.mapWith(Number);
   const sort = opts.sort ?? "spent";
-  const dir = opts.dir ?? (sort === "name" ? "asc" : "desc");
+  const dir = opts.dir ?? (sort === "name" || sort === "category" ? "asc" : "desc");
+  /** The category this product is most often filed under. */
+  const categoryLabel = sql<string | null>`mode() within group (order by ${categories.name})`;
   const sortExpr =
     sort === "times"
       ? sql`count(*)`
       : sort === "avg"
         ? sql`sum(${receiptItems.totalCents})::float / nullif(sum(${receiptItems.quantityMilli}), 0)`
         : sort === "last"
-          ? sql`max(${transactions.date})`
-          : sort === "name"
-            ? productKey
-            : total;
+          ? sql`max(${effectiveDate})`
+          : sort === "category"
+            ? sql`coalesce(mode() within group (order by ${categories.name}), '~')`
+            : sort === "name"
+              ? productKey
+              : total;
   const dirFn = dir === "asc" ? asc : desc;
   const where = and(base(householdId, db, filters), searchCondition(opts.search));
   const rows = await db
     .select({
       key: productKey,
       name: productLabel,
+      categoryName: categoryLabel,
       totalCents: total,
       purchases: sql<number>`count(*)`.mapWith(Number),
       qty: sql<number>`sum(${receiptItems.quantityMilli})`.mapWith(Number),
-      lastDate: sql<string>`max(${transactions.date})`,
+      lastDate: sql<string>`max(${effectiveDate})`,
     })
     .from(receiptItems)
     .innerJoin(receipts, eq(receiptItems.receiptId, receipts.id))
-    .innerJoin(transactions, eq(receipts.transactionId, transactions.id))
+    .leftJoin(transactions, eq(receipts.transactionId, transactions.id))
     .leftJoin(categories, eq(receiptItems.categoryId, categories.id))
     .leftJoin(merchants, eq(transactions.merchantId, merchants.id))
     .leftJoin(accounts, eq(transactions.accountId, accounts.id))
@@ -172,18 +187,18 @@ export async function getTopProducts(
     const stores = await db
       .select({
         key: productKey,
-        txnName: transactions.name,
+        txnName: sql<string>`coalesce(${transactions.name}, ${receipts.hintMerchant}, '')`,
         merchant: merchants.name,
         n: sql<number>`count(*)`.mapWith(Number),
       })
       .from(receiptItems)
       .innerJoin(receipts, eq(receiptItems.receiptId, receipts.id))
-      .innerJoin(transactions, eq(receipts.transactionId, transactions.id))
+      .leftJoin(transactions, eq(receipts.transactionId, transactions.id))
       .leftJoin(categories, eq(receiptItems.categoryId, categories.id))
       .leftJoin(merchants, eq(transactions.merchantId, merchants.id))
       .leftJoin(accounts, eq(transactions.accountId, accounts.id))
       .where(and(where, inArray(productKey, rows.map((r) => r.key))))
-      .groupBy(productKey, transactions.name, merchants.name);
+      .groupBy(productKey, transactions.name, receipts.hintMerchant, merchants.name);
     for (const r of stores) {
       const label = storeLabel(r.txnName, r.merchant);
       const m = byProduct.get(r.key) ?? new Map<string, number>();
@@ -198,6 +213,7 @@ export async function getTopProducts(
     return {
       key: r.key,
       name: r.name,
+      categoryName: r.categoryName,
       totalCents: r.totalCents,
       purchases: r.purchases,
       lastDate: r.lastDate,
@@ -213,7 +229,8 @@ export interface PricePoint {
   /** Where it was bought, cleaned up for display. */
   merchant: string;
   /** The charge this purchase came from. */
-  transactionId: string;
+  /** Null while the receipt is not yet attached. */
+  transactionId: string | null;
   accountName: string | null;
   unitCents: number;
   totalCents: number;
@@ -229,8 +246,8 @@ export async function getProductPriceHistory(
   const scoped = scopedQuery(householdId, db);
   const rows = await db
     .select({
-      date: transactions.date,
-      txnName: transactions.name,
+      date: effectiveDate,
+      txnName: sql<string>`coalesce(${transactions.name}, ${receipts.hintMerchant}, '')`,
       merchantName: merchants.name,
       transactionId: transactions.id,
       accountName: accounts.name,
@@ -239,18 +256,17 @@ export async function getProductPriceHistory(
     })
     .from(receiptItems)
     .innerJoin(receipts, eq(receiptItems.receiptId, receipts.id))
-    .innerJoin(transactions, eq(receipts.transactionId, transactions.id))
+    .leftJoin(transactions, eq(receipts.transactionId, transactions.id))
     .leftJoin(merchants, eq(transactions.merchantId, merchants.id))
     .leftJoin(accounts, eq(transactions.accountId, accounts.id))
     .where(
       scoped.where(
         receiptItems,
-        notDeleted(transactions),
-        isVisibleTransaction(transactions),
+        countable,
         sql`${productKey} = ${key.toLowerCase()}`,
       ),
     )
-    .orderBy(asc(transactions.date))
+    .orderBy(asc(effectiveDate))
     .limit(500);
   return rows.map((r) => ({
     date: r.date,

@@ -34,6 +34,7 @@ export function ReceiptItems({
   const [note, setNote] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [editing, setEditing] = useState(false);
+  const [byCategory, setByCategory] = useState(false);
 
   // A receipt that already has items shows them without a click.
   useEffect(() => {
@@ -130,6 +131,7 @@ export function ReceiptItems({
   }
 
   const options = categories.flatMap((g) => g.categories.filter((c) => !c.isIncome));
+  const catName = (id: string | null) => options.find((c) => c.id === id)?.name ?? "~";
 
   return (
     <div className="space-y-2 px-3.5 pb-3">
@@ -156,7 +158,20 @@ export function ReceiptItems({
       />
 
 
-      {result?.items.map((it) => (
+      {result && result.items.length > 1 && (
+        <label className="flex items-center gap-1 text-xs text-muted-foreground">
+          <input type="checkbox" checked={byCategory} onChange={(e) => setByCategory(e.target.checked)} />
+          Sort by category
+        </label>
+      )}
+      {(byCategory && result
+        ? [...result.items].sort(
+            (a, b) =>
+              catName(a.categoryId).localeCompare(catName(b.categoryId)) ||
+              (a.productName ?? a.rawName).localeCompare(b.productName ?? b.rawName),
+          )
+        : (result?.items ?? [])
+      ).map((it) => (
         <div key={it.id} className="grid grid-cols-[1fr_auto] items-center gap-x-2 gap-y-1 text-sm">
           <input
             key={`${it.id}-${it.productName ?? ""}`}

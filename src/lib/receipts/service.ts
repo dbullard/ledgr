@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
 import type { LedgrDb } from "@/db";
 import { categories, productAliases, receiptItems, receipts, transactions } from "@/db/schema";
@@ -283,6 +283,8 @@ export interface UnmatchedReceiptRow {
   hintMerchant: string | null;
   /** True when the receipt was removed from a transaction by hand; never auto-attach it. */
   autoMatchBlocked: boolean;
+  /** Items read from the file on upload, so a waiting receipt is browsable before it is attached. */
+  items: { id: string; name: string; categoryName: string | null; totalCents: number }[];
   suggestions: {
     transactionId: string;
     name: string;
@@ -315,6 +317,33 @@ export async function listUnmatchedReceipts(
     .orderBy(desc(receipts.createdAt))
     .limit(limit);
 
+  const itemRows =
+    rows.length > 0
+      ? await tx
+          .select({
+            id: receiptItems.id,
+            receiptId: receiptItems.receiptId,
+            name: sql<string>`coalesce(${receiptItems.productName}, ${receiptItems.rawName})`,
+            categoryName: categories.name,
+            totalCents: receiptItems.totalCents,
+          })
+          .from(receiptItems)
+          .leftJoin(categories, eq(receiptItems.categoryId, categories.id))
+          .where(
+            scopedQuery(householdId, tx).where(
+              receiptItems,
+              inArray(receiptItems.receiptId, rows.map((r) => r.id)),
+            ),
+          )
+          .orderBy(receiptItems.lineNo)
+      : [];
+  const itemsByReceipt = new Map<string, UnmatchedReceiptRow["items"]>();
+  for (const it of itemRows) {
+    const list = itemsByReceipt.get(it.receiptId) ?? [];
+    list.push({ id: it.id, name: it.name, categoryName: it.categoryName, totalCents: it.totalCents });
+    itemsByReceipt.set(it.receiptId, list);
+  }
+
   const out: UnmatchedReceiptRow[] = [];
   for (const r of rows) {
     const hints = { totalCents: r.hintTotalCents, date: r.hintDate, merchant: r.hintMerchant };
@@ -325,7 +354,7 @@ export async function listUnmatchedReceipts(
       amountCents: Math.abs(s.txn.normalizedAmount),
       reasons: s.reasons,
     }));
-    out.push({ ...r, suggestions });
+    out.push({ ...r, items: itemsByReceipt.get(r.id) ?? [], suggestions });
   }
   return out;
 }

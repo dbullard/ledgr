@@ -254,6 +254,7 @@ export interface UnmatchedReceipt extends ReceiptSummary {
   hintTotalCents: number | null;
   hintDate: string | null;
   hintMerchant: string | null;
+  items: { id: string; name: string; categoryName: string | null; totalCents: number }[];
   suggestions: ReceiptSuggestion[];
 }
 
@@ -310,7 +311,7 @@ export async function fetchUnmatchedReceipts(
   // Transactions may have synced since the receipt arrived: attach any that now clearly match.
   await rematchWaitingReceipts(householdId, db);
   const rows = await withHousehold(householdId, (tx) => listUnmatchedReceipts(tx, householdId), db);
-  return { data: rows.map((r) => ({ ...toSummary(r), hintTotalCents: r.hintTotalCents, hintDate: r.hintDate, hintMerchant: r.hintMerchant, suggestions: r.suggestions })) };
+  return { data: rows.map((r) => ({ ...toSummary(r), hintTotalCents: r.hintTotalCents, hintDate: r.hintDate, hintMerchant: r.hintMerchant, items: r.items, suggestions: r.suggestions })) };
 }
 
 /** Attaches an unmatched receipt to a transaction and renames the file to match it. */
