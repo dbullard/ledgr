@@ -32,13 +32,13 @@ describe("corsHeaders", () => {
 });
 
 const row = (over: Partial<TopProductRow>): TopProductRow => ({
-  key: "k", name: "Eggs", categoryName: null, totalCents: 1000, purchases: 3, lastDate: "2026-11-16", avgUnitCents: 266, stores: [], storeCount: 0, ...over,
+  key: "k", name: "Eggs", categoryName: null, totalCents: 1000, purchases: 3, lastDate: "2026-11-16", avgUnitCents: 266, quantity: 7, lastQuantity: 3, stores: [], storeCount: 0, ...over,
 });
 
 describe("toGroceryItems", () => {
   it("maps to the planner shape and picks the most-bought store", () => {
     const [i] = toGroceryItems([row({ stores: [{ name: "Sam's Club", count: 1 }, { name: "Walmart", count: 4 }], storeCount: 2 })]);
-    expect(i).toEqual({ name: "Eggs", last: "2026-11-16", count: 3, cents: 266, store: "Walmart" });
+    expect(i).toEqual({ name: "Eggs", last: "2026-11-16", count: 3, cents: 266, store: "Walmart", qty: 7, lastQty: 3 });
   });
   it("uses an empty store when none is known and rounds the price", () => {
     const [i] = toGroceryItems([row({ avgUnitCents: 266.6 })]);
@@ -65,4 +65,12 @@ describe("groceryCategoryIds", () => {
 
 it("asks for enough products to cover a household's whole 120 days", () => {
   expect(GROCERY_LIMIT).toBeGreaterThanOrEqual(300);
+});
+
+describe("toGroceryItems quantities", () => {
+  it("passes units through, rounded to three places, and never reports less than nothing", () => {
+    const [a, b] = toGroceryItems([row({ quantity: 1.2349, lastQuantity: 1.2349 }), row({ quantity: 0, lastQuantity: 0 })]);
+    expect([a.qty, a.lastQty]).toEqual([1.235, 1.235]);
+    expect([b.qty, b.lastQty]).toEqual([0, 0]);
+  });
 });

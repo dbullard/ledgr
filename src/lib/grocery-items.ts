@@ -16,6 +16,9 @@ export interface GroceryItem {
   count: number;
   cents: number;
   store: string;
+  /** Units bought in the window, and on the most recent purchase day. */
+  qty: number;
+  lastQty: number;
 }
 
 export function checkBearer(header: string | null, key: string | undefined): "ok" | "disabled" | "denied" {
@@ -40,10 +43,21 @@ export function corsHeaders(origin: string | null, allowed: string | undefined):
   };
 }
 
+/** Units to three decimals (weights like 1.235 lb); never negative or NaN. */
+const units = (n: number) => (Number.isFinite(n) && n > 0 ? Math.round(n * 1000) / 1000 : 0);
+
 export function toGroceryItems(rows: TopProductRow[]): GroceryItem[] {
   return rows.map((r) => {
     const store = [...r.stores].sort((a, b) => b.count - a.count)[0];
-    return { name: r.name, last: r.lastDate, count: r.purchases, cents: Math.round(r.avgUnitCents), store: store ? store.name : "" };
+    return {
+      name: r.name,
+      last: r.lastDate,
+      count: r.purchases,
+      cents: Math.round(r.avgUnitCents),
+      store: store ? store.name : "",
+      qty: units(r.quantity),
+      lastQty: units(r.lastQuantity),
+    };
   });
 }
 

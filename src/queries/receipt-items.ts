@@ -116,6 +116,10 @@ export interface TopProductRow {
   lastDate: string;
   /** Average price per 1 unit (each, lb...), in cents. */
   avgUnitCents: number;
+  /** Units bought across all purchases in the window (quantities are stored in thousandths). */
+  quantity: number;
+  /** Units on the most recent purchase day (lines for the same product that day add up). */
+  lastQuantity: number;
   /** Where it was bought, most often first (at most 3). */
   stores: ProductStore[];
   storeCount: number;
@@ -182,6 +186,27 @@ export async function getTopProducts(
     .orderBy(dirFn(sortExpr), desc(total))
     .limit(limit);
 
+  const lastQty = new Map<string, { date: string; milli: number }>();
+  if (rows.length > 0) {
+    const perDay = await db
+      .select({
+        key: productKey,
+        day: effectiveDate,
+        milli: sql<number>`sum(${receiptItems.quantityMilli})`.mapWith(Number),
+      })
+      .from(receiptItems)
+      .innerJoin(receipts, eq(receiptItems.receiptId, receipts.id))
+      .leftJoin(transactions, eq(receipts.transactionId, transactions.id))
+      .leftJoin(categories, eq(receiptItems.categoryId, categories.id))
+      .leftJoin(merchants, eq(transactions.merchantId, merchants.id))
+      .leftJoin(accounts, eq(transactions.accountId, accounts.id))
+      .where(and(where, inArray(productKey, rows.map((r) => r.key))))
+      .groupBy(productKey, effectiveDate);
+    for (const d of perDay) {
+      const cur = lastQty.get(d.key);
+      if (!cur || d.day > cur.date) lastQty.set(d.key, { date: d.day, milli: d.milli });
+    }
+  }
   const byProduct = new Map<string, Map<string, number>>();
   if (rows.length > 0) {
     const stores = await db
@@ -218,6 +243,8 @@ export async function getTopProducts(
       purchases: r.purchases,
       lastDate: r.lastDate,
       avgUnitCents: r.qty > 0 ? Math.round((r.totalCents * 1000) / r.qty) : r.totalCents,
+      quantity: r.qty / 1000,
+      lastQuantity: (lastQty.get(r.key)?.milli ?? r.qty) / 1000,
       stores: all.slice(0, 3),
       storeCount: all.length,
     };

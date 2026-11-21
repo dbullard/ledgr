@@ -44,10 +44,13 @@ beforeAll(async () => {
   const { categoryId: dup } = await insertCategory(db, hid, groupId, { name: "Groceries" });
   const { categoryId: renamed } = await insertCategory(db, hid, groupId, { name: "Food Shopping", systemKey: "Groceries" });
   await addReceipt(hid, await mk("2026-11-12", "Walmart"), [{ raw: "Dup Milk", cat: dup, cents: 300 }, { raw: "Renamed Bread", cat: renamed, cents: 280 }]);
+  // Bought twice with different quantities: total 6, last time 4 (two lines on the newest day add up).
+  await addReceipt(hid, await mk("2026-11-02", "Walmart"), [{ raw: "Multi Milk", cat: groc, cents: 600, qty: 2000 }]);
+  await addReceipt(hid, await mk("2026-11-16", "Walmart"), [{ raw: "Multi Milk", cat: groc, cents: 300, qty: 1000 }, { raw: "Multi Milk", cat: groc, cents: 900, qty: 3000 }]);
   // Items carry their own category: a grocery item on a trip filed under Home Goods is still a grocery item.
   await addReceipt(hid, await mk("2026-11-13", "Walmart", home), [{ raw: "Trip Peaches", cat: groc, cents: 5000 }, { raw: "Trip Lamp", cat: home, cents: 900 }]);
   // Receipts not yet attached to a transaction count too, dated by the receipt and named by its vendor.
-  await addReceipt(hid, null, [{ raw: "Waiting Bananas", cat: groc, cents: 70 }, { raw: "Waiting Deodorant", cat: home, cents: 600 }], { merchant: "Walmart", date: "2026-11-20" });
+  await addReceipt(hid, null, [{ raw: "Waiting Bananas", cat: groc, cents: 70, qty: 3000 }, { raw: "Waiting Deodorant", cat: home, cents: 600 }], { merchant: "Walmart", date: "2026-11-20" });
   await addReceipt(hid, null, [{ raw: "Waiting Old Rice", cat: groc, cents: 300 }], { merchant: "Sam's Club", date: "2026-05-01" }); // outside 120 days
   // Another household's groceries must never show up.
   ({ householdId: otherHid } = await insertHousehold(db, "Other"));
@@ -69,10 +72,12 @@ describe("buildGroceryResponse", () => {
     expect(r.source).toBe("Ledgr");
     expect(r.asOf).toBe("2026-11-21");
     const byName = Object.fromEntries(r.items.map((i) => [i.name, i]));
-    expect(Object.keys(byName).sort()).toEqual(["Dup Milk", "Eggs", "Renamed Bread", "Rotisserie Chicken", "Trip Peaches", "Waiting Bananas"]);
+    expect(byName.Eggs.qty).toBe(1);
+    expect([byName["Multi Milk"].qty, byName["Multi Milk"].lastQty]).toEqual([6, 4]);
+    expect(Object.keys(byName).sort()).toEqual(["Dup Milk", "Eggs", "Multi Milk", "Renamed Bread", "Rotisserie Chicken", "Trip Peaches", "Waiting Bananas"]);
     expect(JSON.stringify(r)).not.toContain("SECRET");
-    expect(byName["Waiting Bananas"]).toEqual({ name: "Waiting Bananas", last: "2026-11-20", count: 1, cents: 70, store: "Walmart" });
-    expect(byName["Rotisserie Chicken"]).toEqual({ name: "Rotisserie Chicken", last: "2026-11-16", count: 1, cents: 498, store: "Sam's Club" });
+    expect(byName["Waiting Bananas"]).toEqual({ name: "Waiting Bananas", last: "2026-11-20", count: 1, cents: 23, store: "Walmart", qty: 3, lastQty: 3 });
+    expect(byName["Rotisserie Chicken"]).toEqual({ name: "Rotisserie Chicken", last: "2026-11-16", count: 1, cents: 498, store: "Sam's Club", qty: 1, lastQty: 1 });
     expect(byName.Eggs.store).toBe("Walmart");
   });
   it("returns an empty list, not an error, when there is no Groceries category", async () => {
