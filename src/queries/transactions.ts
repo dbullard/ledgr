@@ -27,6 +27,11 @@ export interface TransactionFilters {
   excludeTransfers?: boolean;
   /** `true` shows only hidden rows (an audit view); omitted excludes them — never additive. */
   hidden?: boolean;
+  /**
+   * Posted expenses with no receipt attached: exactly the rows that carry the
+   * "no receipt" icon (see needsReceipt in lib/receipts/missing.ts).
+   */
+  noReceipt?: boolean;
 }
 
 export interface TransactionRow {
@@ -215,6 +220,14 @@ function buildTransactionConditions(
   }
   if (filters.transactionType === "transfer") {
     conditions.push(eq(transactions.isTransfer, true));
+  }
+  if (filters.noReceipt) {
+    conditions.push(lt(transactions.normalizedAmount, 0));
+    conditions.push(eq(transactions.isTransfer, false));
+    conditions.push(eq(transactions.pending, false));
+    conditions.push(
+      sql`NOT EXISTS (SELECT 1 FROM ${receipts} WHERE ${receipts.transactionId} = ${transactions.id} AND ${receipts.householdId} = ${transactions.householdId})`,
+    );
   }
 
   return conditions;

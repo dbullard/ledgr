@@ -4,7 +4,7 @@ import PhotosUI
 import UniformTypeIdentifiers
 
 enum TxnFilter: String, CaseIterable, Identifiable {
-    case all = "All", needsReview = "Needs review", expense = "Spending", credits = "Income"
+    case all = "All", needsReview = "Needs review", noReceipt = "No receipt", expense = "Spending", credits = "Income"
     var id: String { rawValue }
 }
 
@@ -197,6 +197,7 @@ struct TransactionsView: View {
         switch filter {
         case .all: break
         case .needsReview: q["needsReview"] = "1"
+        case .noReceipt: q["noReceipt"] = "1"
         case .expense: q["type"] = "expense"
         case .credits: q["type"] = "credits"
         }

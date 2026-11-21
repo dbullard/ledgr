@@ -108,7 +108,7 @@ export const dynamic = "force-dynamic";
  * the native screens see exactly what the web app does.
  *
  *   GET    /api/native/dashboard?range=1M|3M|6M|1Y|all
- *   GET    /api/native/transactions?search&needsReview&categoryId&uncategorized&amount(cents, exact)&cursor&limit&count(1 adds the true match count)
+ *   GET    /api/native/transactions?search&needsReview&noReceipt(1: posted expenses with no receipt)&categoryId&uncategorized&amount(cents, exact)&cursor&limit&count(1 adds the true match count)
  *   GET    /api/native/transactions/:id
  *   PATCH  /api/native/transactions/:id   { categoryId?, reviewed?, notes?, name?, iconOverride?, iconColor?, isTransfer? }
  *   GET    /api/native/category-suggestions?ids=a,b   cached on-device AI picks { [txnId]: categoryId | null }
@@ -649,6 +649,7 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
     const search = q.get("search")?.trim();
     if (search) filters.search = search;
     if (q.get("needsReview") === "1") filters.needsReview = true;
+    if (q.get("noReceipt") === "1") filters.noReceipt = true;
     if (q.get("categoryId")) filters.categoryId = q.get("categoryId");
     if (q.get("uncategorized") === "1") { filters.categoryId = null; filters.excludeTransfers = true; }
     const exactAmount = Number(q.get("amount"));

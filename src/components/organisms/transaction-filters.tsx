@@ -14,6 +14,7 @@ import {
   BadgeCheck,
   CalendarDays,
   EyeOff,
+  ReceiptText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSearchParamFilters } from "@/hooks/use-search-param-filters";
@@ -150,6 +151,7 @@ export function TransactionFilters({ accounts, categories, resultCount }: Transa
 
   const reviewedActive = searchParams.get("reviewed") === "true";
   const hiddenActive = searchParams.get("hidden") === "true";
+  const noReceiptActive = searchParams.get("noReceipt") === "true";
 
   function handleDatePreset(id: string) {
     if (id === "all") updateFilters({ from: null, to: null });
@@ -172,6 +174,7 @@ export function TransactionFilters({ accounts, categories, resultCount }: Transa
     amountMaxDisplay: amount.maxDisplay,
     reviewed: reviewedActive,
     hidden: hiddenActive,
+    noReceipt: noReceiptActive,
     accounts,
     categories,
   });
@@ -187,6 +190,7 @@ export function TransactionFilters({ accounts, categories, resultCount }: Transa
     },
     reviewed: () => updateFilter("reviewed", null),
     hidden: () => updateFilter("hidden", null),
+    noReceipt: () => updateFilter("noReceipt", null),
   };
 
   function renderChip(chip: FilterChip) {
@@ -372,6 +376,8 @@ export function TransactionFilters({ accounts, categories, resultCount }: Transa
           onReviewedChange={(next) => updateFilter("reviewed", next ? "true" : null)}
           hidden={hiddenActive}
           onHiddenChange={(next) => updateFilter("hidden", next ? "true" : null)}
+          noReceipt={noReceiptActive}
+          onNoReceiptChange={(next) => updateFilter("noReceipt", next ? "true" : null)}
           onClearAll={handleClearAll}
           resultCount={resultCount}
         />
@@ -563,6 +569,19 @@ export function TransactionFilters({ accounts, categories, resultCount }: Transa
           onClick={() => updateFilter("reviewed", reviewedActive ? null : "true")}
         >
           <BadgeCheck className="mr-1 h-3.5 w-3.5" /> Reviewed
+        </Button>
+
+        {/* No receipt — posted expenses that still have no receipt attached (the
+            rows marked with the faint receipt icon). */}
+        <Button
+          type="button"
+          variant={noReceiptActive ? "default" : "outline"}
+          size="sm"
+          className="h-8 text-xs"
+          aria-pressed={noReceiptActive}
+          onClick={() => updateFilter("noReceipt", noReceiptActive ? null : "true")}
+        >
+          <ReceiptText className="mr-1 h-3.5 w-3.5" /> No receipt
         </Button>
 
         {/* Hidden toggle — shows only hidden transactions; they're excluded by

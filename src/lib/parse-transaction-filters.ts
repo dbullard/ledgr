@@ -33,6 +33,7 @@ export function parseTransactionFilters(
     amountMax,
     transactionType,
     hidden: params.hidden === "true" ? true : undefined,
+    noReceipt: params.noReceipt === "true" ? true : undefined,
   };
 
   return { filters, isReviewMode };

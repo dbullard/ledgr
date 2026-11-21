@@ -59,6 +59,12 @@ describe("parseTransactionFilters", () => {
     expect(parseTransactionFilters({}).filters.needsReview).toBeUndefined();
   });
 
+  it("reads the no-receipt toggle only when it is exactly true", () => {
+    expect(parseTransactionFilters({ noReceipt: "true" }).filters.noReceipt).toBe(true);
+    expect(parseTransactionFilters({ noReceipt: "1" }).filters.noReceipt).toBeUndefined();
+    expect(parseTransactionFilters({}).filters.noReceipt).toBeUndefined();
+  });
+
   it("treats empty/missing params as undefined filters", () => {
     const { filters } = parseTransactionFilters({});
     expect(filters.accountId).toBeUndefined();

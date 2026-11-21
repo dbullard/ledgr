@@ -81,3 +81,60 @@ describe("getTransactions hasReceipt", () => {
     expect(page.rows.find((r) => r.name === "without")?.hasReceipt).toBe(false);
   });
 });
+
+describe("getTransactions noReceipt filter", () => {
+  let db: LedgrDb;
+  let close: () => Promise<void>;
+  let householdId: string;
+
+  beforeAll(async () => {
+    ({ db, close } = await createTestDb());
+    ({ householdId } = await insertHousehold(db));
+    const { accountId } = await insertAccount(db, householdId, { name: "Card" });
+    const make = async (name: string, over: { normalizedAmount?: number; pending?: boolean; isTransfer?: boolean }) => {
+      const res = await insertTransaction(db, householdId, accountId, {
+        name,
+        date: "2026-06-01",
+        amount: 1000,
+        normalizedAmount: over.normalizedAmount ?? -1000,
+        pending: over.pending,
+        isTransfer: over.isTransfer,
+      });
+      return res.transactionId;
+    };
+    const withReceipt = await make("has-receipt", {});
+    await make("missing", {});
+    await make("missing-too", {});
+    await make("pending-missing", { pending: true });
+    await make("income-missing", { normalizedAmount: 5000 });
+    await make("transfer-missing", { isTransfer: true });
+    const id = uuid();
+    await db.insert(receipts).values({
+      id,
+      householdId,
+      transactionId: withReceipt,
+      filePath: `2026/06/${id}.txt`,
+      originalFilename: "r.txt",
+      contentType: "text/plain",
+      sizeBytes: 1,
+      sha256: id,
+    });
+  });
+
+  afterAll(async () => {
+    await close();
+  });
+
+  it("lists exactly the posted expenses that carry the no-receipt icon", async () => {
+    const page = await getTransactions(householdId, { noReceipt: true }, 50, null, db);
+    expect(page.rows.map((r) => r.name).sort()).toEqual(["missing", "missing-too"]);
+    expect(page.rows.every((r) => r.hasReceipt === false)).toBe(true);
+  });
+
+  it("combines with other filters and leaves the list alone when off", async () => {
+    const searched = await getTransactions(householdId, { noReceipt: true, search: "too" }, 50, null, db);
+    expect(searched.rows.map((r) => r.name)).toEqual(["missing-too"]);
+    const all = await getTransactions(householdId, {}, 50, null, db);
+    expect(all.rows).toHaveLength(6);
+  });
+});

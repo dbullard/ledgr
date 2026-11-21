@@ -121,6 +121,12 @@ describe("buildFilterChips", () => {
     ]);
   });
 
+  it("counts the no-receipt toggle, which has no value of its own", () => {
+    expect(buildFilterChips({ ...EMPTY, noReceipt: true })).toEqual([
+      { key: "noReceipt", label: null, value: "No receipt" },
+    ]);
+  });
+
   it("counts the hidden toggle, which has no value of its own", () => {
     expect(buildFilterChips({ ...EMPTY, hidden: true })).toEqual([
       { key: "hidden", label: null, value: "Hidden" },

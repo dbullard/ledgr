@@ -6,7 +6,7 @@ import { todayDateString } from "@/lib/date-utils";
 
 const FILTER_KEYS = [
   "q", "account", "category", "from", "to",
-  "reviewed", "type", "amountMin", "amountMax",
+  "reviewed", "type", "amountMin", "amountMax", "noReceipt",
 ];
 
 export function useSearchParamFilters() {

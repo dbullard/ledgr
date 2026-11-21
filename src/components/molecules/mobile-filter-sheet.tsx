@@ -50,6 +50,8 @@ interface MobileFilterSheetProps {
   onReviewedChange: (next: boolean) => void;
   hidden: boolean;
   onHiddenChange: (next: boolean) => void;
+  noReceipt: boolean;
+  onNoReceiptChange: (next: boolean) => void;
   onClearAll: () => void;
   /** Row count under the filters as they currently stand. */
   resultCount: number;
@@ -71,6 +73,8 @@ export function MobileFilterSheet({
   onReviewedChange,
   hidden,
   onHiddenChange,
+  noReceipt,
+  onNoReceiptChange,
   onClearAll,
   resultCount,
 }: MobileFilterSheetProps) {
@@ -189,6 +193,16 @@ export function MobileFilterSheet({
               id="filter-reviewed"
               checked={reviewed}
               onCheckedChange={onReviewedChange}
+            />
+          </div>
+          <div className="flex items-center gap-2 border-t px-4 py-3 text-sm">
+            <label htmlFor="filter-no-receipt" className="flex-1">
+              No receipt only
+            </label>
+            <Switch
+              id="filter-no-receipt"
+              checked={noReceipt}
+              onCheckedChange={onNoReceiptChange}
             />
           </div>
           <div className="flex items-center gap-2 border-t px-4 py-3 text-sm">
