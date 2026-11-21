@@ -1,5 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db as defaultDb, type LedgrDb } from "@/db";
 import { categories, households } from "@/db/schema";
 import { getTopProducts, type TopProductRow } from "@/queries/receipt-items";
@@ -47,8 +47,19 @@ export function toGroceryItems(rows: TopProductRow[]): GroceryItem[] {
   });
 }
 
+/**
+ * Every category that means Groceries: custom ones by name, seeded ones by their
+ * stable systemKey (so a rename does not hide them), including merged keys like
+ * "Restaurants|Groceries". Same rule the categorization engine uses.
+ */
+export function groceryCategoryIds(rows: { id: string; name: string; systemKey: string | null }[]): string[] {
+  return rows
+    .filter((c) => (c.systemKey ? c.systemKey.split("|").includes("Groceries") : c.name === "Groceries"))
+    .map((c) => c.id);
+}
+
 export const GROCERY_DAYS = 120;
-export const GROCERY_LIMIT = 100;
+export const GROCERY_LIMIT = 500;
 
 /** The household the key reads: GROCERY_API_HOUSEHOLD_ID, else the only one. Throws if that is ambiguous. */
 export async function resolveHouseholdId(envId: string | undefined, db: LedgrDb = defaultDb): Promise<string> {
@@ -60,19 +71,20 @@ export async function resolveHouseholdId(envId: string | undefined, db: LedgrDb 
 
 export async function buildGroceryResponse(householdId: string, db: LedgrDb = defaultDb, today = todayDateString()) {
   const from = new Date(Date.parse(`${today}T00:00:00Z`) - GROCERY_DAYS * 86_400_000).toISOString().slice(0, 10);
-  const [cat] = await db
-    .select({ id: categories.id })
+  const cats = await db
+    .select({ id: categories.id, name: categories.name, systemKey: categories.systemKey })
     .from(categories)
-    .where(and(eq(categories.householdId, householdId), eq(categories.name, "Groceries")))
-    .limit(1);
-  const items = cat
-    ? toGroceryItems(
-        await withHousehold(
-          householdId,
-          (tx) => getTopProducts(householdId, { dateFrom: from, dateTo: today, categoryId: cat.id }, GROCERY_LIMIT, tx, { sort: "last" }),
-          db,
-        ),
-      )
-    : [];
+    .where(eq(categories.householdId, householdId));
+  const ids = groceryCategoryIds(cats);
+  const items =
+    ids.length > 0
+      ? toGroceryItems(
+          await withHousehold(
+            householdId,
+            (tx) => getTopProducts(householdId, { dateFrom: from, dateTo: today, categoryIds: ids }, GROCERY_LIMIT, tx, { sort: "last" }),
+            db,
+          ),
+        )
+      : [];
   return { source: "Ledgr", asOf: today, items };
 }

@@ -14,6 +14,8 @@ export interface ItemFilters {
   dateFrom: string;
   dateTo: string;
   categoryId?: string | null;
+  /** Any of these categories (used when one name maps to several). Ignored when empty. */
+  categoryIds?: string[];
 }
 
 const productKey = sql<string>`lower(coalesce(${receiptItems.productName}, ${receiptItems.rawName}))`;
@@ -28,6 +30,7 @@ function base(householdId: string, db: LedgrDb, f: ItemFilters) {
     gte(transactions.date, f.dateFrom),
     lte(transactions.date, f.dateTo),
     f.categoryId ? eq(receiptItems.categoryId, f.categoryId) : undefined,
+    f.categoryIds && f.categoryIds.length > 0 ? inArray(receiptItems.categoryId, f.categoryIds) : undefined,
   );
 }
 

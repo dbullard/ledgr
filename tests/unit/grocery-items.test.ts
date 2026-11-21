@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkBearer, corsHeaders, toGroceryItems } from "../../src/lib/grocery-items";
+import { checkBearer, corsHeaders, groceryCategoryIds, GROCERY_LIMIT, toGroceryItems } from "../../src/lib/grocery-items";
 import type { TopProductRow } from "../../src/queries/receipt-items";
 
 describe("checkBearer", () => {
@@ -45,4 +45,24 @@ describe("toGroceryItems", () => {
     expect(i.store).toBe("");
     expect(i.cents).toBe(267);
   });
+});
+
+describe("groceryCategoryIds", () => {
+  it("finds custom categories by name and seeded ones by systemKey, even when renamed or merged", () => {
+    const ids = groceryCategoryIds([
+      { id: "a", name: "Groceries", systemKey: null },
+      { id: "b", name: "Food Shopping", systemKey: "Groceries" },
+      { id: "c", name: "Eating", systemKey: "Restaurants|Groceries" },
+      { id: "d", name: "Groceries", systemKey: "Dining" }, // seeded as something else, then renamed
+      { id: "e", name: "Gas", systemKey: "Gas" },
+    ]);
+    expect(ids.sort()).toEqual(["a", "b", "c"]);
+  });
+  it("returns nothing when there is no Groceries category", () => {
+    expect(groceryCategoryIds([{ id: "e", name: "Gas", systemKey: "Gas" }])).toEqual([]);
+  });
+});
+
+it("asks for enough products to cover a household's whole 120 days", () => {
+  expect(GROCERY_LIMIT).toBeGreaterThanOrEqual(300);
 });

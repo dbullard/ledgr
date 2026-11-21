@@ -10,6 +10,7 @@ let db: LedgrDb;
 let close: () => Promise<void>;
 let hid: string;
 let bareHid: string; // household with no Groceries category
+let otherHid: string;
 
 async function addReceipt(householdId: string, txnId: string, items: { raw: string; cat: string; cents: number; qty?: number }[]) {
   const id = uuid();
@@ -31,6 +32,17 @@ beforeAll(async () => {
   await addReceipt(hid, await mk("2026-11-16", "Sams Club.com DDA PIN POS PUR CD1322 Bentonville"), [{ raw: "Rotisserie Chicken", cat: groc, cents: 498 }, { raw: "Paper Towels", cat: home, cents: 2000 }]);
   await addReceipt(hid, await mk("2026-11-09", "Walmart"), [{ raw: "Eggs", cat: groc, cents: 404 }]);
   await addReceipt(hid, await mk("2026-05-01", "Walmart"), [{ raw: "Ancient Beans", cat: groc, cents: 100 }]); // outside 120 days
+  // A second category that is also called Groceries, and a renamed seeded one.
+  const { categoryId: dup } = await insertCategory(db, hid, groupId, { name: "Groceries" });
+  const { categoryId: renamed } = await insertCategory(db, hid, groupId, { name: "Food Shopping", systemKey: "Groceries" });
+  await addReceipt(hid, await mk("2026-11-12", "Walmart"), [{ raw: "Dup Milk", cat: dup, cents: 300 }, { raw: "Renamed Bread", cat: renamed, cents: 280 }]);
+  // Another household's groceries must never show up.
+  ({ householdId: otherHid } = await insertHousehold(db, "Other"));
+  const { accountId: otherAcct } = await insertAccount(db, otherHid, { name: "Card" });
+  const { groupId: og } = await insertCategoryGroup(db, otherHid, { name: "Spending" });
+  const { categoryId: ogroc } = await insertCategory(db, otherHid, og, { name: "Groceries" });
+  const ot = (await insertTransaction(db, otherHid, otherAcct, { date: "2026-11-10", name: "Kroger", originalName: "Kroger", amount: 500, normalizedAmount: -500 })).transactionId;
+  await addReceipt(otherHid, ot, [{ raw: "THEIR SECRET SNACK", cat: ogroc, cents: 500 }]);
   ({ householdId: bareHid } = await insertHousehold(db, "Bare"));
 });
 
@@ -44,7 +56,8 @@ describe("buildGroceryResponse", () => {
     expect(r.source).toBe("Ledgr");
     expect(r.asOf).toBe("2026-11-21");
     const byName = Object.fromEntries(r.items.map((i) => [i.name, i]));
-    expect(Object.keys(byName).sort()).toEqual(["Eggs", "Rotisserie Chicken"]);
+    expect(Object.keys(byName).sort()).toEqual(["Dup Milk", "Eggs", "Renamed Bread", "Rotisserie Chicken"]);
+    expect(JSON.stringify(r)).not.toContain("SECRET");
     expect(byName["Rotisserie Chicken"]).toEqual({ name: "Rotisserie Chicken", last: "2026-11-16", count: 1, cents: 498, store: "Sam's Club" });
     expect(byName.Eggs.store).toBe("Walmart");
   });
