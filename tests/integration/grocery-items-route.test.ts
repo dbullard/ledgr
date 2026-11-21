@@ -27,8 +27,8 @@ beforeAll(async () => {
   const { groupId } = await insertCategoryGroup(db, hid, { name: "Spending" });
   const { categoryId: groc } = await insertCategory(db, hid, groupId, { name: "Groceries" });
   const { categoryId: home } = await insertCategory(db, hid, groupId, { name: "Home Goods" });
-  const mk = async (date: string, name: string) =>
-    (await insertTransaction(db, hid, accountId, { date, name, originalName: name, amount: 1000, normalizedAmount: -1000 })).transactionId;
+  const mk = async (date: string, name: string, categoryId: string | null = groc) =>
+    (await insertTransaction(db, hid, accountId, { date, name, originalName: name, amount: 1000, normalizedAmount: -1000, categoryId })).transactionId;
   await addReceipt(hid, await mk("2026-11-16", "Sams Club.com DDA PIN POS PUR CD1322 Bentonville"), [{ raw: "Rotisserie Chicken", cat: groc, cents: 498 }, { raw: "Paper Towels", cat: home, cents: 2000 }]);
   await addReceipt(hid, await mk("2026-11-09", "Walmart"), [{ raw: "Eggs", cat: groc, cents: 404 }]);
   await addReceipt(hid, await mk("2026-05-01", "Walmart"), [{ raw: "Ancient Beans", cat: groc, cents: 100 }]); // outside 120 days
@@ -36,6 +36,8 @@ beforeAll(async () => {
   const { categoryId: dup } = await insertCategory(db, hid, groupId, { name: "Groceries" });
   const { categoryId: renamed } = await insertCategory(db, hid, groupId, { name: "Food Shopping", systemKey: "Groceries" });
   await addReceipt(hid, await mk("2026-11-12", "Walmart"), [{ raw: "Dup Milk", cat: dup, cents: 300 }, { raw: "Renamed Bread", cat: renamed, cents: 280 }]);
+  // An item the receipt reader tagged Groceries, on a trip the household filed under Home Goods: not a grocery purchase.
+  await addReceipt(hid, await mk("2026-11-13", "Walmart", home), [{ raw: "Kids Table", cat: groc, cents: 5000 }]);
   // Another household's groceries must never show up.
   ({ householdId: otherHid } = await insertHousehold(db, "Other"));
   const { accountId: otherAcct } = await insertAccount(db, otherHid, { name: "Card" });
@@ -58,6 +60,7 @@ describe("buildGroceryResponse", () => {
     const byName = Object.fromEntries(r.items.map((i) => [i.name, i]));
     expect(Object.keys(byName).sort()).toEqual(["Dup Milk", "Eggs", "Renamed Bread", "Rotisserie Chicken"]);
     expect(JSON.stringify(r)).not.toContain("SECRET");
+    expect(Object.keys(byName)).not.toContain("Kids Table");
     expect(byName["Rotisserie Chicken"]).toEqual({ name: "Rotisserie Chicken", last: "2026-11-16", count: 1, cents: 498, store: "Sam's Club" });
     expect(byName.Eggs.store).toBe("Walmart");
   });

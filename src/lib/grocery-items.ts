@@ -81,7 +81,7 @@ export async function buildGroceryResponse(householdId: string, db: LedgrDb = de
       ? toGroceryItems(
           await withHousehold(
             householdId,
-            (tx) => getTopProducts(householdId, { dateFrom: from, dateTo: today, categoryIds: ids }, GROCERY_LIMIT, tx, { sort: "last" }),
+            (tx) => getTopProducts(householdId, { dateFrom: from, dateTo: today, categoryIds: ids, txnCategoryIds: ids }, GROCERY_LIMIT, tx, { sort: "last" }),
             db,
           ),
         )

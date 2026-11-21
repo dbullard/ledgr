@@ -16,6 +16,8 @@ export interface ItemFilters {
   categoryId?: string | null;
   /** Any of these categories (used when one name maps to several). Ignored when empty. */
   categoryIds?: string[];
+  /** Only receipts whose transaction is filed under one of these (so a Home Goods trip never counts as groceries). Ignored when empty. */
+  txnCategoryIds?: string[];
 }
 
 const productKey = sql<string>`lower(coalesce(${receiptItems.productName}, ${receiptItems.rawName}))`;
@@ -31,6 +33,7 @@ function base(householdId: string, db: LedgrDb, f: ItemFilters) {
     lte(transactions.date, f.dateTo),
     f.categoryId ? eq(receiptItems.categoryId, f.categoryId) : undefined,
     f.categoryIds && f.categoryIds.length > 0 ? inArray(receiptItems.categoryId, f.categoryIds) : undefined,
+    f.txnCategoryIds && f.txnCategoryIds.length > 0 ? inArray(transactions.categoryId, f.txnCategoryIds) : undefined,
   );
 }
 
