@@ -12,9 +12,17 @@ let hid: string;
 let bareHid: string; // household with no Groceries category
 let otherHid: string;
 
-async function addReceipt(householdId: string, txnId: string, items: { raw: string; cat: string; cents: number; qty?: number }[]) {
+async function addReceipt(
+  householdId: string,
+  txnId: string | null,
+  items: { raw: string; cat: string; cents: number; qty?: number }[],
+  hint: { merchant?: string; date?: string } = {},
+) {
   const id = uuid();
-  await db.insert(receipts).values({ id, householdId, transactionId: txnId, filePath: `x/${id}.txt`, originalFilename: "r.txt", contentType: "text/plain", sizeBytes: 1, sha256: id });
+  await db.insert(receipts).values({
+    id, householdId, transactionId: txnId, filePath: `x/${id}.txt`, originalFilename: "r.txt", contentType: "text/plain", sizeBytes: 1, sha256: id,
+    hintMerchant: hint.merchant ?? null, hintDate: hint.date ?? null,
+  });
   await db.insert(receiptItems).values(items.map((it, i) => ({
     id: uuid(), householdId, receiptId: id, lineNo: i + 1, rawName: it.raw, productName: it.raw, categoryId: it.cat, quantityMilli: it.qty ?? 1000, totalCents: it.cents,
   })));
@@ -36,8 +44,11 @@ beforeAll(async () => {
   const { categoryId: dup } = await insertCategory(db, hid, groupId, { name: "Groceries" });
   const { categoryId: renamed } = await insertCategory(db, hid, groupId, { name: "Food Shopping", systemKey: "Groceries" });
   await addReceipt(hid, await mk("2026-11-12", "Walmart"), [{ raw: "Dup Milk", cat: dup, cents: 300 }, { raw: "Renamed Bread", cat: renamed, cents: 280 }]);
-  // An item the receipt reader tagged Groceries, on a trip the household filed under Home Goods: not a grocery purchase.
-  await addReceipt(hid, await mk("2026-11-13", "Walmart", home), [{ raw: "Kids Table", cat: groc, cents: 5000 }]);
+  // Items carry their own category: a grocery item on a trip filed under Home Goods is still a grocery item.
+  await addReceipt(hid, await mk("2026-11-13", "Walmart", home), [{ raw: "Trip Peaches", cat: groc, cents: 5000 }, { raw: "Trip Lamp", cat: home, cents: 900 }]);
+  // Receipts not yet attached to a transaction count too, dated by the receipt and named by its vendor.
+  await addReceipt(hid, null, [{ raw: "Waiting Bananas", cat: groc, cents: 70 }, { raw: "Waiting Deodorant", cat: home, cents: 600 }], { merchant: "Walmart", date: "2026-11-20" });
+  await addReceipt(hid, null, [{ raw: "Waiting Old Rice", cat: groc, cents: 300 }], { merchant: "Sam's Club", date: "2026-05-01" }); // outside 120 days
   // Another household's groceries must never show up.
   ({ householdId: otherHid } = await insertHousehold(db, "Other"));
   const { accountId: otherAcct } = await insertAccount(db, otherHid, { name: "Card" });
@@ -58,9 +69,9 @@ describe("buildGroceryResponse", () => {
     expect(r.source).toBe("Ledgr");
     expect(r.asOf).toBe("2026-11-21");
     const byName = Object.fromEntries(r.items.map((i) => [i.name, i]));
-    expect(Object.keys(byName).sort()).toEqual(["Dup Milk", "Eggs", "Renamed Bread", "Rotisserie Chicken"]);
+    expect(Object.keys(byName).sort()).toEqual(["Dup Milk", "Eggs", "Renamed Bread", "Rotisserie Chicken", "Trip Peaches", "Waiting Bananas"]);
     expect(JSON.stringify(r)).not.toContain("SECRET");
-    expect(Object.keys(byName)).not.toContain("Kids Table");
+    expect(byName["Waiting Bananas"]).toEqual({ name: "Waiting Bananas", last: "2026-11-20", count: 1, cents: 70, store: "Walmart" });
     expect(byName["Rotisserie Chicken"]).toEqual({ name: "Rotisserie Chicken", last: "2026-11-16", count: 1, cents: 498, store: "Sam's Club" });
     expect(byName.Eggs.store).toBe("Walmart");
   });
