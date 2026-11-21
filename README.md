@@ -246,6 +246,9 @@ Migrations run automatically on container startup.
 | `AI_PROVIDER` | No | -- | `openai`, `anthropic`, `google`, `openrouter`, or `custom` |
 | `AI_API_KEY` | No | -- | Provider API key for AI chat & categorization |
 | `MCP_ENABLED` | No | `false` | Enable the MCP endpoint for AI agents |
+| `GROCERY_API_KEY` | No | -- | Turns on the read-only `GET /api/grocery-items` route (recent Groceries lines with store and unit price) for the dinner planner. Callers send `Authorization: Bearer <key>`. Unset = route returns 404. Generate with `openssl rand -hex 32` |
+| `GROCERY_API_ORIGINS` | No | -- | Comma-separated browser origins allowed to call it (for example `http://192.168.1.86:8765`) |
+| `GROCERY_API_HOUSEHOLD_ID` | No | only household | Which household it reads; required if you have more than one |
 
 See [`.env.example`](.env.example) for all options.
 

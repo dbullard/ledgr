@@ -17,6 +17,11 @@ describe("proxy", () => {
     expect(response.status).not.toBe(307);
   });
 
+  it("lets the grocery-items API through to its own bearer-key check, and nothing next to it", () => {
+    expect(proxy(requestFor("/api/grocery-items")).status).not.toBe(307);
+    expect(proxy(requestFor("/api/export/transactions")).status).toBe(307);
+  });
+
   it("redirects unauthenticated requests for protected pages to /login", () => {
     const response = proxy(requestFor("/dashboard"));
     expect(response.status).toBe(307);
