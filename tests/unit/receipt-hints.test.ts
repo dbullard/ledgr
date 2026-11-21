@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { extractHints, findChargedTotal, findDate, findTotal, merchantFromFilename, merchantFromFirstLine } from "../../src/lib/receipts/hints";
+import { extractHints, findChargedTotal, findDate, findMerchant, findTotal, merchantFromFilename, merchantFromFirstLine } from "../../src/lib/receipts/hints";
 
 describe("findTotal", () => {
   test("takes the grand total, not subtotal or tax", () => {
@@ -81,5 +81,50 @@ describe("extractHints", () => {
   test("merchantFromFirstLine skips headers, amounts and dates", () => {
     expect(merchantFromFirstLine("RECEIPT\n11/02/2026 10:14\n$5.00\nCorner Cafe\nTotal 5.00")).toBe("Corner Cafe");
     expect(merchantFromFirstLine("12345\n$9.99")).toBeNull();
+  });
+
+  describe("findMerchant", () => {
+    test("a phrase in the filename names the store", () => {
+      expect(findMerchant("Receipt from CCR2 #emmP.pdf", "$32.56 #emmP\nDecaf $18.50\nNutty but Nice")).toBe("CCR2");
+      expect(findMerchant("Your Receipt for MOJITOS - NEW.pdf", "Total $20.00")).toBe("Mojitos");
+      expect(findMerchant("Your Black Hills Energy bill is available.pdf", "Your recent energy bill is ready.")).toBe("Black Hills Energy");
+      expect(findMerchant("Confirmation of digital purchase from Nintendo.pdf", null)).toBe("Nintendo");
+    });
+
+    test("a forwarded receipt email's subject and sender name the store", () => {
+      const text = "David Bullard <me@gmail.com>\nReceipt for $52.54 at Big Orange - Rogers\nBig Orange <no-reply@toasttab.com>";
+      expect(findMerchant("dropped-1.pdf", text)).toBe("Big Orange");
+      expect(findMerchant("dropped-2.pdf", "Begin forwarded message:\nFrom: AT&T Orders <orders@account.att-mail.com>\nSubject: Thanks")).toBe("AT&T");
+    });
+
+    test("never takes the user's own name or mailbox as the store", () => {
+      expect(findMerchant("x.pdf", "David Bullard <dbullard07@gmail.com>\nHave a great day")).not.toMatch(/bullard/i);
+    });
+
+    test("order pages are named by their site, not the Buyer label", () => {
+      const text = "11/11/26 Order details - Walmart.com\nInvoice\nOrder# 2000156\nBuyer\nLoren Bullard\n4307 W Murfield Dr";
+      expect(findMerchant("dropped-20261111.pdf", text)).toBe("Walmart");
+    });
+
+    test("recognises Sam's Club by its order wording and curly apostrophe", () => {
+      expect(findMerchant("PDF document.pdf", "Nov 14, 2026\nOrder 8000\nDelivery from club items(11)\nBeef Qty 1 $20.22")).toBe("Sam's Club");
+      expect(findMerchant("Order Receipt - TC 1.png", "sam’s club\nCLUB MANAGER JOSHUA\nPump# 9 UNLEAD")).toBe("Sam's Club");
+    });
+
+    test("welcome and thank-you lines on restaurant receipts name the store", () => {
+      expect(findMerchant("scan.jpg", "Welcome to Chick-fil-A\nTuscany Square FSU (# 01977)\nRogers, AR")).toBe("Chick-fil-A");
+      expect(findMerchant("scan.jpg", "Thank you for dining with Pei Wei Asian Kitchen\n4895 Ul Pauline Uhitaker p")).toBe("Pei Wei Asian Kitchen");
+    });
+
+    test("a company-name line beats the customer's name above it", () => {
+      const text = "0\n956\nDAVID BULLARD\n4307 W MURFIELD DR\nCarroll Electric Cooperative Corporation\nPO BOX 4000";
+      expect(findMerchant("BillPdf.ashx.pdf", text)).toBe("Carroll Electric Cooperative Corporation");
+    });
+
+    test("labels, addresses, items and OCR debris are never the store", () => {
+      for (const junk of ["Buyer", "Delivered to:", "Account name: David B.", "Vanilla Latte × 2", "4895 Ul Pauline Uhitaker p", "HARPS ee"]) {
+        expect(findMerchant("scan-1.jpg", `${junk}\nTotal $5.00`)).toBeNull();
+      }
+    });
   });
 });

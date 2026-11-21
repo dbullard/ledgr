@@ -11,7 +11,7 @@ interface KnownStore {
 }
 
 const KNOWN_STORES: KnownStore[] = [
-  { label: "Sam's Club", match: /\bsams?\s?club\b|\bsamsclub\b/i, alts: ["sams club", "samsclub"] },
+  { label: "Sam's Club", match: /\bsam[’']?s?\s?club\b|\bsamsclub\b|\bclub items\b/i, alts: ["sams club", "samsclub"] },
   { label: "Walmart", match: /\bwalmart\b|\bwm\s+supercenter\b|\bwal-mart\b/i, alts: ["walmart", "wm supercenter"] },
 ];
 
@@ -22,6 +22,11 @@ function titleCase(s: string): string {
     .toLowerCase()
     .replace(/\b([a-z])/g, (c) => c.toUpperCase())
     .replace(/'S\b/g, "'s");
+}
+
+/** The known store named anywhere in this text, if any. */
+export function knownStoreLabel(text: string): string | null {
+  return KNOWN_STORES.find((s) => s.match.test(text))?.label ?? null;
 }
 
 export function storeLabel(transactionName: string, merchantName?: string | null): string {

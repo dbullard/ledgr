@@ -1,3 +1,5 @@
+import { knownStoreLabel } from "./store-name";
+
 export interface ReceiptHints {
   totalCents: number | null;
   /** YYYY-MM-DD */
@@ -88,19 +90,25 @@ function emailSender(text: string): string | null {
 }
 
 const NOT_A_STORE = /receipt|invoice|order|date|total|thank|welcome|statement|page \d|https?:|@|\$|\d{1,2}[/:]\d{2}/i;
+/** Lines that look like labels, addresses, line items or a customer, not a store name. */
+const NOT_A_NAME =
+  /:\s*$|×|^\d|\bqty\b|items?\s*\(|^(?:buyer|seller|customer|guest|invoice|bill to|ship to|sold to|account|deliver|your|you |dear|hi |hello|subtotal|amount|due)\b|\b(?:delivered to|delivery from|shipping)\b/i;
 
 /** Stores print their name at the top: the first plausible short line of the text. */
 export function merchantFromFirstLine(text: string): string | null {
   for (const raw of text.split(/\r?\n/).slice(0, 6)) {
     const line = raw.trim();
-    if (line.length < 3 || line.length > 40 || NOT_A_STORE.test(line)) continue;
+    if (line.length < 3 || line.length > 40 || NOT_A_STORE.test(line) || NOT_A_NAME.test(line)) continue;
     const letters = (line.match(/[A-Za-z]/g) ?? []).length;
     if (letters >= 3 && letters >= line.length / 2) return line;
   }
   return null;
 }
 
-const STOP = new Set(["receipt", "invoice", "order", "scan", "img", "image", "photo", "pdf", "copy", "final"]);
+const STOP = new Set([
+  "receipt", "invoice", "order", "scan", "img", "image", "photo", "pdf", "copy", "final",
+  "dropped", "screenshot", "document", "download", "attachment", "details", "confirmation",
+]);
 
 /** Merchant-ish words from a filename, with dates, amounts and noise removed. */
 export function merchantFromFilename(filename: string): string | null {
@@ -111,6 +119,104 @@ export function merchantFromFilename(filename: string): string | null {
     .split(/[^A-Za-z]+/)
     .filter((w) => w.length > 2 && !STOP.has(w.toLowerCase()));
   return words.length ? words.join(" ").slice(0, 80) : null;
+}
+
+/** A captured name, trimmed at the first sentence break, location suffix or ticket number. */
+function cleanVendor(raw: string): string | null {
+  const cut = raw
+    .split(/\s[-–—|]\s|\s#|[.,;:!(\n]\s|\.\s*$|\s\(|\s\d{3,}\b/)[0]
+    .replace(/[\s_.,;:!|-]+$/g, "")
+    .replace(/^[\s_.,;:!|-]+/g, "")
+    .trim();
+  if (cut.length < 2 || cut.length > 50 || !/[A-Za-z]{2}/.test(cut)) return null;
+  if (/^(?:the|a|an|your|you|this|that|it|me|us|from|to|subject|date)$/i.test(cut)) return null;
+  // OCR debris: a shouted word trailed by a stray lowercase fragment ("HARPS ee").
+  if (/^[A-Z]{3,}\s+[a-z]{1,2}$/.test(cut)) return null;
+  // ALL CAPS reads as shouting in a list of vendors: "MOJITOS" -> "Mojitos".
+  return /^[A-Z][A-Z0-9 &'’.-]{4,}$/.test(cut)
+    ? cut.toLowerCase().replace(/\b([a-z])/g, (c) => c.toUpperCase())
+    : cut;
+}
+
+const NOT_VENDOR_FIRST_WORD = /^(?:recent|new|latest|monthly|online|final|first|last|order|item|items|e-?receipt|energy|digital)$/i;
+
+/** Phrases that name the store outright, in a filename, subject line or page header. */
+const NAMING_PHRASES: RegExp[] = [
+  /\b(?:receipt|invoice|order|purchase|payment|statement)s?\s+from\s+([A-Za-z][^\n]{1,60})/i,
+  /\b(?:receipt|order)\s+for\s+\$?[\d.,]+\s+at\s+([A-Za-z][^\n]{1,60})/i,
+  /\b(?:receipt|invoice|order)\s+for\s+([A-Za-z][^\n]{1,60})/i,
+  /\bwelcome to\s+([A-Za-z][^\n]{1,50})/i,
+  /\b(?:dining|shopping|visiting)\s+(?:with|at)\s+([A-Za-z][^\n]{1,50})/i,
+  /\border details?\s*[-–]\s*([A-Za-z][A-Za-z0-9&'’]{2,30})\.com\b/i,
+];
+const YOUR_X = /\byour\s+([A-Z][A-Za-z0-9&'’. ]{2,40}?)\s+(?:bill|payment|receipt|invoice|statement|order)\b/i;
+
+const PERSONAL_MAIL = /(?:gmail|googlemail|outlook|hotmail|live|yahoo|icloud|me|aol|proton(?:mail)?)\.(?:com|me)$/i;
+const SENDER = /^[ \t]*(?:(?:from|reply-to|sender):[ \t]*)?"?([A-Z][^<\n"@:]{1,40}?)"?[ \t]*<[^>@\s]+@([^>\s]+)>/gim;
+/** Mailbox words that follow a brand: "AT&T Orders" is AT&T. */
+const MAILBOX_WORD = /\s+(?:orders?|support|billing|receipts?|team|notifications?|customer service|no-?reply|accounts?|payments?)$/i;
+const COMPANY_LINE = /\b(?:inc\.?|llc|ltd|corp(?:oration)?|company|cooperative|pbc|co\.)(?:\W|$)/i;
+const PHONE_LINE = /^\(?\d{3}\)?[\s.-]*\d{3}[\s.-]*\d{4}$/;
+
+function fromNamingPhrase(source: string): string | null {
+  for (const re of NAMING_PHRASES) {
+    const m = source.match(re);
+    const v = m ? cleanVendor(m[1]) : null;
+    if (v) return v;
+  }
+  const y = source.match(YOUR_X);
+  if (y) {
+    const v = cleanVendor(y[1]);
+    if (v && !NOT_VENDOR_FIRST_WORD.test(v.split(/\s+/)[0])) return v;
+  }
+  return null;
+}
+
+/**
+ * Best guess at the store behind a receipt, most reliable evidence first: a
+ * phrase naming it ("Receipt from X", "Your X bill") in the filename or the top
+ * of the text, a store we know, an email sender, a company-name line, the line
+ * above a phone number, then the first plausible line, then the filename.
+ */
+export function findMerchant(filename: string, text: string | null): string | null {
+  const stem = filename.replace(/\.[^.]+$/, "");
+  const body = (text ?? "").trim();
+  const head = body.slice(0, 900);
+
+  const named = fromNamingPhrase(stem) ?? fromNamingPhrase(head);
+  if (named) return named;
+
+  const known = knownStoreLabel(`${stem}\n${body.slice(0, 4000)}`);
+  if (known) return known;
+
+  if (body) {
+    for (const m of body.slice(0, 3000).matchAll(SENDER)) {
+      const domain = m[2].toLowerCase();
+      const v = cleanVendor(m[1].replace(MAILBOX_WORD, ""));
+      if (v && !PERSONAL_MAIL.test(domain) && !/^(?:no-?reply|noreply|support|info|billing|receipts?)$/i.test(v)) return v;
+    }
+    const sender = emailSender(body);
+    const senderName = sender ? cleanVendor(sender) : null;
+    if (senderName) return senderName;
+
+    const lines = body.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(0, 30);
+    const company = lines.find(
+      (l) => l.length >= 4 && l.length <= 50 && COMPANY_LINE.test(l) && !/[\d@$:]/.test(l) && !NOT_A_NAME.test(l),
+    );
+    if (company) return cleanVendor(company);
+    const phoneAt = lines.findIndex((l) => PHONE_LINE.test(l));
+    if (phoneAt > 0) {
+      const above = lines[phoneAt - 1];
+      if (!NOT_A_STORE.test(above) && !NOT_A_NAME.test(above) && above.length <= 40) {
+        const v = cleanVendor(above);
+        if (v) return v;
+      }
+    }
+    const first = merchantFromFirstLine(body);
+    const firstVendor = first ? cleanVendor(first) : null;
+    if (firstVendor) return firstVendor;
+  }
+  return merchantFromFilename(filename);
 }
 
 export function extractHints(filename: string, text: string | null): ReceiptHints {
@@ -124,9 +230,7 @@ export function extractHints(filename: string, text: string | null): ReceiptHint
     if (m) totalCents = toCents(m[1]);
   }
   const date = (fromBody ? findDate(body) : null) ?? findDate(stem);
-  const merchant =
-    (fromBody ? (emailSender(body) ?? merchantFromFirstLine(body)) : null) ?? merchantFromFilename(filename);
-  return { totalCents, date, merchant };
+  return { totalCents, date, merchant: findMerchant(filename, fromBody ? body : null) };
 }
 
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp"]);
