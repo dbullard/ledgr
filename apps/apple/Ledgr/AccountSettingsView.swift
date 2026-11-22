@@ -102,6 +102,8 @@ struct AccountSettingsView: View {
                     }
                 }
 
+                DataHealthCard()
+
                 Card("Server") {
                     HStack {
                         Label(connection.mode.label, systemImage: connection.mode.symbol)

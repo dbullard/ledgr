@@ -464,6 +464,12 @@ struct RuleEditor: View {
     @State private var groups: [CategoryGroup] = []
     @State private var error: String?
     @State private var working = false
+    /// Existing transactions the saved rule could still file, shown after saving.
+    @State private var matches: Int?
+    @State private var applied: Int?
+
+    private struct CountReply: Decodable { let count: Int }
+    private struct UpdatedReply: Decodable { let updated: Int }
 
     init(draft: RuleDraft, onDone: @escaping () async -> Void) {
         _draft = State(initialValue: draft)
@@ -490,8 +496,21 @@ struct RuleEditor: View {
             }
             Stepper("Priority: \(draft.priority)", value: $draft.priority, in: 0...999)
             if let error { Text(error).font(.caption).foregroundStyle(Color.alert) }
+            if let matches {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Rule saved.").font(.subheadline.weight(.medium))
+                    if let applied {
+                        Text("Filed \(applied) existing transaction\(applied == 1 ? "" : "s").").font(.footnote).foregroundStyle(.secondary)
+                    } else {
+                        Text("\(matches) existing uncategorized or guessed transaction\(matches == 1 ? "" : "s") match this rule.").font(.footnote).foregroundStyle(.secondary)
+                        Button("File \(matches) existing transaction\(matches == 1 ? "" : "s")") { Task { await applyExisting() } }
+                            .buttonStyle(.borderedProminent).disabled(working)
+                    }
+                    Button("Done") { Task { await onDone(); dismiss() } }
+                }
+            }
             HStack {
-                if let id = draft.ruleId {
+                if let id = draft.ruleId, matches == nil {
                     Button("Delete", role: .destructive) {
                         Task {
                             working = true
@@ -502,10 +521,12 @@ struct RuleEditor: View {
                     }
                 }
                 Spacer()
-                Button("Cancel") { dismiss() }
-                Button("Save") { Task { await save() } }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(draft.pattern.trimmingCharacters(in: .whitespaces).isEmpty || draft.categoryId.isEmpty || working)
+                if matches == nil {
+                    Button("Cancel") { dismiss() }
+                    Button("Save") { Task { await save() } }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(draft.pattern.trimmingCharacters(in: .whitespaces).isEmpty || draft.categoryId.isEmpty || working)
+                }
             }
             Spacer()
         }
@@ -523,9 +544,23 @@ struct RuleEditor: View {
             } else {
                 try await api.post("api/native/category-rules", body: body)
             }
-            await onDone()
-            dismiss()
+            // Offer to file what the rule would already match, as the web rules page does.
+            let found: CountReply? = try? await api.postDecoded("api/native/category-rules/preview", body: ["categoryId": draft.categoryId, "matchField": draft.field, "matchPattern": draft.pattern])
+            if let count = found?.count, count > 0 {
+                matches = count
+            } else {
+                await onDone()
+                dismiss()
+            }
         } catch { self.error = error.localizedDescription }
+    }
+
+    private func applyExisting() async {
+        working = true
+        defer { working = false }
+        let reply: UpdatedReply? = try? await api.postDecoded("api/native/category-rules/apply", body: ["categoryId": draft.categoryId, "matchField": draft.field, "matchPattern": draft.pattern])
+        applied = reply?.updated ?? 0
+        api.noteChanged()
     }
 }
 

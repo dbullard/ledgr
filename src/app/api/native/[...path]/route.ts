@@ -28,6 +28,8 @@ import {
 } from "@/queries/investments";
 import { rangeToDateBounds } from "@/lib/date-utils";
 import { getCategoryRules } from "@/queries/category-rules";
+import { getSavedReportsByHousehold } from "@/queries/saved-reports";
+import { saveReport, deleteReport } from "@/actions/reports";
 import { nativeSearch } from "@/lib/native-search";
 import { getCategorySuggestions, setCategorySuggestion } from "@/lib/ai/category-suggestions";
 import {
@@ -96,6 +98,11 @@ import { getCategories } from "@/queries/categories";
 import { getItemSpendByCategory, getProductPriceHistory, getTopProducts } from "@/queries/receipt-items";
 import { fetchTransactionDetail, updateTransactionFields, upsertSplit, deleteSplit, confirmTransferSuggestion, rejectTransferSuggestion } from "@/actions/transaction-detail";
 import { toggleReviewed, updateTransactionCategory, bulkUpdateCategory, bulkMarkReviewed } from "@/actions/transactions";
+import { getConnectionHealth } from "@/queries/data-health";
+import { readBackupStatus } from "@/lib/backup-status";
+import { evaluateBackupHealth } from "@/lib/data-health";
+import { previewWalmartImport, importWalmartOrders } from "@/actions/walmart-import";
+import { previewAmazonImport, importAmazonOrders } from "@/actions/amazon-import";
 import { fetchReceiptItems } from "@/actions/receipt-items";
 import { fetchReceiptForEdit, saveReceiptEdits } from "@/actions/receipt-edit";
 import { attachReceipt, deleteReceipt, detachReceipt, fetchReceipts, fetchUnmatchedReceipts, uploadReceipt } from "@/actions/receipts";
@@ -110,6 +117,7 @@ export const dynamic = "force-dynamic";
  *   GET    /api/native/dashboard?range=1M|3M|6M|1Y|all
  *   GET    /api/native/transactions?search&needsReview&noReceipt(1: posted expenses with no receipt)&categoryId&uncategorized&amount(cents, exact)&cursor&limit&count(1 adds the true match count)
  *   GET    /api/native/transactions/:id
+ *   GET    /api/native/saved-reports   POST { name, reportType, range }   DELETE /api/native/saved-reports/:id
  *   GET    /api/native/upcoming-bills?limit=5
  *   GET    /api/native/transactions/transfer-suggestions
  *   POST   /api/native/transactions/:id/transfer-decision { decision: "transfer" | "spending" }
@@ -202,6 +210,35 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
     return ok(await getUpcomingBills(householdId, { limit }));
   }
 
+  // Reports saved from the apps. The apps save the report type and a range; the web app also keeps
+  // exact dates, so the dates are stored and returned too.
+  if (head === "saved-reports") {
+    if (!id && method === "GET") {
+      const rows = await withHousehold(householdId, (tx) => getSavedReportsByHousehold(householdId, tx));
+      return ok(rows.map((r) => {
+        let filters: { dateFrom?: string; dateTo?: string } = {};
+        try { filters = JSON.parse(r.filters); } catch { /* keep empty */ }
+        return { id: r.id, name: r.name, reportType: r.reportType, dateFrom: filters.dateFrom ?? null, dateTo: filters.dateTo ?? null };
+      }));
+    }
+    if (!id && method === "POST") {
+      const body = (await req.json().catch(() => null)) as { name?: string; reportType?: string; range?: string } | null;
+      const range = body?.range as Range | undefined;
+      if (!body?.name || !body.reportType || !range || !RANGES.includes(range)) return fail("Invalid input");
+      const bounds = rangeToDateBounds(range);
+      const res = await saveReport({
+        name: body.name.trim().slice(0, 100),
+        reportType: body.reportType as "spending" | "income-expense" | "trends" | "net-worth" | "cash-flow",
+        filters: { dateFrom: bounds.from ?? "1970-01-01", dateTo: bounds.to },
+      });
+      return "error" in res ? fail(res.error) : ok({ id: res.id });
+    }
+    if (id && method === "DELETE") {
+      const res = await deleteReport(id);
+      return "error" in res ? fail(res.error) : ok({ success: true });
+    }
+  }
+
   if (head === "dashboard" && method === "GET") {
     const asked = q.get("range") as Range | null;
     const range: Range = asked && RANGES.includes(asked) ? asked : "6M";
@@ -212,6 +249,15 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
       withHousehold(householdId, (tx) => getRecentTransactions(householdId, 8, tx)),
     ]);
     return ok({ summary, history, spending, recent });
+  }
+
+  // GET data-health: backup verdict plus one verdict per bank connection (worst first).
+  if (head === "data-health" && !id && method === "GET") {
+    const [connections, backupStatus] = await Promise.all([getConnectionHealth(householdId), readBackupStatus()]);
+    return ok({
+      backup: { status: backupStatus, health: evaluateBackupHealth(backupStatus, new Date()) },
+      connections,
+    });
   }
 
   if (head === "settings") {
@@ -240,6 +286,22 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
       const result = await revokeMcpClient({ clientId: segs[2] });
       return "error" in result ? fail(result.error) : ok(result);
     }
+  }
+
+  // POST import/orders/{walmart|amazon}[/preview]: multipart "file" (.xlsx for Walmart, .csv for Amazon).
+  if (head === "import" && id === "orders" && (segs[2] === "walmart" || segs[2] === "amazon") && method === "POST") {
+    let form: FormData;
+    try {
+      form = await req.formData();
+    } catch (e) {
+      return fail(`Couldn't read the upload: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const preview = segs[3] === "preview";
+    const res =
+      segs[2] === "walmart"
+        ? await (preview ? previewWalmartImport(form) : importWalmartOrders(form))
+        : await (preview ? previewAmazonImport(form) : importAmazonOrders(form));
+    return "error" in res ? fail(res.error) : ok(res.data);
   }
 
   if (head === "import" && id === "accounts" && method === "GET") {
@@ -676,6 +738,13 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
     if (q.get("accountId")) filters.accountId = q.get("accountId") ?? undefined;
     if (q.get("dateFrom")) filters.dateFrom = q.get("dateFrom") ?? undefined;
     if (q.get("dateTo")) filters.dateTo = q.get("dateTo") ?? undefined;
+    // A report's range (1M, 3M...) as dates, for tapping a report row to see its transactions.
+    const listRange = q.get("range") as Range | null;
+    if (listRange && RANGES.includes(listRange) && listRange !== "all") {
+      const bounds = rangeToDateBounds(listRange);
+      if (bounds.from) filters.dateFrom = bounds.from;
+      if (bounds.to) filters.dateTo = bounds.to;
+    }
     const type = q.get("type");
     if (type === "expense" || type === "credits" || type === "transfer") filters.transactionType = type;
     const limit = Math.min(Math.max(Number(q.get("limit")) || 40, 1), 100);

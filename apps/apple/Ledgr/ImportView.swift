@@ -32,6 +32,15 @@ struct ImportView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
+                Card("Store orders") {
+                    Text("Walmart or Amazon order exports become itemized receipts on your bank charges.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    NavigationLink { OrderImportView() } label: {
+                        HStack { Text("Import Walmart / Amazon orders"); Spacer(); Image(systemName: "chevron.right").font(.footnote).foregroundStyle(.tertiary) }
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
                 Card("1 · Pick a file") {
                     Text("CSV, OFX or QFX exported from your bank. Up to 10 MB.").font(.footnote).foregroundStyle(.secondary)
                     Button { showPicker = true } label: {
