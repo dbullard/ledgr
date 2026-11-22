@@ -25,6 +25,8 @@ struct TransactionsView: View {
     @State private var selected: Set<String> = []
     @State private var bulkWorking = false
     @State private var bulkCategory = false
+    @State private var transferSuggestions: [Txn] = []
+    @State private var showTransferReview = false
     @State private var accountGroups: [InstitutionGroupModel] = []
     @State private var dropMessage: String?
     @State private var listGroups: [CategoryGroup] = CategoryCache.groups
@@ -108,10 +110,11 @@ struct TransactionsView: View {
         .onChange(of: api.changedTxn) { _, t in if let t { applyChange(t) } }
         .onChange(of: api.changedBatch) { _, batch in batch.forEach(applyChange) }
         .refreshable { await api.syncBanks(); await reload() }
-        .safeAreaInset(edge: .top, spacing: 0) { headerBar }
+        .safeAreaInset(edge: .top, spacing: 0) { VStack(spacing: 0) { headerBar; transferBanner } }
+        .sheet(isPresented: $showTransferReview) { TransferReviewView(suggestions: transferSuggestions) { await reload(); await loadTransferSuggestions() } }
         .safeAreaInset(edge: .bottom, spacing: 0) { bulkBar }
         .sheet(isPresented: $showAdvanced) { TransactionFilterSheet(filters: $adv, groups: listGroups) }
-        .task { await loadGroups(); await loadAccounts() }
+        .task { await loadGroups(); await loadAccounts(); await loadTransferSuggestions() }
         .task(id: Key(search: search, filter: filter, account: accountId, adv: adv, base: connection.active)) {
             if !search.isEmpty { try? await Task.sleep(for: .milliseconds(300)) }
             guard !Task.isCancelled else { return }
@@ -152,6 +155,27 @@ struct TransactionsView: View {
             api.noteChanged()
         } catch APIError.unauthorized {
         } catch { dropMessage = error.localizedDescription }
+    }
+
+    @ViewBuilder private var transferBanner: some View {
+        if !transferSuggestions.isEmpty {
+            Button { showTransferReview = true } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.left.arrow.right")
+                    Text("\(transferSuggestions.count) possible transfer\(transferSuggestions.count == 1 ? "" : "s") to review")
+                        .font(.subheadline.weight(.medium))
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .background(Color.accentColor.opacity(0.12))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func loadTransferSuggestions() async {
+        if let list: [Txn] = try? await api.get("api/native/transactions/transfer-suggestions") { transferSuggestions = list }
     }
 
     @ViewBuilder private var bulkBar: some View {

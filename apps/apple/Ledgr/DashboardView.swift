@@ -20,6 +20,7 @@ struct DashboardView: View {
                     netWorth(data)
                     tiles(data.summary)
                     spending(data.spending)
+                    DashboardExtras()
                     feeds(data.recent)
                 }
                 .padding()

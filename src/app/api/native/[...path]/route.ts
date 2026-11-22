@@ -58,7 +58,7 @@ import { revokeMcpClient, toggleMcpEndpoint } from "@/actions/mcp-settings";
 import { toggleDemoMode } from "@/actions/demo-mode";
 import { isDemoMode } from "@/lib/demo-mode";
 import { getAccountsForImport } from "@/queries/accounts";
-import { getRecurrings, getRecurringSummary, getRecurringTransactions, getRecurringSuggestions, previewRecurringMatches } from "@/queries/recurring";
+import { getUpcomingBills, getRecurrings, getRecurringSummary, getRecurringTransactions, getRecurringSuggestions, previewRecurringMatches } from "@/queries/recurring";
 import {
   createRecurringTransaction,
   linkTransactionToRecurring,
@@ -91,10 +91,10 @@ import { getAccountsByInstitution, getAccountSummary } from "@/queries/accounts"
 import { balanceHistory, bankConnections } from "@/db/schema";
 import { scopedQuery } from "@/lib/scoped-query";
 import { and, eq, gte, inArray } from "drizzle-orm";
-import { getTransactions, getTransactionSummary, type TransactionFilters } from "@/queries/transactions";
+import { getTransactions, getTransactionSummary, getSuggestedTransfers, type TransactionFilters } from "@/queries/transactions";
 import { getCategories } from "@/queries/categories";
 import { getItemSpendByCategory, getProductPriceHistory, getTopProducts } from "@/queries/receipt-items";
-import { fetchTransactionDetail, updateTransactionFields, upsertSplit, deleteSplit } from "@/actions/transaction-detail";
+import { fetchTransactionDetail, updateTransactionFields, upsertSplit, deleteSplit, confirmTransferSuggestion, rejectTransferSuggestion } from "@/actions/transaction-detail";
 import { toggleReviewed, updateTransactionCategory, bulkUpdateCategory, bulkMarkReviewed } from "@/actions/transactions";
 import { fetchReceiptItems } from "@/actions/receipt-items";
 import { fetchReceiptForEdit, saveReceiptEdits } from "@/actions/receipt-edit";
@@ -110,6 +110,9 @@ export const dynamic = "force-dynamic";
  *   GET    /api/native/dashboard?range=1M|3M|6M|1Y|all
  *   GET    /api/native/transactions?search&needsReview&noReceipt(1: posted expenses with no receipt)&categoryId&uncategorized&amount(cents, exact)&cursor&limit&count(1 adds the true match count)
  *   GET    /api/native/transactions/:id
+ *   GET    /api/native/upcoming-bills?limit=5
+ *   GET    /api/native/transactions/transfer-suggestions
+ *   POST   /api/native/transactions/:id/transfer-decision { decision: "transfer" | "spending" }
  *   POST   /api/native/transactions/bulk                  { ids, categoryId? | reviewed? | hidden? }
  *   POST   /api/native/transactions/:id/splits            { categoryId, amount (cents), notes? }
  *   PUT    /api/native/transactions/:id/splits/:splitId   { categoryId, amount, notes? }
@@ -192,6 +195,12 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
   const q = req.nextUrl.searchParams;
   const method = req.method;
   const householdId = await getHouseholdId();
+
+  // The dashboard's "upcoming bills" card: the next few active bills, soonest first.
+  if (head === "upcoming-bills" && method === "GET") {
+    const limit = Math.min(Math.max(Number(q.get("limit")) || 5, 1), 20);
+    return ok(await getUpcomingBills(householdId, { limit }));
+  }
 
   if (head === "dashboard" && method === "GET") {
     const asked = q.get("range") as Range | null;
@@ -711,6 +720,19 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
     const detail = await fetchTransactionDetail(id);
     if ("error" in detail) return fail(detail.error, 404);
     return ok(detail.data);
+  }
+
+  // Pairs the sync thinks are transfers, waiting for a yes or no.
+  if (head === "transactions" && id === "transfer-suggestions" && method === "GET") {
+    return ok(await withHousehold(householdId, (tx) => getSuggestedTransfers(householdId, tx)));
+  }
+
+  // { decision: "transfer" | "spending" } settles one suggestion.
+  if (head === "transactions" && id && segs[2] === "transfer-decision" && method === "POST") {
+    const body = (await req.json().catch(() => null)) as { decision?: string } | null;
+    if (body?.decision !== "transfer" && body?.decision !== "spending") return fail("Invalid input");
+    const res = body.decision === "transfer" ? await confirmTransferSuggestion(id) : await rejectTransferSuggestion(id);
+    return "error" in res ? fail(res.error) : ok({ success: true });
   }
 
   if (head === "transactions" && id && method === "GET") {
