@@ -1,0 +1,20 @@
+# Standalone Watchtower for the NAS. It restarts only containers that carry the
+# label com.centurylinklabs.watchtower.enable=true (Ledgr's `app`), and only
+# when its image tag has a new build. See deploy/nas/README.md.
+#
+#   docker compose -f deploy/nas/watchtower.compose.yaml up -d
+services:
+  watchtower:
+    image: nickfedor/watchtower:latest
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_POLL_INTERVAL: "300"
+      WATCHTOWER_CLEANUP: "true"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
