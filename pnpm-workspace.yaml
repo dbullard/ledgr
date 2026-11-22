@@ -7,6 +7,10 @@ allowBuilds:
   sharp: true
   simple-git-hooks: false
   ssh2: true
+  # Receipt OCR is installed separately in the Docker image (see Dockerfile), so
+  # its install script never needs to run here. Listing it stops pnpm 11 failing
+  # the install with ERR_PNPM_IGNORED_BUILDS on a clean runner.
+  tesseract.js: false
   unrs-resolver: true
 minimumReleaseAgeExclude:
   - '@types/node@26.1.1'
