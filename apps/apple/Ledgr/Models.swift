@@ -65,6 +65,12 @@ struct Txn: Codable, Identifiable, Hashable {
     let isTransfer: Bool
     /// Hidden from lists and totals until shown again. Absent on servers that predate it.
     var isHidden: Bool? = nil
+    /// The bank's date, set only when the date was moved by hand.
+    var originalDate: String? = nil
+    /// The other half of a transfer, when the two were paired. Absent on older servers.
+    var transferPairId: String? = nil
+    /// How the transfer flag was decided ("manual", "pattern"...). Absent on older servers.
+    var transferSource: String? = nil
     /// The recurring item this transaction belongs to, if any.
     let recurringTransactionId: String?
 
@@ -88,6 +94,8 @@ struct TxnPage: Codable {
 
 struct SplitRow: Codable, Identifiable, Hashable {
     let id: String
+    /// Absent on servers that predate split editing.
+    let categoryId: String?
     let categoryName: String?
     let amount: Int
     let notes: String?

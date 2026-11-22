@@ -199,6 +199,15 @@ function TransactionDetail({
         {/* The amount and its category are what the panel is opened for, so they
             lead. Everything else is a row in a group below. */}
         <div className="py-4 pb-6 text-center">
+          {/* The merchant's logo leads the page, as in the native apps; with no
+              logo it falls back to the category icon or an initial. */}
+          <EntityAvatar
+            logoUrl={txn.merchantLogoUrl}
+            name={txn.merchantName ?? txn.name}
+            pfcPrimary={txn.pfcPrimary}
+            size="lg"
+            className="mx-auto mb-3 data-[size=lg]:size-14"
+          />
           <AmountDisplay
             amount={txn.normalizedAmount}
             currency={txn.currency}

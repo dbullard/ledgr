@@ -94,8 +94,8 @@ import { and, eq, gte, inArray } from "drizzle-orm";
 import { getTransactions, getTransactionSummary, type TransactionFilters } from "@/queries/transactions";
 import { getCategories } from "@/queries/categories";
 import { getItemSpendByCategory, getProductPriceHistory, getTopProducts } from "@/queries/receipt-items";
-import { fetchTransactionDetail, updateTransactionFields } from "@/actions/transaction-detail";
-import { toggleReviewed, updateTransactionCategory } from "@/actions/transactions";
+import { fetchTransactionDetail, updateTransactionFields, upsertSplit, deleteSplit } from "@/actions/transaction-detail";
+import { toggleReviewed, updateTransactionCategory, bulkUpdateCategory, bulkMarkReviewed } from "@/actions/transactions";
 import { fetchReceiptItems } from "@/actions/receipt-items";
 import { fetchReceiptForEdit, saveReceiptEdits } from "@/actions/receipt-edit";
 import { attachReceipt, deleteReceipt, detachReceipt, fetchReceipts, fetchUnmatchedReceipts, uploadReceipt } from "@/actions/receipts";
@@ -110,7 +110,11 @@ export const dynamic = "force-dynamic";
  *   GET    /api/native/dashboard?range=1M|3M|6M|1Y|all
  *   GET    /api/native/transactions?search&needsReview&noReceipt(1: posted expenses with no receipt)&categoryId&uncategorized&amount(cents, exact)&cursor&limit&count(1 adds the true match count)
  *   GET    /api/native/transactions/:id
- *   PATCH  /api/native/transactions/:id   { categoryId?, reviewed?, notes?, name?, iconOverride?, iconColor?, isTransfer?, isHidden? }
+ *   POST   /api/native/transactions/bulk                  { ids, categoryId? | reviewed? | hidden? }
+ *   POST   /api/native/transactions/:id/splits            { categoryId, amount (cents), notes? }
+ *   PUT    /api/native/transactions/:id/splits/:splitId   { categoryId, amount, notes? }
+ *   DELETE /api/native/transactions/:id/splits/:splitId
+ *   PATCH  /api/native/transactions/:id   { categoryId?, reviewed?, notes?, name?, iconOverride?, iconColor?, isTransfer?, isHidden?, date? }
  *   GET    /api/native/category-suggestions?ids=a,b   cached on-device AI picks { [txnId]: categoryId | null }
  *   PUT    /api/native/category-suggestions/:txnId    { categoryId: string | null }
  *   GET    /api/native/categories
@@ -651,6 +655,11 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
     if (q.get("needsReview") === "1") filters.needsReview = true;
     if (q.get("noReceipt") === "1") filters.noReceipt = true;
     if (q.get("hidden") === "1") filters.hidden = true;
+    // Amount range in cents, on top of the exact `amount` match below.
+    const amountMin = Number(q.get("amountMin"));
+    const amountMax = Number(q.get("amountMax"));
+    if (q.get("amountMin") && Number.isInteger(amountMin) && amountMin >= 0) filters.amountMin = amountMin;
+    if (q.get("amountMax") && Number.isInteger(amountMax) && amountMax >= 0) filters.amountMax = amountMax;
     if (q.get("categoryId")) filters.categoryId = q.get("categoryId");
     if (q.get("uncategorized") === "1") { filters.categoryId = null; filters.excludeTransfers = true; }
     const exactAmount = Number(q.get("amount"));
@@ -720,6 +729,51 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
     });
   }
 
+  // Change several transactions at once: { ids, categoryId? | reviewed? | hidden? }.
+  if (head === "transactions" && id === "bulk" && method === "POST") {
+    const body = (await req.json().catch(() => null)) as { ids?: unknown; categoryId?: string | null; reviewed?: boolean; hidden?: boolean } | null;
+    if (!body || !Array.isArray(body.ids) || body.ids.length === 0 || body.ids.some((x) => typeof x !== "string")) return fail("Invalid input");
+    const ids = body.ids as string[];
+    let updatedCount = 0;
+    if ("categoryId" in body) {
+      const res = await bulkUpdateCategory(ids, body.categoryId ?? null);
+      if ("error" in res) return fail(res.error);
+      updatedCount = res.updatedCount;
+    }
+    if (typeof body.reviewed === "boolean") {
+      const res = await bulkMarkReviewed(ids, body.reviewed);
+      if ("error" in res) return fail(res.error);
+      updatedCount = res.updatedCount;
+    }
+    if (typeof body.hidden === "boolean") {
+      for (const tid of ids) {
+        const res = await updateTransactionFields(tid, { isHidden: body.hidden });
+        if ("error" in res) return fail(res.error);
+      }
+      updatedCount = ids.length;
+    }
+    return ok({ updatedCount });
+  }
+
+  // Split a transaction across categories: POST adds, PUT/:splitId edits, DELETE/:splitId removes.
+  if (head === "transactions" && id && segs[2] === "splits") {
+    const splitId = segs[3] ?? null;
+    if (method === "POST" || (method === "PUT" && splitId)) {
+      const body = (await req.json().catch(() => null)) as { categoryId?: string; amount?: number; notes?: string | null } | null;
+      if (!body || typeof body.categoryId !== "string" || typeof body.amount !== "number") return fail("Invalid input");
+      const res = await upsertSplit(id, method === "PUT" ? splitId : null, {
+        categoryId: body.categoryId,
+        amount: body.amount,
+        notes: typeof body.notes === "string" && body.notes.trim() ? body.notes.trim() : null,
+      });
+      return "error" in res ? fail(res.error) : ok(res.data);
+    }
+    if (method === "DELETE" && splitId) {
+      const res = await deleteSplit(splitId);
+      return "error" in res ? fail(res.error) : ok({ success: true });
+    }
+  }
+
   if (head === "transactions" && id && method === "PATCH") {
     const body = (await req.json().catch(() => null)) as {
       categoryId?: string | null;
@@ -730,11 +784,13 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
       iconColor?: string | null;
       isTransfer?: boolean;
       isHidden?: boolean;
+      date?: string;
     } | null;
     if (!body) return fail("Invalid input");
-    const fields: { name?: string | null; iconOverride?: string | null; iconColor?: string | null; isTransfer?: boolean; isHidden?: boolean } = {};
+    const fields: { name?: string | null; iconOverride?: string | null; iconColor?: string | null; isTransfer?: boolean; isHidden?: boolean; date?: string } = {};
     if (typeof body.isTransfer === "boolean") fields.isTransfer = body.isTransfer;
     if (typeof body.isHidden === "boolean") fields.isHidden = body.isHidden;
+    if (typeof body.date === "string") fields.date = body.date;
     if (typeof body.name === "string" || body.name === null) fields.name = body.name;
     if (typeof body.iconOverride === "string" || body.iconOverride === null) fields.iconOverride = body.iconOverride;
     if (typeof body.iconColor === "string" || body.iconColor === null) fields.iconColor = body.iconColor;
