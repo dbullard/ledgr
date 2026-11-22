@@ -153,6 +153,14 @@ struct ReportsView: View {
         }
         .background(Color.canvas)
         .navigationTitle("Reports")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                SavedReportsMenu(tab: tab, range: range) { saved in
+                    if let t = ReportTab(rawValue: saved.reportType) { tab = t }
+                    range = saved.nearestRange
+                }
+            }
+        }
         .refreshable { await api.syncBanks(); await load() }
         .task(id: Key(tab: tab, range: range, base: connection.active)) { await load() }
     }
@@ -186,6 +194,7 @@ struct ReportsView: View {
             }
             Card("By category", trailing: s.comparisonLabel.map { AnyView(Text($0).font(.caption).foregroundStyle(.secondary)) }) {
                 ForEach(s.rows.sorted { $0.total > $1.total }) { r in
+                    NavigationLink(value: DrillDown(title: r.categoryName, categoryId: r.categoryId, range: range)) {
                     HStack(spacing: 12) {
                         CategoryBadge(icon: r.categoryIcon, size: 32, categoryId: r.categoryId)
                         VStack(alignment: .leading, spacing: 2) {
@@ -205,6 +214,9 @@ struct ReportsView: View {
                             }
                         }
                     }
+                    .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                     if r.id != s.rows.last?.id { Divider() }
                 }
             }

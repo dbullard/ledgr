@@ -4,7 +4,7 @@ import PhotosUI
 import UniformTypeIdentifiers
 
 enum TxnFilter: String, CaseIterable, Identifiable {
-    case all = "All", needsReview = "Needs review", noReceipt = "No receipt", expense = "Spending", credits = "Income"
+    case all = "All", needsReview = "Needs review", noReceipt = "No receipt", expense = "Spending", credits = "Income", hidden = "Hidden"
     var id: String { rawValue }
 }
 
@@ -19,22 +19,28 @@ struct TransactionsView: View {
     @State private var search = ""
     @State private var filter: TxnFilter = .all
     @State private var accountId: String?
+    @State private var adv = AdvancedFilters()
+    @State private var showAdvanced = false
+    @State private var selecting = false
+    @State private var selected: Set<String> = []
+    @State private var bulkWorking = false
+    @State private var bulkCategory = false
+    @State private var transferSuggestions: [Txn] = []
+    @State private var showTransferReview = false
     @State private var accountGroups: [InstitutionGroupModel] = []
     @State private var dropMessage: String?
     @State private var listGroups: [CategoryGroup] = CategoryCache.groups
     @ObservedObject private var suggester = CategorySuggester.shared
     @ObservedObject private var context = AppContext.shared
 
-    private struct Key: Hashable { let search: String; let filter: TxnFilter; let account: String?; let base: URL? }
+    private struct Key: Hashable { let search: String; let filter: TxnFilter; let account: String?; let adv: AdvancedFilters; let base: URL? }
 
     var body: some View {
         List {
             ForEach(sections, id: \.0) { header, items in
                 Section {
                     ForEach(items) { txn in
-                        NavigationLink(value: txn) {
-                            TxnRow(txn: txn, suggestion: suggester.suggestions[txn.id], groups: listGroups, onCategory: { id in quickSetCategory(txn, id) }, onAccount: { accountId = $0 }, compact: compactRows)
-                        }
+                        rowLink(txn)
                             .receiptDropTarget(transactionId: txn.id, inset: 4) { dropMessage = $0 }
                             .listRowBackground(Color.card)
                             .onAppear {
@@ -67,6 +73,16 @@ struct TransactionsView: View {
         .searchable(text: $search, prompt: "Search transactions")
         .toolbar {
             ToolbarItem(placement: .primaryAction) { accountButton }
+            ToolbarItem(placement: .primaryAction) {
+                Button { showAdvanced = true } label: {
+                    Image(systemName: adv.isActive ? "slider.horizontal.3" : "slider.horizontal.3")
+                        .symbolVariant(adv.isActive ? .fill : .none)
+                }
+                .accessibilityLabel("Filters")
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button(selecting ? "Done" : "Select") { selecting.toggle(); if !selecting { selected = [] } }
+            }
             #if os(iOS)
             ToolbarItem(placement: .primaryAction) {
                 Menu {
@@ -94,12 +110,93 @@ struct TransactionsView: View {
         .onChange(of: api.changedTxn) { _, t in if let t { applyChange(t) } }
         .onChange(of: api.changedBatch) { _, batch in batch.forEach(applyChange) }
         .refreshable { await api.syncBanks(); await reload() }
-        .safeAreaInset(edge: .top, spacing: 0) { headerBar }
-        .task { await loadGroups(); await loadAccounts() }
-        .task(id: Key(search: search, filter: filter, account: accountId, base: connection.active)) {
+        .safeAreaInset(edge: .top, spacing: 0) { VStack(spacing: 0) { headerBar; transferBanner } }
+        .sheet(isPresented: $showTransferReview) { TransferReviewView(suggestions: transferSuggestions) { await reload(); await loadTransferSuggestions() } }
+        .safeAreaInset(edge: .bottom, spacing: 0) { bulkBar }
+        .sheet(isPresented: $showAdvanced) { TransactionFilterSheet(filters: $adv, groups: listGroups) }
+        .task { await loadGroups(); await loadAccounts(); await loadTransferSuggestions() }
+        .task(id: Key(search: search, filter: filter, account: accountId, adv: adv, base: connection.active)) {
             if !search.isEmpty { try? await Task.sleep(for: .milliseconds(300)) }
             guard !Task.isCancelled else { return }
             await reload()
+        }
+    }
+
+    @ViewBuilder private func rowLink(_ txn: Txn) -> some View {
+        let row = TxnRow(txn: txn, suggestion: suggester.suggestions[txn.id], groups: listGroups, onCategory: { id in quickSetCategory(txn, id) }, onAccount: { accountId = $0 }, compact: compactRows)
+        if selecting {
+            Button {
+                if selected.contains(txn.id) { selected.remove(txn.id) } else { selected.insert(txn.id) }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: selected.contains(txn.id) ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(selected.contains(txn.id) ? Color.accentColor : Color.secondary)
+                    row
+                }
+            }
+            .buttonStyle(.plain)
+        } else {
+            NavigationLink(value: txn) { row }
+        }
+    }
+
+    /// Applies one change to every selected transaction, then reloads the list.
+    private func bulk(_ body: [String: Any]) async {
+        guard !selected.isEmpty else { return }
+        bulkWorking = true
+        defer { bulkWorking = false }
+        var payload = body
+        payload["ids"] = Array(selected)
+        do {
+            try await api.post("api/native/transactions/bulk", body: payload)
+            selected = []
+            selecting = false
+            await reload()
+            api.noteChanged()
+        } catch APIError.unauthorized {
+        } catch { dropMessage = error.localizedDescription }
+    }
+
+    @ViewBuilder private var transferBanner: some View {
+        if !transferSuggestions.isEmpty {
+            Button { showTransferReview = true } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.left.arrow.right")
+                    Text("\(transferSuggestions.count) possible transfer\(transferSuggestions.count == 1 ? "" : "s") to review")
+                        .font(.subheadline.weight(.medium))
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .background(Color.accentColor.opacity(0.12))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func loadTransferSuggestions() async {
+        if let list: [Txn] = try? await api.get("api/native/transactions/transfer-suggestions") { transferSuggestions = list }
+    }
+
+    @ViewBuilder private var bulkBar: some View {
+        if selecting {
+            HStack(spacing: 14) {
+                Text("\(selected.count) selected").font(.subheadline.weight(.medium))
+                Spacer()
+                Button("Category") { bulkCategory = true }
+                    .popover(isPresented: $bulkCategory) {
+                        CategoryPicker(groups: listGroups, currentId: nil) { id in
+                            bulkCategory = false
+                            Task { await bulk(["categoryId": id ?? NSNull()]) }
+                        }
+                        .frame(minWidth: 280, minHeight: 320)
+                    }
+                Button("Reviewed") { Task { await bulk(["reviewed": true]) } }
+                Button("Hide") { Task { await bulk(["hidden": true]) } }
+            }
+            .disabled(selected.isEmpty || bulkWorking)
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            .background(.regularMaterial)
         }
     }
 
@@ -153,7 +250,7 @@ struct TransactionsView: View {
         #else
         let showFilter = false
         #endif
-        if showFilter || accountName != nil {
+        if showFilter || accountName != nil || adv.isActive {
             HStack(spacing: 10) {
                 if showFilter {
                     Picker("Filter", selection: $filter) {
@@ -169,6 +266,16 @@ struct TransactionsView: View {
                         Text(accountName).font(.footnote.weight(.medium)).lineLimit(1)
                         Button { accountId = nil } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                             .buttonStyle(.plain).accessibilityLabel("Show all accounts")
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 5)
+                    .background(Color.accentColor.opacity(0.14), in: Capsule())
+                }
+                if adv.isActive {
+                    HStack(spacing: 6) {
+                        Image(systemName: "slider.horizontal.3").font(.caption)
+                        Text(adv.summary).font(.footnote.weight(.medium)).lineLimit(1)
+                        Button { adv = AdvancedFilters() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                            .buttonStyle(.plain).accessibilityLabel("Clear filters")
                     }
                     .padding(.horizontal, 12).padding(.vertical, 5)
                     .background(Color.accentColor.opacity(0.14), in: Capsule())
@@ -193,6 +300,7 @@ struct TransactionsView: View {
     private func query(cursor: String?) -> [String: String] {
         var q = ["limit": "40"]
         if let accountId { q["accountId"] = accountId }
+        adv.apply(to: &q)
         if !search.isEmpty { q["search"] = search }
         switch filter {
         case .all: break
@@ -200,6 +308,7 @@ struct TransactionsView: View {
         case .noReceipt: q["noReceipt"] = "1"
         case .expense: q["type"] = "expense"
         case .credits: q["type"] = "credits"
+        case .hidden: q["hidden"] = "1"
         }
         if let cursor { q["cursor"] = cursor }
         return q
@@ -221,7 +330,10 @@ struct TransactionsView: View {
 
     private func applyChange(_ t: Txn) {
         guard let i = rows.firstIndex(where: { $0.id == t.id }) else { return }
-        if filter == .needsReview && t.reviewed { rows.remove(at: i) } else { rows[i] = t }
+        // Hiding or showing moves a row between the normal lists and the Hidden one.
+        let hidden = t.isHidden ?? false
+        if (filter == .hidden) != hidden { rows.remove(at: i) }
+        else if filter == .needsReview && t.reviewed { rows.remove(at: i) } else { rows[i] = t }
     }
 
     private func loadGroups() async {
@@ -285,6 +397,8 @@ struct TransactionDetailView: View {
     @FocusState private var nameFocused: Bool
     @State private var receiptToDelete: ReceiptSummary?
     @State private var receiptToEdit: ReceiptSummary?
+    @State private var pairedTxn: Txn?
+    @State private var showSplits = false
     @ObservedObject private var suggester = CategorySuggester.shared
 
     private var txn: Txn { detail?.txn ?? initial }
@@ -325,20 +439,59 @@ struct TransactionDetailView: View {
                 Card("Details") {
                     detailRow("Account", txn.accountName)
                     Divider()
-                    detailRow("Date", Fmt.dayHeader(txn.date))
+                    dateRow
+                    if let original = txn.originalDate {
+                        Divider()
+                        HStack {
+                            Text("Bank date").foregroundStyle(Color.primary)
+                            Spacer(minLength: 16)
+                            Text(Fmt.shortDate(original)).foregroundStyle(.secondary)
+                            Button("Reset") { Task { await patch(["date": original]) } }
+                                .buttonStyle(.plain).foregroundStyle(Color.accentColor)
+                        }
+                    }
                     if let merchant = txn.merchantName, merchant != txn.name {
                         Divider()
                         detailRow("Merchant", merchant)
                     }
                     Divider()
                     detailRow("Status", txn.pending ? "Pending" : "Posted", valueColor: txn.pending ? Color.alert : nil)
+                    if let pair = pairedTxn {
+                        Divider()
+                        NavigationLink(value: pair) {
+                            HStack {
+                                Text("Paired with").foregroundStyle(Color.primary)
+                                Spacer(minLength: 16)
+                                Text("View the other leg").foregroundStyle(Color.accentColor)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if let source = txn.categorySource, let label = Self.sourceLabels[source], txn.categoryId != nil {
+                        Divider()
+                        detailRow("Categorised by", label)
+                    }
+                    Divider()
+                    Toggle(isOn: Binding(get: { txn.isHidden ?? false }, set: { v in Task { await patch(["isHidden": v]) } })) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Hide transaction")
+                            Text("Removed from the list until shown again").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
                 }
 
-                if let detail, !detail.splits.isEmpty {
-                    Card("Splits") {
-                        ForEach(Array(detail.splits.enumerated()), id: \.element.id) { i, s in
-                            if i > 0 { Divider() }
-                            detailRow(s.categoryName ?? "Uncategorized", Fmt.money(s.amount))
+                if !txn.isTransfer {
+                    Card("Splits", trailing: AnyView(
+                        Button((detail?.splits.isEmpty ?? true) ? "Split" : "Edit") { showSplits = true }
+                            .buttonStyle(.plain).foregroundStyle(Color.accentColor).font(.subheadline.weight(.medium))
+                    )) {
+                        if let detail, !detail.splits.isEmpty {
+                            ForEach(Array(detail.splits.enumerated()), id: \.element.id) { i, s in
+                                if i > 0 { Divider() }
+                                detailRow(s.categoryName ?? "Uncategorized", Fmt.money(s.amount))
+                            }
+                        } else {
+                            Text("Not split").foregroundStyle(.secondary)
                         }
                     }
                     .transition(cardTransition)
@@ -470,6 +623,9 @@ struct TransactionDetailView: View {
             Text("The file is removed permanently. The transaction is not changed.")
         }
         .photosPicker(isPresented: $showPhotos, selection: $photoItems, matching: .images)
+        .sheet(isPresented: $showSplits) {
+            SplitEditorView(txn: txn, groups: groups, existing: detail?.splits ?? []) { await load(); api.noteChanged(txn) }
+        }
         .fileImporter(isPresented: $showFiles, allowedContentTypes: RootView.receiptTypes, allowsMultipleSelection: true) { result in
             if case .success(let urls) = result {
                 Task {
@@ -566,6 +722,28 @@ struct TransactionDetailView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 6)
+        }
+    }
+
+    /// Where a category came from, as the web panel words it.
+    private static let sourceLabels: [String: String] = [
+        "manual": "You", "ai": "AI", "ai_low_confidence": "AI, low confidence", "rule": "A rule",
+        "merchant_default": "This merchant's default", "plaid": "Plaid", "pfc": "Plaid's category", "history": "Your past choices",
+    ]
+
+    /// Tap to change the date. A pending bank row can't be re-dated until it posts, so it stays plain text.
+    @ViewBuilder private var dateRow: some View {
+        if txn.pending {
+            detailRow("Date", Fmt.dayHeader(txn.date))
+        } else {
+            DatePicker("Date", selection: Binding(
+                get: { Fmt.date(txn.date) ?? Date() },
+                set: { new in
+                    let iso = Fmt.iso(new)
+                    guard iso != txn.date else { return }
+                    Task { await patch(["date": iso]) }
+                }
+            ), displayedComponents: .date)
         }
     }
 
@@ -815,7 +993,14 @@ struct TransactionDetailView: View {
         if let d: TxnDetail = try? await api.get("api/native/transactions/\(initial.id)") {
             detail = d
             notes = d.txn.notes ?? ""
+            await loadPair(d.txn)
         }
+    }
+
+    /// Fetches the other half of a transfer so the row can link straight to it.
+    private func loadPair(_ t: Txn) async {
+        guard let id = t.transferPairId, t.isTransfer else { pairedTxn = nil; return }
+        if let other: TxnDetail = try? await api.get("api/native/transactions/\(id)") { pairedTxn = other.txn }
     }
 
     private func loadCategories() async {

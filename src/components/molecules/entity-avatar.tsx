@@ -8,13 +8,14 @@ interface EntityAvatarProps {
   name: string;
   primaryColor?: string | null;
   pfcPrimary?: string | null;
-  size?: "sm" | "md";
+  size?: "sm" | "md" | "lg";
   className?: string;
 }
 
 const fallbackTextClass = {
   sm: "text-[10px]",
   md: "text-xs",
+  lg: "text-lg",
 } as const;
 
 export function EntityAvatar({
@@ -30,7 +31,7 @@ export function EntityAvatar({
   const { initial, backgroundColor } = getInitials(name, primaryColor);
 
   return (
-    <Avatar size={size === "sm" ? "sm" : "default"} className={className} aria-hidden="true">
+    <Avatar size={size === "sm" ? "sm" : size === "lg" ? "lg" : "default"} className={className} aria-hidden="true">
       {resolved.type === "image" && (
         <AvatarImage src={resolved.src} alt="" className="bg-white" />
       )}

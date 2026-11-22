@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, Clock, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AmountDisplay } from "@/components/atoms/amount-display";
 import { EntityAvatar } from "@/components/molecules/entity-avatar";
@@ -20,8 +21,15 @@ import type { TransactionPatch } from "@/hooks/use-transaction-rows";
 import { centsToDisplay } from "@/lib/money";
 import { formatDateShort } from "@/lib/date-utils";
 import { escapeKeyAction, isEditableShortcutTarget } from "@/lib/keyboard-shortcuts";
+import { deriveKind, type TransactionKind } from "@/lib/transaction-kind";
 import type { TransactionRow as TxnRow } from "@/queries/transactions";
 import type { CategoryGroup } from "@/queries/categories";
+
+const KIND_CHOICES: { value: TransactionKind; label: string }[] = [
+  { value: "expense", label: "Expense" },
+  { value: "income", label: "Income" },
+  { value: "transfer", label: "Transfer" },
+];
 
 const SOURCE_LABELS: Record<string, string> = {
   manual: "You",
@@ -65,6 +73,10 @@ function TransactionDetail({
 }: TransactionDetailPanelProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const [splitsOpen, setSplitsOpen] = useState(false);
+  // Expense vs Income only follows the category once one is chosen. Until then
+  // the chosen segment is remembered here so the control doesn't snap back to
+  // the amount's sign.
+  const [kindDraft, setKindDraft] = useState<TransactionKind | null>(null);
 
   const {
     txn,
@@ -77,7 +89,7 @@ function TransactionDetail({
     handleFieldSave,
     handleCategorySave,
     handleReviewedToggle,
-    handleTransferToggle,
+    handleKindChange,
     handleHiddenToggle,
     handleAddSplit,
     handleSplitUpdate,
@@ -122,6 +134,20 @@ function TransactionDetail({
         <Skeleton className="h-4 w-full" />
       </div>
     );
+  }
+
+  const derivedKind = deriveKind(txn, categories);
+  const hasCategory = txn.categoryId !== null;
+  const kind: TransactionKind =
+    derivedKind === "transfer" || hasCategory ? derivedKind : (kindDraft ?? derivedKind);
+
+  // Base UI hands back an empty array when the active item is clicked again;
+  // ignoring it keeps exactly one segment selected.
+  function selectKind(groupValue: string[]) {
+    const next = KIND_CHOICES.find((c) => c.value === groupValue[0])?.value;
+    if (!next || next === kind) return;
+    setKindDraft(next === "transfer" ? null : next);
+    handleKindChange(next, categories);
   }
 
   const isBankSynced = Boolean(txn.externalId);
@@ -173,11 +199,38 @@ function TransactionDetail({
         {/* The amount and its category are what the panel is opened for, so they
             lead. Everything else is a row in a group below. */}
         <div className="py-4 pb-6 text-center">
+          {/* The merchant's logo leads the page, as in the native apps; with no
+              logo it falls back to the category icon or an initial. */}
+          <EntityAvatar
+            logoUrl={txn.merchantLogoUrl}
+            name={txn.merchantName ?? txn.name}
+            pfcPrimary={txn.pfcPrimary}
+            size="lg"
+            className="mx-auto mb-3 data-[size=lg]:size-14"
+          />
           <AmountDisplay
             amount={txn.normalizedAmount}
             currency={txn.currency}
             className="text-[38px] font-semibold leading-none tracking-tight"
           />
+          {/* Only the transfer flag is stored: it drops the row from budgets,
+              reports and spending totals, but does not hide it. Expense and
+              income follow the category. */}
+          <ToggleGroup
+            variant="outline"
+            size="sm"
+            value={[kind]}
+            onValueChange={selectKind}
+            disabled={transferPending}
+            aria-label="Transaction type"
+            className="mx-auto mt-3.5"
+          >
+            {KIND_CHOICES.map((c) => (
+              <ToggleGroupItem key={c.value} value={c.value}>
+                {c.label}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
           <div className="mt-3.5 flex items-center justify-center gap-2">
             <CategoryPill
               transactionId={txn.id}
@@ -240,17 +293,6 @@ function TransactionDetail({
             ) : (
               <span className="text-muted-foreground">None</span>
             )}
-          </DetailRow>
-
-          {/* `isTransfer` drops the row from budgets, reports and spending
-              totals; it does not hide it. The label says what it does. */}
-          <DetailRow label="Exclude from spend">
-            <Switch
-              checked={txn.isTransfer}
-              onCheckedChange={handleTransferToggle}
-              disabled={transferPending}
-              aria-label="Exclude from spend"
-            />
           </DetailRow>
 
           <DetailRow label="Hide transaction" hint="Removed from the list until shown again">

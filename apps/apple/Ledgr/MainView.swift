@@ -242,6 +242,7 @@ struct MainView: View {
             .navigationDestination(for: RecurringItem.self) { RecurringDetailView(item: $0) }
             .navigationDestination(for: AccountRowModel.self) { AccountDetailView(account: $0) }
             .navigationDestination(for: Txn.self) { TransactionDetailView(initial: $0) }
+            .navigationDestination(for: DrillDown.self) { DrillDownView(drill: $0) }
             .navigationDestination(for: WebPage.self) { WebPageView(page: $0) }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {

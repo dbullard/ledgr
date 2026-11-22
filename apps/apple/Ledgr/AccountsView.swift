@@ -34,6 +34,8 @@ struct InstitutionGroupModel: Codable, Identifiable {
     let status: String?
     let errorMessage: String?
     let lastDataAt: String?
+    /// Bank logo as base64 (or a data: URI). Absent for manual accounts.
+    var logoBase64: String? = nil
     let accounts: [AccountRowModel]
     var id: String { connectionId ?? institutionName }
     /// The server stores `reauth_required` / `revoked` for logins that lapsed or
@@ -185,6 +187,7 @@ struct AccountsView: View {
             if !rows.isEmpty {
                 Card {
                     HStack(alignment: .top) {
+                        InstitutionLogo(base64: group.logoBase64, size: 28)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(group.institutionName).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                             if group.needsAttention {
@@ -335,5 +338,27 @@ extension Fmt {
         let d = f.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
         guard let d else { return iso }
         return RelativeDateTimeFormatter().localizedString(for: d, relativeTo: Date())
+    }
+}
+
+/// A bank's logo, or nothing when the connection has none stored.
+struct InstitutionLogo: View {
+    let base64: String?
+    var size: CGFloat = 28
+
+    var body: some View {
+        if let image = decoded {
+            Image(platformImage: image).resizable().scaledToFit()
+                .padding(size * 0.12).frame(width: size, height: size)
+                .background(Color.white, in: RoundedRectangle(cornerRadius: size * 0.22))
+                .accessibilityHidden(true)
+        }
+    }
+
+    private var decoded: PlatformImage? {
+        guard var raw = base64, !raw.isEmpty else { return nil }
+        if let comma = raw.firstIndex(of: ","), raw.hasPrefix("data:") { raw = String(raw[raw.index(after: comma)...]) }
+        guard let data = Data(base64Encoded: raw) else { return nil }
+        return PlatformImage(data: data)
     }
 }

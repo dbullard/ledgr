@@ -5,7 +5,8 @@ import {
   fetchTransactionDetail,
   updateTransactionFields,
 } from "@/actions/transaction-detail";
-import { toggleReviewed } from "@/actions/transactions";
+import { toggleReviewed, updateTransactionCategory } from "@/actions/transactions";
+import { kindChangePlan, type KindCategoryGroup, type TransactionKind } from "@/lib/transaction-kind";
 import type { TransactionRow as TxnRow } from "@/queries/transactions";
 import type { TransactionPatch } from "./use-transaction-rows";
 import { useSplitEditor } from "./use-split-editor";
@@ -140,6 +141,35 @@ export function useTransactionDetail(
     [transactionId, txn, optimistic],
   );
 
+  // Expense / Income / Transfer. Only the transfer flag is stored; moving to
+  // the other side of the ledger also drops a category that no longer fits
+  // (an income category on spending, or the reverse), as the native apps do.
+  const handleKindChange = useCallback(
+    (next: TransactionKind, groups: KindCategoryGroup[]) => {
+      if (!txn) return;
+      const plan = kindChangePlan(next, txn, groups);
+      if (plan.setTransfer !== null) {
+        const flag = plan.setTransfer;
+        startTransferTransition(() =>
+          optimistic(
+            {
+              isTransfer: flag,
+              transferSource: flag ? "manual" : "manual_rejected",
+              transferPairId: flag ? txn.transferPairId : null,
+            },
+            () => updateTransactionFields(transactionId, { isTransfer: flag }),
+          ),
+        );
+      }
+      if (plan.clearCategory) {
+        void optimistic({ categoryId: null, categoryName: null }, () =>
+          updateTransactionCategory(transactionId, null),
+        );
+      }
+    },
+    [transactionId, txn, optimistic],
+  );
+
   const handleHiddenToggle = useCallback(
     (next: boolean) => {
       startHiddenTransition(() =>
@@ -188,6 +218,7 @@ export function useTransactionDetail(
     handleCategorySave,
     handleReviewedToggle,
     handleTransferToggle,
+    handleKindChange,
     handleHiddenToggle,
     handleAddSplit: addSplit,
     handleSplitUpdate: updateSplit,
