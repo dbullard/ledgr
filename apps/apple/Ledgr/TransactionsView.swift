@@ -4,7 +4,7 @@ import PhotosUI
 import UniformTypeIdentifiers
 
 enum TxnFilter: String, CaseIterable, Identifiable {
-    case all = "All", needsReview = "Needs review", noReceipt = "No receipt", expense = "Spending", credits = "Income"
+    case all = "All", needsReview = "Needs review", noReceipt = "No receipt", expense = "Spending", credits = "Income", hidden = "Hidden"
     var id: String { rawValue }
 }
 
@@ -200,6 +200,7 @@ struct TransactionsView: View {
         case .noReceipt: q["noReceipt"] = "1"
         case .expense: q["type"] = "expense"
         case .credits: q["type"] = "credits"
+        case .hidden: q["hidden"] = "1"
         }
         if let cursor { q["cursor"] = cursor }
         return q
@@ -221,7 +222,10 @@ struct TransactionsView: View {
 
     private func applyChange(_ t: Txn) {
         guard let i = rows.firstIndex(where: { $0.id == t.id }) else { return }
-        if filter == .needsReview && t.reviewed { rows.remove(at: i) } else { rows[i] = t }
+        // Hiding or showing moves a row between the normal lists and the Hidden one.
+        let hidden = t.isHidden ?? false
+        if (filter == .hidden) != hidden { rows.remove(at: i) }
+        else if filter == .needsReview && t.reviewed { rows.remove(at: i) } else { rows[i] = t }
     }
 
     private func loadGroups() async {
@@ -332,6 +336,13 @@ struct TransactionDetailView: View {
                     }
                     Divider()
                     detailRow("Status", txn.pending ? "Pending" : "Posted", valueColor: txn.pending ? Color.alert : nil)
+                    Divider()
+                    Toggle(isOn: Binding(get: { txn.isHidden ?? false }, set: { v in Task { await patch(["isHidden": v]) } })) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Hide transaction")
+                            Text("Removed from the list until shown again").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
                 }
 
                 if let detail, !detail.splits.isEmpty {
