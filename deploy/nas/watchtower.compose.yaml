@@ -9,6 +9,9 @@ services:
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      # The login saved by `docker login ghcr.io` (README step 1), so Watchtower
+      # can pull the private image. Run compose as the user who logged in.
+      - ${HOME}/.docker/config.json:/config.json:ro
     environment:
       WATCHTOWER_LABEL_ENABLE: "true"
       WATCHTOWER_POLL_INTERVAL: "300"
