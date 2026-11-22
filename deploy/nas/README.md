@@ -13,13 +13,26 @@ push to main → CI passes → image built and pushed → Watchtower pulls it �
 
 ### 1. Let the NAS pull the image
 
-After the first run of **Build NAS image**, open the package on GitHub
-(Profile → Packages → `ledgr` → Package settings → Change visibility) and make
-it **public**. The code is already public, so the image reveals nothing new, and
-the NAS then needs no registry login.
+The image is published to GitHub's registry as a private package. (A package
+built from a fork of another project often can't be made public, and keeping it
+private is safer anyway.) Give the NAS a token that can only read packages:
 
-If you would rather keep it private, run `docker login ghcr.io` on the NAS with
-a personal access token that has only `read:packages`.
+1. On GitHub: Settings → Developer settings → Personal access tokens →
+   **Tokens (classic)** → Generate new token. Tick only **`read:packages`**, set
+   an expiry you will remember, and copy the token. A fine-grained token cannot
+   read container packages, so it has to be a classic one.
+2. On the NAS, as the same user that runs the compose project, log in once and
+   paste the token at the password prompt (do not put it on the command line):
+
+   ```sh
+   docker login ghcr.io -u <your GitHub username>
+   ```
+
+   This saves the login in `~/.docker/config.json`. Compose uses it to pull the
+   image, and Watchtower (step 3) reads the same file.
+
+When the token expires or is revoked, pulls start failing with "unauthorized".
+Make a new token and run `docker login ghcr.io` again.
 
 ### 2. Point Ledgr at the new image
 
@@ -49,6 +62,8 @@ Add this service to the same compose file (or start it on its own with
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      # The registry login from step 1, so it can pull the private image.
+      - ${HOME}/.docker/config.json:/config.json:ro
     environment:
       WATCHTOWER_LABEL_ENABLE: "true"      # only touch containers labelled above
       WATCHTOWER_POLL_INTERVAL: "300"      # seconds
